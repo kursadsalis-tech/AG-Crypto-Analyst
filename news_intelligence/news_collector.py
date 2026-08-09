@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 
 RSS_SOURCES = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "Cointelegraph": "https://cointelegraph.com/rss",
 }
 
 
@@ -33,7 +34,9 @@ def fetch_rss(source_name, url):
 
         if pub_date:
             try:
-                published_at = parsedate_to_datetime(pub_date).isoformat()
+                published_at = parsedate_to_datetime(
+                    pub_date
+                ).isoformat()
             except Exception:
                 published_at = pub_date
 
@@ -71,7 +74,7 @@ def main():
     print("AG Crypto Analyst - News Intelligence Agent v0.5.0")
     print("=" * 70)
 
-    for article in all_articles[:10]:
+    for article in all_articles[:20]:
         print()
         print(f"Kaynak   : {article['source']}")
         print(f"Başlık   : {article['title']}")
