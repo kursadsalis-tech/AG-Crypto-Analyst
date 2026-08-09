@@ -1,4 +1,4 @@
-# AG C# AG Crypto Analyst - Görev Listesi
+# AG Crypto Analyst - Görev Listesi
 
 ## ANA HEDEF
 
@@ -10,7 +10,7 @@
 
 - [x] Market Data Agent
 - [x] Technical Analysis Agent
-- [ ] News Intelligence Agent
+- [x] News Intelligence Agent
 - [ ] Social Sentiment Agent
 - [ ] On-chain Agent
 - [ ] Macro Agent
@@ -27,36 +27,52 @@
 - [x] v0.2.0 - Market Data Agent v2
 - [x] v0.3.0 - Market Analyzer Agent
 - [x] v0.4.0 - Technical Analysis Agent
+- [x] v0.5.0 - News Intelligence Agent
 
 ---
 
-## ŞU ANDA ÇALIŞILAN
+## v0.5.0 - NEWS INTELLIGENCE AGENT
 
-### v0.5.0 - News Intelligence Agent
+Durum: İlk çalışan sürüm tamamlandı.
 
-Durum: Başlanmadı.
+Tamamlananlar:
+
+- [x] Haber veri kaynakları belirlendi
+- [x] CoinDesk RSS haber toplama
+- [x] Cointelegraph RSS haber toplama
+- [x] Haberleri veritabanına kaydetme
+- [x] Duplicate haberleri engelleme
+- [x] Haberleri coin/sembol ile ilişkilendirme
+- [x] Haber olay türü sınıflandırması
+- [x] Haber önem/etki skoru
+- [x] Haber yönü: pozitif / negatif / nötr
+- [x] Güven skoru
+- [x] News Intelligence analiz katmanı
+- [x] Analiz sonuçlarını veritabanına kaydetme
+- [x] Gerçek verilerle test
+- [x] Test sonucunu doğrulama
+
+Test sonucu:
+
+- 55 haber toplandı.
+- 55 haber veritabanına kaydedildi.
+- Collector ikinci çalıştırmada duplicate oluşturmadı.
+- 55 haber analiz edildi.
+- 55 analiz sonucu veritabanına kaydedildi.
+
+Not:
+
+v0.5.0 kural tabanlı ilk çalışan News Intelligence sürümüdür. Bir sonraki geliştirmelerde sinyal doğruluğu gerçek fiyat hareketleriyle ölçülecek ve iyileştirilecektir.
+
+---
+
+## SONRAKİ ANA MODÜL
+
+### v0.6.0 - Social Sentiment Agent
 
 Amaç:
 
-Kripto piyasasını etkileyebilecek önemli haberleri tespit etmek,
-haberleri analiz etmek ve bunları AG Crypto Analyst'in karar verme
-sürecinde kullanılabilecek anlamlı bir veri kaynağı haline getirmek.
-
----
-
-## v0.5.0 GÖREVLERİ
-
-- [ ] Haber veri kaynağını belirle
-- [ ] Haberleri alma mekanizmasını oluştur
-- [ ] Haberleri veritabanına kaydet
-- [ ] Haberleri ilgili coin/sembol ile ilişkilendir
-- [ ] Haber önem derecesi belirleme mekanizması oluştur
-- [ ] Haber yönünü belirle (pozitif / negatif / nötr)
-- [ ] News Intelligence Agent analizini oluştur
-- [ ] Haber analiz raporu oluştur
-- [ ] Agent'ı gerçek verilerle test et
-- [ ] Test sonucunu doğrula
-- [ ] v0.5.0 tamamlandığında proje hafızasını güncelle
+Sosyal medya ve topluluk verilerinden piyasa duyarlılığı ve coin bazlı sentiment sinyalleri üretmek.
 
 ---
 
