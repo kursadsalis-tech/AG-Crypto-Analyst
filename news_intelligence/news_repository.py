@@ -23,6 +23,29 @@ def create_news_table():
     connection.close()
 
 
+def create_news_analysis_table():
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS crypto_news_analysis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            news_id INTEGER NOT NULL UNIQUE,
+            coins TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            impact_score INTEGER NOT NULL,
+            confidence_score INTEGER NOT NULL,
+            matched_keywords TEXT,
+            analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (news_id) REFERENCES crypto_news(id)
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
 def save_news_batch(articles):
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
@@ -49,6 +72,94 @@ def save_news_batch(articles):
 
     connection.commit()
     connection.close()
+
+
+def get_all_news():
+    connection = sqlite3.connect(DB_NAME)
+    connection.row_factory = sqlite3.Row
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, source, title, link, description, published_at
+        FROM crypto_news
+        ORDER BY published_at DESC, id DESC
+    """)
+
+    rows = [dict(row) for row in cursor.fetchall()]
+    connection.close()
+    return rows
+
+
+def save_news_analysis(analysis):
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO crypto_news_analysis (
+            news_id,
+            coins,
+            event_type,
+            direction,
+            impact_score,
+            confidence_score,
+            matched_keywords
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        analysis["news_id"],
+        analysis["coins"],
+        analysis["event_type"],
+        analysis["direction"],
+        analysis["impact_score"],
+        analysis["confidence_score"],
+        analysis["matched_keywords"]
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+def save_news_analysis_batch(analyses):
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+
+    cursor.executemany("""
+        INSERT OR REPLACE INTO crypto_news_analysis (
+            news_id,
+            coins,
+            event_type,
+            direction,
+            impact_score,
+            confidence_score,
+            matched_keywords
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [
+        (
+            analysis["news_id"],
+            analysis["coins"],
+            analysis["event_type"],
+            analysis["direction"],
+            analysis["impact_score"],
+            analysis["confidence_score"],
+            analysis["matched_keywords"]
+        )
+        for analysis in analyses
+    ])
+
+    connection.commit()
+    connection.close()
+
+
+def get_news_analysis_count():
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM crypto_news_analysis")
+    count = cursor.fetchone()[0]
+
+    connection.close()
+    return count
 
 
 def get_news_count():
