@@ -1,5 +1,37 @@
 # AG Crypto Analyst - Changelog
 
+## v0.5.0
+
+### News Intelligence Agent - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- CoinDesk RSS haber toplama
+- Cointelegraph RSS haber toplama
+- SQLite kalıcı haber kayıt sistemi
+- Haber tekrarlarının link bazında engellenmesi
+- Haber analiz kayıt tablosu
+- Haberlerden coin tespiti
+- Olay türü sınıflandırması
+- Pozitif / negatif / nötr yön sınıflandırması
+- Etki skoru
+- Güven skoru
+- Analiz sonuçlarının SQLite'a kaydedilmesi
+
+Başarılı testler:
+
+- 55 haber başarıyla toplandı.
+- 55 haber SQLite'a kaydedildi.
+- Collector ikinci kez çalıştırıldığında haber sayısı 55 olarak kaldı; duplicate kayıt oluşmadı.
+- 55 haberin tamamı analiz edildi.
+- 55 analiz sonucu SQLite'a kaydedildi.
+
+Not:
+
+Bu sürüm kural tabanlı ilk News Intelligence katmanıdır. Nihai tahmin başarısı iddiasında bulunmaz. Bir sonraki geliştirme aşamasında haber sinyallerinin gerçek fiyat hareketleriyle ölçülmesi ve sınıflandırma doğruluğunun geliştirilmesi hedeflenmektedir.
+
+---
+
 ## v0.4.0
 
 ### Technical Analysis Agent
@@ -65,9 +97,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v0.5.0
-News Intelligence Agent
 
 ## v0.6.0
 Social Sentiment Agent
