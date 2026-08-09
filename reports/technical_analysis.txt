@@ -1,0 +1,18 @@
+AG CRYPTO ANALYST - TECHNICAL ANALYSIS
+================================================================================
+Analiz zamanı: 2026-08-08 13:52:26
+Zaman dilimi: 1H
+
+BTCUSDT      | RSI:  58.70 | MACD: NEGATİF  | EMA: POZİTİF  | Skor:  1 | Teknik: POZİTİF
+ETHUSDT      | RSI:  58.38 | MACD: POZİTİF  | EMA: POZİTİF  | Skor:  3 | Teknik: GÜÇLÜ POZİTİF
+ARKMUSDT     | RSI:  61.22 | MACD: POZİTİF  | EMA: NEGATİF  | Skor:  1 | Teknik: POZİTİF
+WLDUSDT      | RSI:  55.41 | MACD: POZİTİF  | EMA: NEGATİF  | Skor:  1 | Teknik: POZİTİF
+TIAUSDT      | RSI:  53.20 | MACD: POZİTİF  | EMA: NEGATİF  | Skor:  1 | Teknik: POZİTİF
+ETHFIUSDT    | RSI:  56.16 | MACD: NEGATİF  | EMA: POZİTİF  | Skor:  1 | Teknik: POZİTİF
+UMAUSDT      | RSI:  51.82 | MACD: POZİTİF  | EMA: NEGATİF  | Skor:  1 | Teknik: POZİTİF
+FIDAUSDT     | RSI:  46.32 | MACD: POZİTİF  | EMA: NEGATİF  | Skor: -1 | Teknik: NEGATİF
+SLPUSDT      | RSI:  64.94 | MACD: POZİTİF  | EMA: POZİTİF  | Skor:  3 | Teknik: GÜÇLÜ POZİTİF
+LQTYUSDT     | RSI:  49.41 | MACD: POZİTİF  | EMA: POZİTİF  | Skor:  1 | Teknik: POZİTİF
+ILVUSDT      | RSI:  51.65 | MACD: NEGATİF  | EMA: POZİTİF  | Skor:  1 | Teknik: POZİTİF
+IOUSDT       | RSI:  51.50 | MACD: POZİTİF  | EMA: NEGATİF  | Skor:  1 | Teknik: POZİTİF
+BIOUSDT      | RSI:  49.62 | MACD: NEGATİF  | EMA: POZİTİF  | Skor: -1 | Teknik: NEGATİF

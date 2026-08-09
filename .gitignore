@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+crypto_data.db
+.DS_Store

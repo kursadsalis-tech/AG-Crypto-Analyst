@@ -1,0 +1,17 @@
+AG CRYPTO ANALYST - MARKET ANALYSIS
+============================================================
+Analiz zamanı: 2026-08-08 13:31:38
+
+IOUSDT       | Fiyat: 0.1202       | 24h:   -1.64% | Trend: NEGATİF          | Hacim: DÜŞÜK       | Konum: ORTA BÖLGE   | Skor: -2 | Sinyal: NEGATİF
+BIOUSDT      | Fiyat: 0.02508      | 24h:    5.51% | Trend: GÜÇLÜ POZİTİF    | Hacim: ÇOK YÜKSEK  | Konum: ORTA BÖLGE   | Skor:  3 | Sinyal: GÜÇLÜ POZİTİF
+SLPUSDT      | Fiyat: 0.000548     | 24h:   -0.18% | Trend: NEGATİF          | Hacim: DÜŞÜK       | Konum: ORTA BÖLGE   | Skor: -2 | Sinyal: NEGATİF
+LQTYUSDT     | Fiyat: 0.1839       | 24h:   -0.59% | Trend: NEGATİF          | Hacim: DÜŞÜK       | Konum: ORTA BÖLGE   | Skor: -2 | Sinyal: NEGATİF
+ILVUSDT      | Fiyat: 3.02         | 24h:    0.33% | Trend: POZİTİF          | Hacim: DÜŞÜK       | Konum: ORTA BÖLGE   | Skor:  0 | Sinyal: NÖTR
+ETHFIUSDT    | Fiyat: 0.3832       | 24h:    4.24% | Trend: GÜÇLÜ POZİTİF    | Hacim: ÇOK YÜKSEK  | Konum: ÜST BÖLGE    | Skor:  4 | Sinyal: GÜÇLÜ POZİTİF
+UMAUSDT      | Fiyat: 0.339        | 24h:    0.00% | Trend: NÖTR             | Hacim: DÜŞÜK       | Konum: ÜST BÖLGE    | Skor:  0 | Sinyal: NÖTR
+FIDAUSDT     | Fiyat: 0.01819      | 24h:    1.28% | Trend: POZİTİF          | Hacim: YÜKSEK      | Konum: ORTA BÖLGE   | Skor:  1 | Sinyal: POZİTİF
+ETHUSDT      | Fiyat: 1919.73      | 24h:    0.27% | Trend: POZİTİF          | Hacim: ÇOK YÜKSEK  | Konum: ORTA BÖLGE   | Skor:  2 | Sinyal: POZİTİF
+ARKMUSDT     | Fiyat: 0.0963       | 24h:    0.10% | Trend: POZİTİF          | Hacim: DÜŞÜK       | Konum: ÜST BÖLGE    | Skor:  1 | Sinyal: POZİTİF
+WLDUSDT      | Fiyat: 0.3066       | 24h:    0.95% | Trend: POZİTİF          | Hacim: ÇOK YÜKSEK  | Konum: ORTA BÖLGE   | Skor:  2 | Sinyal: POZİTİF
+TIAUSDT      | Fiyat: 0.3292       | 24h:   -0.24% | Trend: NEGATİF          | Hacim: ÇOK YÜKSEK  | Konum: ÜST BÖLGE    | Skor:  1 | Sinyal: POZİTİF
+BTCUSDT      | Fiyat: 65013.87     | 24h:    0.21% | Trend: POZİTİF          | Hacim: ÇOK YÜKSEK  | Konum: ORTA BÖLGE   | Skor:  2 | Sinyal: POZİTİF
