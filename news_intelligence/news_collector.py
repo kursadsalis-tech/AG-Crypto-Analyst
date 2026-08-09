@@ -2,6 +2,12 @@ import requests
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
+from news_intelligence.news_repository import (
+    create_news_table,
+    save_news_batch,
+    get_news_count,
+)
+
 
 RSS_SOURCES = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
@@ -52,6 +58,8 @@ def fetch_rss(source_name, url):
 
 
 def main():
+    create_news_table()
+
     all_articles = []
 
     for source_name, url in RSS_SOURCES.items():
@@ -69,9 +77,15 @@ def main():
                 f"{source_name}: HATA -> {e}"
             )
 
+    if all_articles:
+        save_news_batch(all_articles)
+
     print()
     print("=" * 70)
     print("AG Crypto Analyst - News Intelligence Agent v0.5.0")
+    print("=" * 70)
+    print(f"Toplam çekilen haber : {len(all_articles)}")
+    print(f"Veritabanındaki haber : {get_news_count()}")
     print("=" * 70)
 
     for article in all_articles[:20]:
