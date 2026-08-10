@@ -55,7 +55,8 @@ def get_entry_candle(connection, symbol, news_time):
     return cursor.fetchone()
 
 
-def get_future_close(connection, symbol, target_time):
+def get_close_at_or_after(connection, symbol, target_time):
+    """Return the first completed candle close at or after the target time."""
     cursor = connection.cursor()
     cursor.execute("""
         SELECT close_time, close
@@ -81,7 +82,7 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
 
     for horizon_name, horizon in HORIZONS.items():
         target_time = entry_time + horizon
-        future = get_future_close(connection, symbol, target_time)
+        future = get_close_at_or_after(connection, symbol, target_time)
         if not future:
             continue
 
@@ -102,7 +103,8 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
             "entry_time": entry_time.isoformat(),
             "entry_price": entry_price,
             "horizon": horizon_name,
-            "target_time": parse_time(future[0]).isoformat(),
+            "target_time": target_time.isoformat(),
+            "exit_time": parse_time(future[0]).isoformat(),
             "exit_price": exit_price,
             "return_pct": round(return_pct, 6),
             "hit": int(hit),
@@ -116,7 +118,7 @@ def save_results(rows):
     fields = [
         "news_id", "coin", "direction", "impact_score", "confidence_score",
         "news_time", "entry_time", "entry_price", "horizon", "target_time",
-        "exit_price", "return_pct", "hit"
+        "exit_time", "exit_price", "return_pct", "hit"
     ]
     with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -127,6 +129,7 @@ def save_results(rows):
 def print_summary(rows):
     print("AG Crypto Analyst - News Signal Backtest")
     print("Entry rule: first 1h candle OPEN at/after the news timestamp")
+    print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
     print()
 
     for horizon in HORIZONS:
