@@ -12,6 +12,12 @@ HORIZONS = {
     "4h": timedelta(hours=4),
     "24h": timedelta(hours=24),
 }
+SCORE_BUCKETS = (
+    ("0-49", 0, 49),
+    ("50-69", 50, 69),
+    ("70-84", 70, 84),
+    ("85-100", 85, 100),
+)
 
 
 def parse_time(value):
@@ -57,6 +63,7 @@ def get_entry_candle(connection, symbol, news_time):
 
 
 def get_close_at_or_after(connection, symbol, target_time):
+    """Return the first completed candle close at or after the target time."""
     cursor = connection.cursor()
     cursor.execute("""
         SELECT close_time, close
@@ -139,6 +146,36 @@ def print_group(label, rows):
     )
 
 
+def score_bucket(value):
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
+
+    for label, low, high in SCORE_BUCKETS:
+        if low <= score <= high:
+            return label
+    return "unknown"
+
+
+def summarize_score(rows, score_name):
+    print(f"{score_name} breakdown:")
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[(row["horizon"], score_bucket(row[score_name]))].append(row)
+
+    for horizon in HORIZONS:
+        print(f"  {horizon}:")
+        found = False
+        for label, _, _ in SCORE_BUCKETS:
+            bucket_rows = grouped.get((horizon, label), [])
+            if bucket_rows:
+                found = True
+                print_group(label, bucket_rows)
+        if not found:
+            print("    veri yok")
+
+
 def summarize(rows):
     grouped = defaultdict(list)
     for row in rows:
@@ -155,8 +192,7 @@ def summarize(rows):
         avg_directional = sum(row["directional_return_pct"] for row in subset) / len(subset)
         print(
             f"{horizon}: n={len(subset)} | "
-            f"hit_rate={hit_rate:.1f}% | "
-            f"avg_return={avg_return:.3f}% | "
+            f"hit_rate={hit_rate:.1f}% | avg_return={avg_return:.3f}% | "
             f"directional_return={avg_directional:.3f}%"
         )
         print_group("positive", grouped.get((horizon, "positive"), []))
@@ -193,6 +229,10 @@ def main():
         print("Directional return: positive keeps return; negative reverses return")
         print()
         summarize(results)
+        print()
+        summarize_score(results, "impact_score")
+        print()
+        summarize_score(results, "confidence_score")
         print()
         print(f"Sonuç dosyası: {OUTPUT_FILE}")
     finally:
