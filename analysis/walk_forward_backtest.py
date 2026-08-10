@@ -1,16 +1,14 @@
 """Leakage-safe expanding walk-forward backtest for News Intelligence.
 
 For every test date, only observations strictly earlier than that date may be
-used to choose the signal policy. The selected policy is then frozen for the
-entire test date. Outcomes from the test date are added only after evaluation,
-so the simulation behaves as if it were actually living through history.
+used to choose the signal policy. The selected policy is frozen for the entire
+test date. Outcomes from the test date are added only after evaluation.
 
-The first adaptive layer deliberately tunes only *when to act* (minimum impact
-and confidence thresholds). It does not retrospectively rewrite the production
-classifier or flip directions using future knowledge.
+Set AGCA_NEWS_DATASET=historical to use the isolated historical GDELT tables.
 """
 
 import csv
+import os
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -19,17 +17,22 @@ from pathlib import Path
 from data.historical_market_data import get_spot_symbols
 
 DB_NAME = "crypto_data.db"
-REPORT_PATH = Path("reports/walk_forward_backtest.csv")
+DATASET = os.getenv("AGCA_NEWS_DATASET", "live").strip().lower()
+REPORT_PATH = Path(
+    "reports/walk_forward_backtest_historical.csv"
+    if DATASET == "historical"
+    else "reports/walk_forward_backtest.csv"
+)
 HORIZONS = {"1h": timedelta(hours=1), "4h": timedelta(hours=4), "24h": timedelta(hours=24)}
 MIN_TRAIN_ROWS = 20
-
-# Small, deliberately constrained policy grid. The point is to adapt to the
-# market without creating a giant hyperparameter search that would overfit.
 IMPACT_THRESHOLDS = (0, 50, 65, 85)
 CONFIDENCE_THRESHOLDS = (0, 70, 85)
 
 
 def parse_time(value):
+    value = str(value).strip()
+    if value.isdigit() and len(value) >= 14:
+        return datetime.strptime(value[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -38,18 +41,32 @@ def parse_time(value):
 
 def load_rows(connection):
     cursor = connection.cursor()
-    cursor.execute("""
-        SELECT n.id, n.published_at, n.title, n.description,
-               a.coins, a.direction, a.event_type, a.impact_score,
-               a.confidence_score, a.matched_keywords
-        FROM crypto_news n
-        JOIN crypto_news_analysis a ON a.news_id = n.id
-        WHERE n.published_at IS NOT NULL
-          AND a.coins IS NOT NULL
-          AND a.coins != 'MARKET'
-          AND a.direction IN ('positive', 'negative')
-        ORDER BY n.published_at ASC, n.id ASC
-    """)
+    if DATASET == "historical":
+        cursor.execute("""
+            SELECT n.id, n.published_at, n.title, '' AS description,
+                   a.coins, a.direction, a.event_type, a.impact_score,
+                   a.confidence_score, a.matched_keywords
+            FROM historical_news_raw n
+            JOIN historical_news_analysis a ON a.historical_news_id = n.id
+            WHERE n.published_at IS NOT NULL
+              AND a.coins IS NOT NULL
+              AND a.coins != 'MARKET'
+              AND a.direction IN ('positive', 'negative')
+            ORDER BY n.published_at ASC, n.id ASC
+        """)
+    else:
+        cursor.execute("""
+            SELECT n.id, n.published_at, n.title, n.description,
+                   a.coins, a.direction, a.event_type, a.impact_score,
+                   a.confidence_score, a.matched_keywords
+            FROM crypto_news n
+            JOIN crypto_news_analysis a ON a.news_id = n.id
+            WHERE n.published_at IS NOT NULL
+              AND a.coins IS NOT NULL
+              AND a.coins != 'MARKET'
+              AND a.direction IN ('positive', 'negative')
+            ORDER BY n.published_at ASC, n.id ASC
+        """)
     return cursor.fetchall()
 
 
@@ -76,10 +93,7 @@ def get_close(connection, symbol, target_time):
 
 
 def evaluate_row(connection, row, symbols):
-    (
-        news_id, published_at, title, description, coins, direction,
-        event_type, impact, confidence, matched,
-    ) = row
+    news_id, published_at, title, description, coins, direction, event_type, impact, confidence, matched = row
     news_time = parse_time(published_at)
     results = []
 
@@ -115,12 +129,10 @@ def evaluate_row(connection, row, symbols):
                 'directional_return': directional,
                 'hit': int(directional > 0),
             })
-
     return results
 
 
 def select_policy(training_rows, horizon):
-    """Choose a policy using only completed outcomes from the past."""
     candidates = []
     horizon_rows = [r for r in training_rows if r['horizon'] == horizon]
 
@@ -137,8 +149,6 @@ def select_policy(training_rows, horizon):
                 continue
             avg = sum(r['directional_return'] for r in subset) / len(subset)
             hit = sum(r['hit'] for r in subset) / len(subset)
-            # Primary objective: average directional return. Secondary: hit
-            # rate. Final tie-break: prefer more observations.
             candidates.append((avg, hit, len(subset), impact_min, confidence_min))
 
     if not candidates:
@@ -212,14 +222,15 @@ def main():
         policy_log = []
 
         print('AG Crypto Analyst - Leakage-Safe Walk-Forward Backtest')
+        print(f'Veri seti: {DATASET}')
         print('Kural: Her test günü yalnızca önceki günlerin sonuçlarından öğrenir.')
+        print(f'Yönlü haber/fiyat sonucu: {len(evaluated)}')
         print(f'Test günleri: {len(dates)}')
         print(f'Minimum eğitim örneği: {MIN_TRAIN_ROWS}')
         print()
 
         for test_date in dates:
             day_rows = [r for r in evaluated if r['news_time'].date() == test_date]
-
             day_output = []
             for horizon in HORIZONS:
                 policy = select_policy(history, horizon)
@@ -235,8 +246,6 @@ def main():
                     day_output.append(enriched)
                 policy_log.append((test_date, horizon, policy))
 
-            # IMPORTANT: only after the entire test day is evaluated do its
-            # outcomes enter history for the next day.
             test_rows.extend(day_output)
             history.extend(day_rows)
 
@@ -244,17 +253,15 @@ def main():
         summarize(test_rows)
         print()
         print('Sonuç dosyası:', REPORT_PATH)
-        print('Model/policy güncellemesi yalnızca geçmiş sonuçlardan yapıldı; gelecek sonuçları aynı günün kararına girmedi.')
+        print('Model/policy güncellemesi yalnızca geçmiş sonuçlardan yapıldı; test gününün sonucu aynı günün kararına girmedi.')
 
         if policy_log:
             print()
             print('Son politika örnekleri:')
             for test_date, horizon, policy in policy_log[-6:]:
                 print(
-                    f"  {test_date} {horizon}: "
-                    f"impact>={policy['impact_min']} | "
-                    f"confidence>={policy['confidence_min']} | "
-                    f"train_n={policy['train_n']} | "
+                    f"  {test_date} {horizon}: impact>={policy['impact_min']} | "
+                    f"confidence>={policy['confidence_min']} | train_n={policy['train_n']} | "
                     f"train_avg={policy['train_avg']:.3f}%"
                 )
     finally:
