@@ -1,10 +1,9 @@
 """Leakage-safe expanding walk-forward backtest for News Intelligence.
 
-For every test date, only observations strictly earlier than that date may be
-used to choose the signal policy. The selected policy is frozen for the entire
-test date. Outcomes from the test date are added only after evaluation.
-
 Set AGCA_NEWS_DATASET=historical to use the isolated historical GDELT tables.
+At every decision timestamp, policy selection may use only outcomes whose
+exit_time is already known. This prevents 4h/24h future results from leaking
+into earlier decisions on the same or following calendar day.
 """
 
 import csv
@@ -113,12 +112,15 @@ def evaluate_row(connection, row, symbols):
             future = get_close(connection, symbol, entry_time + delta)
             if not future:
                 continue
+            exit_time = parse_time(future[0])
             exit_price = float(future[1])
             raw = (exit_price / entry_price - 1.0) * 100.0
             directional = raw if direction == 'positive' else -raw
             results.append({
                 'news_id': news_id,
                 'news_time': news_time,
+                'entry_time': entry_time,
+                'exit_time': exit_time,
                 'coin': coin,
                 'direction': direction,
                 'event_type': event_type,
@@ -174,7 +176,7 @@ def apply_policy(rows, policy):
 def write_report(rows):
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     fields = [
-        'news_id', 'news_time', 'coin', 'direction', 'event_type',
+        'news_id', 'news_time', 'entry_time', 'exit_time', 'coin', 'direction', 'event_type',
         'impact', 'confidence', 'horizon', 'directional_return', 'hit',
         'policy_impact_min', 'policy_confidence_min', 'train_n', 'train_avg',
     ]
@@ -216,25 +218,31 @@ def main():
             print('Walk-forward: fiyat verisiyle eşleşen sonuç yok.')
             return
 
-        dates = sorted({r['news_time'].date() for r in evaluated})
-        history = []
+        # Replay decisions chronologically. Multiple horizons for the same
+        # news/coin decision share the same entry timestamp, but each horizon
+        # learns only from outcomes completed by that timestamp.
+        decision_times = sorted({r['entry_time'] for r in evaluated})
         test_rows = []
         policy_log = []
 
         print('AG Crypto Analyst - Leakage-Safe Walk-Forward Backtest')
         print(f'Veri seti: {DATASET}')
-        print('Kural: Her test günü yalnızca önceki günlerin sonuçlarından öğrenir.')
+        print('Kural: Her karar anında yalnızca exit_time <= karar zamanı olan sonuçlardan öğrenilir.')
         print(f'Yönlü haber/fiyat sonucu: {len(evaluated)}')
-        print(f'Test günleri: {len(dates)}')
+        print(f'Karar zamanı: {len(decision_times)}')
         print(f'Minimum eğitim örneği: {MIN_TRAIN_ROWS}')
         print()
 
-        for test_date in dates:
-            day_rows = [r for r in evaluated if r['news_time'].date() == test_date]
-            day_output = []
+        for decision_time in decision_times:
+            decision_rows = [r for r in evaluated if r['entry_time'] == decision_time]
+            completed_history = [r for r in evaluated if r['exit_time'] <= decision_time]
+
             for horizon in HORIZONS:
-                policy = select_policy(history, horizon)
-                candidates = apply_policy([r for r in day_rows if r['horizon'] == horizon], policy)
+                policy = select_policy(completed_history, horizon)
+                candidates = apply_policy(
+                    [r for r in decision_rows if r['horizon'] == horizon],
+                    policy,
+                )
                 for result in candidates:
                     enriched = dict(result)
                     enriched.update({
@@ -243,24 +251,21 @@ def main():
                         'train_n': policy['train_n'],
                         'train_avg': policy['train_avg'],
                     })
-                    day_output.append(enriched)
-                policy_log.append((test_date, horizon, policy))
-
-            test_rows.extend(day_output)
-            history.extend(day_rows)
+                    test_rows.append(enriched)
+                policy_log.append((decision_time, horizon, policy))
 
         write_report(test_rows)
         summarize(test_rows)
         print()
         print('Sonuç dosyası:', REPORT_PATH)
-        print('Model/policy güncellemesi yalnızca geçmiş sonuçlardan yapıldı; test gününün sonucu aynı günün kararına girmedi.')
+        print('Leakage kontrolü: eğitimde yalnızca karar anında sonucu tamamlanmış gözlemler kullanıldı.')
 
         if policy_log:
             print()
             print('Son politika örnekleri:')
-            for test_date, horizon, policy in policy_log[-6:]:
+            for decision_time, horizon, policy in policy_log[-6:]:
                 print(
-                    f"  {test_date} {horizon}: impact>={policy['impact_min']} | "
+                    f"  {decision_time.isoformat()} {horizon}: impact>={policy['impact_min']} | "
                     f"confidence>={policy['confidence_min']} | train_n={policy['train_n']} | "
                     f"train_avg={policy['train_avg']:.3f}%"
                 )
