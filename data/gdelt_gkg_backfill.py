@@ -15,6 +15,7 @@ import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
+import ssl
 
 BASE_URL = "https://data.gdeltproject.org/gkg/"
 DEFAULT_DAYS = int(os.getenv("GDELT_BACKFILL_DAYS", "7"))
@@ -22,9 +23,21 @@ SOURCES = {"coindesk.com", "cointelegraph.com", "theblock.co"}
 CRYPTO_TERMS = {
     "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "xrp", "crypto",
     "cryptocurrency", "token", "defi", "stablecoin", "blockchain", "binance",
-    "coinbase", "altcoin", "web3", "etf", "btc", "eth"
+    "coinbase", "altcoin", "web3", "etf"
 }
 DB_PATH = os.getenv("AGCA_DB", "crypto_data.db")
+
+
+def build_ssl_context() -> ssl.SSLContext:
+    """Use certifi when available, otherwise fall back to system trust store."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+SSL_CONTEXT = build_ssl_context()
 
 
 def gkg_url(day: datetime) -> str:
@@ -37,7 +50,7 @@ def fetch(url: str, attempts: int = 4) -> bytes:
     for attempt in range(1, attempts + 1):
         try:
             req = Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"})
-            with urlopen(req, timeout=60) as response:
+            with urlopen(req, timeout=60, context=SSL_CONTEXT) as response:
                 return response.read()
         except Exception as exc:
             last = exc
@@ -51,13 +64,9 @@ def clean_source(value: str) -> str:
 
 
 def title_from_row(row: list[str]) -> str:
-    # GKG 2.1: Extras often contains PAGE_TITLE=...
     extras = row[55] if len(row) > 55 else ""
     match = re.search(r"PAGE_TITLE=([^;]+)", extras)
-    if match:
-        return match.group(1).strip()
-    # Fallback: first quoted-looking text in themes/entities is intentionally avoided.
-    return ""
+    return match.group(1).strip() if match else ""
 
 
 def is_crypto(title: str, row: list[str]) -> bool:
@@ -124,6 +133,7 @@ def main() -> None:
     print("AG Crypto Analyst - GDELT GKG Historical Backfill")
     print(f"Pencere: {start.isoformat()} -> {end.isoformat()}")
     print("Kaynak: GDELT günlük GKG arşivi (DOC API kullanılmıyor)")
+    print("SSL: certifi/system CA doğrulaması aktif")
     day = start.replace(hour=0)
     total = 0
     while day.date() <= end.date():
