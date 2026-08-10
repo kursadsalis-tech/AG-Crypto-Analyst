@@ -88,7 +88,8 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
 
         exit_price = float(future[1])
         return_pct = ((exit_price / entry_price) - 1.0) * 100.0
-        hit = return_pct > 0 if direction == "positive" else return_pct < 0
+        directional_return_pct = return_pct if direction == "positive" else -return_pct
+        hit = directional_return_pct > 0
 
         results.append({
             "news_id": news_id,
@@ -104,6 +105,7 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
             "exit_time": parse_time(future[0]).isoformat(),
             "exit_price": exit_price,
             "return_pct": round(return_pct, 6),
+            "directional_return_pct": round(directional_return_pct, 6),
             "hit": int(hit),
         })
 
@@ -115,12 +117,26 @@ def save_results(rows):
     fields = [
         "news_id", "coin", "direction", "impact_score", "confidence_score",
         "news_time", "entry_time", "entry_price", "horizon", "target_time",
-        "exit_time", "exit_price", "return_pct", "hit"
+        "exit_time", "exit_price", "return_pct", "directional_return_pct", "hit"
     ]
     with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def print_group(label, rows):
+    if not rows:
+        return
+    hit_rate = sum(row["hit"] for row in rows) / len(rows) * 100
+    avg_return = sum(row["return_pct"] for row in rows) / len(rows)
+    avg_directional = sum(row["directional_return_pct"] for row in rows) / len(rows)
+    print(
+        f"  {label:<8} n={len(rows)} | "
+        f"hit_rate={hit_rate:.1f}% | "
+        f"avg_return={avg_return:.3f}% | "
+        f"directional_return={avg_directional:.3f}%"
+    )
 
 
 def summarize(rows):
@@ -136,21 +152,15 @@ def summarize(rows):
 
         hit_rate = sum(row["hit"] for row in subset) / len(subset) * 100
         avg_return = sum(row["return_pct"] for row in subset) / len(subset)
+        avg_directional = sum(row["directional_return_pct"] for row in subset) / len(subset)
         print(
             f"{horizon}: n={len(subset)} | "
-            f"hit_rate={hit_rate:.1f}% | avg_return={avg_return:.3f}%"
+            f"hit_rate={hit_rate:.1f}% | "
+            f"avg_return={avg_return:.3f}% | "
+            f"directional_return={avg_directional:.3f}%"
         )
-
-        for direction in ("positive", "negative"):
-            direction_rows = grouped.get((horizon, direction), [])
-            if not direction_rows:
-                continue
-            direction_hit = sum(row["hit"] for row in direction_rows) / len(direction_rows) * 100
-            direction_return = sum(row["return_pct"] for row in direction_rows) / len(direction_rows)
-            print(
-                f"  {direction:<8} n={len(direction_rows)} | "
-                f"hit_rate={direction_hit:.1f}% | avg_return={direction_return:.3f}%"
-            )
+        print_group("positive", grouped.get((horizon, "positive"), []))
+        print_group("negative", grouped.get((horizon, "negative"), []))
 
 
 def main():
@@ -180,6 +190,7 @@ def main():
         print("AG Crypto Analyst - News Signal Backtest")
         print("Entry rule: first 1h candle OPEN at/after the news timestamp")
         print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
+        print("Directional return: positive keeps return; negative reverses return")
         print()
         summarize(results)
         print()
