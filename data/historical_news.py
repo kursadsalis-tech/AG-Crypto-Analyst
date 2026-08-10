@@ -1,14 +1,18 @@
-"""Historical crypto-news backfill using the public GDELT DOC 2.0 API.
+"""Resilient historical crypto-news backfill using the public GDELT DOC 2.0 API.
 
-No API key is required. The backfill searches the configured crypto news
-publishers in small time windows so the result can be replayed chronologically.
-GDELT's first-seen timestamp is stored as the conservative decision timestamp.
+No API key is required. The backfill is intentionally conservative and
+restartable: it stores a per-source checkpoint, retries rate limits/timeouts
+with exponential backoff, and recursively splits busy windows so a GDELT
+result cap cannot silently discard articles.
 """
 
+import json
 import os
+import random
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 
@@ -17,9 +21,12 @@ from news_intelligence.news_repository import create_news_table, get_news_count,
 DB_NAME = "crypto_data.db"
 API_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 PAGE_SIZE = 250
-REQUEST_DELAY = 0.25
-DEFAULT_DAYS = 90
-WINDOW_HOURS = 6
+DEFAULT_DAYS = 30
+WINDOW_HOURS = 24
+MIN_WINDOW_MINUTES = 60
+BASE_DELAY = 2.0
+MAX_RETRIES = 6
+STATE_PATH = Path("reports/gdelt_backfill_state.json")
 
 DOMAINS = {
     "coindesk.com": "CoinDesk",
@@ -46,13 +53,20 @@ def parse_iso(value):
     return dt.astimezone(timezone.utc)
 
 
-def get_oldest_news_timestamp():
-    connection = sqlite3.connect(DB_NAME)
-    cursor = connection.cursor()
-    cursor.execute("SELECT MIN(published_at) FROM crypto_news WHERE published_at IS NOT NULL")
-    row = cursor.fetchone()
-    connection.close()
-    return parse_iso(row[0]) if row and row[0] else None
+def load_state():
+    if not STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_state(state):
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp = STATE_PATH.with_suffix(".tmp")
+    temp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    temp.replace(STATE_PATH)
 
 
 def fetch_window(domain, start_dt, end_dt):
@@ -65,9 +79,43 @@ def fetch_window(domain, start_dt, end_dt):
         "startdatetime": start_dt.strftime("%Y%m%d%H%M%S"),
         "enddatetime": end_dt.strftime("%Y%m%d%H%M%S"),
     }
-    response = requests.get(API_URL, params=params, timeout=45)
-    response.raise_for_status()
-    return response.json().get("articles", [])
+
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.get(API_URL, params=params, timeout=30)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else min(120.0, BASE_DELAY * (2 ** attempt))
+                wait += random.uniform(0.5, 1.5)
+                print(f"    GDELT rate-limit (429), {wait:.1f} sn bekleniyor...")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json().get("articles", [])
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt == MAX_RETRIES - 1:
+                break
+            wait = min(120.0, BASE_DELAY * (2 ** attempt)) + random.uniform(0.5, 1.5)
+            print(f"    Geçici bağlantı hatası, {wait:.1f} sn sonra tekrar...")
+            time.sleep(wait)
+
+    raise RuntimeError(f"GDELT sorgusu başarısız: {last_error}")
+
+
+def fetch_complete_window(domain, start_dt, end_dt):
+    """Fetch a complete interval; split busy intervals at the GDELT cap."""
+    articles = fetch_window(domain, start_dt, end_dt)
+
+    duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
+    if len(articles) < PAGE_SIZE or duration_minutes <= MIN_WINDOW_MINUTES:
+        return articles
+
+    midpoint = start_dt + (end_dt - start_dt) / 2
+    left = fetch_complete_window(domain, start_dt, midpoint)
+    right = fetch_complete_window(domain, midpoint, end_dt)
+    return left + right
 
 
 def normalize_article(article, source_name):
@@ -91,6 +139,7 @@ def normalize_article(article, source_name):
 
 def main():
     create_news_table()
+
     try:
         days = int(os.getenv("GDELT_BACKFILL_DAYS", str(DEFAULT_DAYS)))
     except ValueError:
@@ -99,58 +148,70 @@ def main():
 
     now = datetime.now(timezone.utc)
     requested_start = now - timedelta(days=days)
-    oldest_existing = get_oldest_news_timestamp()
-    if oldest_existing and oldest_existing <= requested_start:
-        print("GDELT backfill: requested history already reaches or exceeds the requested start.")
-        print(f"Veritabanındaki en eski haber: {oldest_existing.isoformat()}")
-        return
+    state = load_state()
 
-    # Extend slightly beyond the current oldest record so the backfill fills
-    # the missing interval instead of repeatedly walking the already-collected range.
-    start_dt = requested_start
-    if oldest_existing and oldest_existing > requested_start:
-        start_dt = requested_start
-
-    print("AG Crypto Analyst - Historical News Backfill")
+    print("AG Crypto Analyst - Resilient Historical News Backfill")
     print("Kaynak: GDELT DOC 2.0 (API anahtarı gerektirmez)")
-    print(f"Pencere : {start_dt.isoformat()} -> {now.isoformat()}")
+    print(f"Pencere : {requested_start.isoformat()} -> {now.isoformat()}")
     print(f"Kaynaklar: {', '.join(DOMAINS.values())}")
-    print(f"Pencere boyutu: {WINDOW_HOURS} saat")
+    print("Özellikler: retry + rate-limit backoff + checkpoint + yoğun pencere bölme")
     print()
 
     total_seen = 0
     total_candidates = 0
-    current = start_dt
 
-    while current < now:
-        window_end = min(current + timedelta(hours=WINDOW_HOURS), now)
-        for domain, source_name in DOMAINS.items():
+    for domain, source_name in DOMAINS.items():
+        key = domain
+        if key in state and state[key].get("next_start"):
+            current = parse_iso(state[key]["next_start"])
+            if current < requested_start:
+                current = requested_start
+        else:
+            current = requested_start
+
+        if current >= now:
+            print(f"{source_name}: tamamlanmış görünüyor, atlanıyor.")
+            continue
+
+        print(f"\n{source_name}: {current.isoformat()} -> {now.isoformat()}")
+
+        while current < now:
+            window_end = min(current + timedelta(hours=WINDOW_HOURS), now)
             try:
-                articles = fetch_window(domain, current, window_end)
+                articles = fetch_complete_window(domain, current, window_end)
                 normalized = [
                     item for article in articles
                     if (item := normalize_article(article, source_name)) is not None
                 ]
                 if normalized:
                     save_news_batch(normalized)
+
                 total_seen += len(articles)
                 total_candidates += len(normalized)
                 print(
-                    f"{current.strftime('%Y-%m-%d %H:%M')} -> {window_end.strftime('%H:%M')} | "
-                    f"{source_name:<14} -> {len(articles):3d} haber"
+                    f"  {current.strftime('%Y-%m-%d %H:%M')} -> "
+                    f"{window_end.strftime('%Y-%m-%d %H:%M')} | "
+                    f"{len(articles):3d} haber"
                 )
+
+                # Checkpoint advances only after a successful complete window.
+                state[key] = {"next_start": window_end.isoformat()}
+                save_state(state)
+                current = window_end
+                time.sleep(BASE_DELAY + random.uniform(0.5, 1.0))
+
             except Exception as exc:
-                print(
-                    f"{current.strftime('%Y-%m-%d %H:%M')} -> {window_end.strftime('%H:%M')} | "
-                    f"{source_name:<14} -> HATA: {exc}"
-                )
-            time.sleep(REQUEST_DELAY)
-        current = window_end
+                print(f"  HATA: {exc}")
+                print("  Bu pencere tamamlanamadı; checkpoint ilerletilmiyor.")
+                print("  Programu yeniden çalıştırmak güvenlidir; aynı pencereden devam eder.")
+                save_state(state)
+                break
 
     print()
     print(f"GDELT'den alınan kayıt: {total_seen}")
     print(f"Normalize edilen aday: {total_candidates}")
     print(f"Veritabanındaki toplam haber: {get_news_count()}")
+    print(f"Checkpoint: {STATE_PATH}")
 
 
 if __name__ == "__main__":
