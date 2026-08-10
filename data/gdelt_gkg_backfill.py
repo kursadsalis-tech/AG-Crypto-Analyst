@@ -23,7 +23,14 @@ from urllib.request import Request, urlopen
 
 BASE_URL = "http://data.gdeltproject.org/gkg/"
 TARGET_DAYS = max(1, int(os.getenv("GDELT_BACKFILL_DAYS", "7")))
-MAX_LOOKBACK_DAYS = max(TARGET_DAYS, int(os.getenv("GDELT_MAX_LOOKBACK_DAYS", "60")))
+# Scan beyond the requested successful-day count so occasional missing archive
+# days do not prevent a 90+ day backfill from completing. The env override can
+# always raise this further for unusually sparse periods.
+DEFAULT_LOOKBACK_DAYS = TARGET_DAYS + max(30, TARGET_DAYS // 3)
+MAX_LOOKBACK_DAYS = max(
+    TARGET_DAYS,
+    int(os.getenv("GDELT_MAX_LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS))),
+)
 SOURCES = {"coindesk.com", "cointelegraph.com", "theblock.co"}
 CRYPTO_TERMS = {
     "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "xrp", "ripple",
