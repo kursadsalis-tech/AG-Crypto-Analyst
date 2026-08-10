@@ -1,10 +1,9 @@
 """Historical GDELT GKG backfill for AG Crypto Analyst.
 
-This version avoids the DOC API and the currently broken TLS hostname on
-`data.gdeltproject.org` by downloading the public read-only GKG archive over
-HTTP. It scans backwards for the latest *available* daily files, so missing
-recent archive days do not fail the whole run. Parsing is schema-tolerant and
-extracts source/date/url/title heuristically across GKG variants.
+Downloads public daily GKG archives over HTTP. If historical data already
+exists, the run resumes immediately before the oldest stored source archive
+instead of downloading recent days again. GDELT_BACKFILL_DAYS therefore means
+how many additional successful archive days to collect in resume mode.
 """
 from __future__ import annotations
 
@@ -23,14 +22,8 @@ from urllib.request import Request, urlopen
 
 BASE_URL = "http://data.gdeltproject.org/gkg/"
 TARGET_DAYS = max(1, int(os.getenv("GDELT_BACKFILL_DAYS", "7")))
-# Scan beyond the requested successful-day count so occasional missing archive
-# days do not prevent a 90+ day backfill from completing. The env override can
-# always raise this further for unusually sparse periods.
 DEFAULT_LOOKBACK_DAYS = TARGET_DAYS + max(30, TARGET_DAYS // 3)
-MAX_LOOKBACK_DAYS = max(
-    TARGET_DAYS,
-    int(os.getenv("GDELT_MAX_LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS))),
-)
+MAX_LOOKBACK_DAYS = max(TARGET_DAYS, int(os.getenv("GDELT_MAX_LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS))))
 SOURCES = {"coindesk.com", "cointelegraph.com", "theblock.co"}
 CRYPTO_TERMS = {
     "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "xrp", "ripple",
@@ -87,10 +80,7 @@ def find_source(row: list[str]) -> str:
 def find_url(row: list[str], source: str) -> str:
     for field in row:
         field = (field or "").strip()
-        if not field.startswith(("http://", "https://")):
-            continue
-        domain = normalize_domain(field)
-        if domain == source:
+        if field.startswith(("http://", "https://")) and normalize_domain(field) == source:
             return field
     return ""
 
@@ -100,8 +90,7 @@ def find_date(row: list[str], fallback_day: datetime) -> str:
         value = (field or "").strip()
         if re.fullmatch(r"\d{14}", value):
             try:
-                dt = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-                return dt.isoformat()
+                return datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).isoformat()
             except ValueError:
                 pass
     return fallback_day.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
@@ -109,10 +98,7 @@ def find_date(row: list[str], fallback_day: datetime) -> str:
 
 def title_from_extras(row: list[str]) -> str:
     joined = "\t".join(row)
-    for pattern in (
-        r"<PAGE_TITLE>(.*?)</PAGE_TITLE>",
-        r"PAGE_TITLE=([^;\t]+)",
-    ):
+    for pattern in (r"<PAGE_TITLE>(.*?)</PAGE_TITLE>", r"PAGE_TITLE=([^;\t]+)"):
         match = re.search(pattern, joined, flags=re.IGNORECASE | re.DOTALL)
         if match:
             return html.unescape(match.group(1).strip())
@@ -125,13 +111,10 @@ def title_from_url(url: str) -> str:
     path = unquote(urlparse(url).path).strip("/")
     if not path:
         return ""
-    slug = path.split("/")[-1]
-    slug = re.sub(r"\.(html?|amp)$", "", slug, flags=re.IGNORECASE)
+    slug = re.sub(r"\.(html?|amp)$", "", path.split("/")[-1], flags=re.IGNORECASE)
     slug = re.sub(r"[-_]+", " ", slug)
     slug = re.sub(r"\s+", " ", slug).strip()
-    if len(slug) < 12:
-        return ""
-    return slug[:500]
+    return slug[:500] if len(slug) >= 12 else ""
 
 
 def is_crypto(title: str, row: list[str]) -> bool:
@@ -152,6 +135,25 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def archive_day_from_source_file(source_file: str) -> datetime | None:
+    match = re.search(r"(\d{8})\.gkg\.csv", source_file or "", flags=re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def resume_day(conn: sqlite3.Connection) -> tuple[datetime, bool]:
+    rows = conn.execute("SELECT DISTINCT source_file FROM historical_news_raw WHERE source_file IS NOT NULL").fetchall()
+    archive_days = [archive_day_from_source_file(row[0]) for row in rows]
+    archive_days = [day for day in archive_days if day is not None]
+    if archive_days:
+        return min(archive_days) - timedelta(days=1), True
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0), False
+
+
 def insert_row(conn, published_at, source, title, url, source_file) -> bool:
     if not title or not url:
         return False
@@ -163,8 +165,7 @@ def insert_row(conn, published_at, source, title, url, source_file) -> bool:
 
 
 def process_payload(day: datetime, payload: bytes, conn: sqlite3.Connection) -> tuple[int, int]:
-    matched = 0
-    added = 0
+    matched = added = 0
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         name = zf.namelist()[0]
         with zf.open(name) as raw:
@@ -182,8 +183,7 @@ def process_payload(day: datetime, payload: bytes, conn: sqlite3.Connection) -> 
                 if not title or not is_crypto(title, row):
                     continue
                 matched += 1
-                published = find_date(row, day)
-                if insert_row(conn, published, source, title, url, name):
+                if insert_row(conn, find_date(row, day), source, title, url, name):
                     added += 1
     conn.commit()
     return matched, added
@@ -192,28 +192,28 @@ def process_payload(day: datetime, payload: bytes, conn: sqlite3.Connection) -> 
 def main() -> None:
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
+    day, resumed = resume_day(conn)
+
     print("AG Crypto Analyst - GDELT GKG Historical Backfill")
-    print(f"Hedef başarılı arşiv günü: {TARGET_DAYS}")
+    print(f"Hedef ek başarılı arşiv günü: {TARGET_DAYS}")
     print(f"Maksimum geriye tarama: {MAX_LOOKBACK_DAYS} gün")
     print("Kaynak: GDELT günlük GKG arşivi (DOC API yok, HTTP read-only archive)")
+    if resumed:
+        print(f"Devam modu: mevcut en eski arşiv gününden önce başlanıyor -> {day.date()}")
+    else:
+        print(f"İlk dolum modu: başlangıç -> {day.date()}")
     print()
 
-    successful_days = 0
-    scanned_days = 0
-    total_added = 0
-    day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-
+    successful_days = scanned_days = total_added = 0
     while successful_days < TARGET_DAYS and scanned_days < MAX_LOOKBACK_DAYS:
         scanned_days += 1
-        url = gkg_url(day)
         try:
-            payload = fetch(url)
+            payload = fetch(gkg_url(day))
         except HTTPError as exc:
             if exc.code == 404:
                 print(f"{day.date()} -> arşiv dosyası yok, geriye geçiliyor")
-                day -= timedelta(days=1)
-                continue
-            print(f"{day.date()} -> HATA: HTTP {exc.code}")
+            else:
+                print(f"{day.date()} -> HATA: HTTP {exc.code}")
             day -= timedelta(days=1)
             continue
         except Exception as exc:
@@ -228,12 +228,11 @@ def main() -> None:
             print(f"{day.date()} -> arşiv bulundu | eşleşen={matched}, yeni={added}")
         except Exception as exc:
             print(f"{day.date()} -> DOSYA İŞLEME HATASI: {exc}")
-
         day -= timedelta(days=1)
 
     conn.close()
     print()
-    print(f"Başarılı arşiv günü: {successful_days}/{TARGET_DAYS}")
+    print(f"Ek başarılı arşiv günü: {successful_days}/{TARGET_DAYS}")
     print(f"Taranan takvim günü: {scanned_days}")
     print(f"Toplam yeni tarihsel haber: {total_added}")
 
