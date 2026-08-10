@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -10,6 +11,11 @@ KLINES_URL = "https://api.binance.com/api/v3/klines"
 EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
 INTERVAL = "1h"
 LIMIT = 1000
+
+
+def dataset_mode():
+    value = os.getenv("AGCA_NEWS_DATASET", "live").strip().lower()
+    return "historical" if value == "historical" else "live"
 
 
 def create_market_klines_table():
@@ -34,14 +40,22 @@ def create_market_klines_table():
     connection.close()
 
 
-def get_news_time_range():
+def get_news_time_range(mode=None):
+    mode = mode or dataset_mode()
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
-    cursor.execute("""
-        SELECT MIN(published_at), MAX(published_at)
-        FROM crypto_news
-        WHERE published_at IS NOT NULL
-    """)
+    if mode == "historical":
+        cursor.execute("""
+            SELECT MIN(published_at), MAX(published_at)
+            FROM historical_news_raw
+            WHERE published_at IS NOT NULL
+        """)
+    else:
+        cursor.execute("""
+            SELECT MIN(published_at), MAX(published_at)
+            FROM crypto_news
+            WHERE published_at IS NOT NULL
+        """)
     row = cursor.fetchone()
     connection.close()
     return row
@@ -75,15 +89,24 @@ def resolve_symbols(coins, spot_symbols):
     return resolved, unresolved
 
 
-def get_analyzed_coins():
+def get_analyzed_coins(mode=None):
+    mode = mode or dataset_mode()
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
-    cursor.execute("""
-        SELECT DISTINCT a.coins
-        FROM crypto_news_analysis a
-        WHERE a.coins IS NOT NULL
-          AND a.coins != 'MARKET'
-    """)
+    if mode == "historical":
+        cursor.execute("""
+            SELECT DISTINCT coins
+            FROM historical_news_analysis
+            WHERE coins IS NOT NULL
+              AND coins != 'MARKET'
+        """)
+    else:
+        cursor.execute("""
+            SELECT DISTINCT a.coins
+            FROM crypto_news_analysis a
+            WHERE a.coins IS NOT NULL
+              AND a.coins != 'MARKET'
+        """)
     rows = cursor.fetchall()
     connection.close()
 
@@ -97,9 +120,13 @@ def get_analyzed_coins():
 
 
 def to_milliseconds(value):
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+    # GKG timestamps may be compact YYYYMMDDHHMMSS; live data is ISO-8601.
+    if isinstance(value, str) and value.isdigit() and len(value) == 14:
+        dt = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    else:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
 
 
@@ -161,12 +188,14 @@ def fetch_symbol_history(symbol, start_ms, end_ms):
 
 def main():
     create_market_klines_table()
-    min_news_time, max_news_time = get_news_time_range()
+    mode = dataset_mode()
+    min_news_time, max_news_time = get_news_time_range(mode)
     if not min_news_time or not max_news_time:
-        print("HATA: crypto_news tablosunda tarihli haber bulunamadı.")
+        table_name = "historical_news_raw" if mode == "historical" else "crypto_news"
+        print(f"HATA: {table_name} tablosunda tarihli haber bulunamadı.")
         return
 
-    analyzed_coins = get_analyzed_coins()
+    analyzed_coins = get_analyzed_coins(mode)
     try:
         spot_symbols = get_spot_symbols()
     except Exception as exc:
@@ -179,6 +208,7 @@ def main():
     end_ms = to_milliseconds(max_news_time) + 24 * 60 * 60 * 1000
 
     print("AG Crypto Analyst - Historical Market Data")
+    print(f"Veri seti        : {mode}")
     print(f"Haber başlangıcı : {min_news_time}")
     print(f"Backtest sonu    : {max_news_time}")
     print("Ufuk             : +24 saat")
