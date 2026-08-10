@@ -6,26 +6,10 @@ import requests
 
 
 DB_NAME = "crypto_data.db"
-BASE_URL = "https://api.binance.com/api/v3/klines"
+KLINES_URL = "https://api.binance.com/api/v3/klines"
+EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
 INTERVAL = "1h"
 LIMIT = 1000
-
-COIN_TO_SYMBOL = {
-    "BTC": "BTCUSDT",
-    "ETH": "ETHUSDT",
-    "XRP": "XRPUSDT",
-    "HYPE": "HYPEUSDT",
-    "CRO": "CROUSDT",
-    "ABTC": "ABTCUSDT",
-    "SOL": "SOLUSDT",
-    "BNB": "BNBUSDT",
-    "ADA": "ADAUSDT",
-    "DOGE": "DOGEUSDT",
-    "TRX": "TRXUSDT",
-    "LINK": "LINKUSDT",
-    "AVAX": "AVAXUSDT",
-    "SUI": "SUIUSDT",
-}
 
 
 def create_market_klines_table():
@@ -61,6 +45,55 @@ def get_news_time_range():
     row = cursor.fetchone()
     connection.close()
     return row
+
+
+def get_spot_symbols():
+    response = requests.get(EXCHANGE_INFO_URL, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+
+    symbols = {}
+    for item in data.get("symbols", []):
+        if (
+            item.get("status") == "TRADING"
+            and item.get("isSpotTradingAllowed")
+            and item.get("quoteAsset") == "USDT"
+        ):
+            symbols[item.get("baseAsset", "").upper()] = item.get("symbol")
+    return symbols
+
+
+def resolve_symbols(coins, spot_symbols):
+    resolved = {}
+    unresolved = []
+    for coin in sorted(coins):
+        symbol = spot_symbols.get(coin.upper())
+        if symbol:
+            resolved[coin.upper()] = symbol
+        else:
+            unresolved.append(coin.upper())
+    return resolved, unresolved
+
+
+def get_analyzed_coins():
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT DISTINCT a.coins
+        FROM crypto_news_analysis a
+        WHERE a.coins IS NOT NULL
+          AND a.coins != 'MARKET'
+    """)
+    rows = cursor.fetchall()
+    connection.close()
+
+    coins = set()
+    for (value,) in rows:
+        for coin in value.split(","):
+            coin = coin.strip().upper()
+            if coin and coin != "MARKET":
+                coins.add(coin)
+    return coins
 
 
 def to_milliseconds(value):
@@ -100,7 +133,7 @@ def fetch_symbol_history(symbol, start_ms, end_ms):
     current_start = start_ms
     while current_start < end_ms:
         response = requests.get(
-            BASE_URL,
+            KLINES_URL,
             params={
                 "symbol": symbol,
                 "interval": INTERVAL,
@@ -133,6 +166,15 @@ def main():
         print("HATA: crypto_news tablosunda tarihli haber bulunamadı.")
         return
 
+    analyzed_coins = get_analyzed_coins()
+    try:
+        spot_symbols = get_spot_symbols()
+    except Exception as exc:
+        print(f"HATA: Binance spot sembolleri alınamadı: {exc}")
+        return
+
+    resolved, unresolved = resolve_symbols(analyzed_coins, spot_symbols)
+
     start_ms = to_milliseconds(min_news_time)
     end_ms = to_milliseconds(max_news_time) + 24 * 60 * 60 * 1000
 
@@ -140,14 +182,21 @@ def main():
     print(f"Haber başlangıcı : {min_news_time}")
     print(f"Backtest sonu    : {max_news_time}")
     print("Ufuk             : +24 saat")
+    print(f"Analiz edilen coin : {len(analyzed_coins)}")
+    print(f"Eşleşen Binance spot : {len(resolved)}")
     print()
 
-    for coin, symbol in COIN_TO_SYMBOL.items():
+    for coin, symbol in sorted(resolved.items()):
         try:
             count = fetch_symbol_history(symbol, start_ms, end_ms)
-            print(f"{coin:<6} {symbol:<12} -> {count} mum")
+            print(f"{coin:<8} {symbol:<12} -> {count} mum")
         except Exception as exc:
-            print(f"{coin:<6} {symbol:<12} -> HATA: {exc}")
+            print(f"{coin:<8} {symbol:<12} -> HATA: {exc}")
+
+    if unresolved:
+        print()
+        print("Binance spot USDT eşleşmesi bulunamayan coinler:")
+        print(", ".join(unresolved))
 
 
 if __name__ == "__main__":
