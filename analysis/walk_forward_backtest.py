@@ -177,7 +177,7 @@ def write_report(rows):
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         'news_id', 'news_time', 'entry_time', 'exit_time', 'coin', 'direction', 'event_type',
-        'impact', 'confidence', 'horizon', 'directional_return', 'hit',
+        'impact', 'confidence', 'matched_keywords', 'horizon', 'directional_return', 'hit',
         'policy_impact_min', 'policy_confidence_min', 'train_n', 'train_avg',
     ]
     with REPORT_PATH.open('w', newline='', encoding='utf-8') as handle:
@@ -218,9 +218,6 @@ def main():
             print('Walk-forward: fiyat verisiyle eşleşen sonuç yok.')
             return
 
-        # Replay decisions chronologically. Multiple horizons for the same
-        # news/coin decision share the same entry timestamp, but each horizon
-        # learns only from outcomes completed by that timestamp.
         decision_times = sorted({r['entry_time'] for r in evaluated})
         test_rows = []
         policy_log = []
