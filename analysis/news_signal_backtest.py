@@ -4,6 +4,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from data.historical_market_data import get_spot_symbols
+
 
 DB_NAME = "crypto_data.db"
 OUTPUT_FILE = Path("reports/news_signal_backtest.csv")
@@ -70,8 +72,7 @@ def get_close_at_or_after(connection, symbol, target_time):
     return cursor.fetchone()
 
 
-def evaluate_signal(connection, news_id, news_time, coin, direction, impact, confidence):
-    symbol = f"{coin}USDT"
+def evaluate_signal(connection, news_id, news_time, coin, symbol, direction, impact, confidence):
     entry = get_entry_candle(connection, symbol, news_time)
     if not entry:
         return []
@@ -94,6 +95,7 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
         results.append({
             "news_id": news_id,
             "coin": coin,
+            "symbol": symbol,
             "direction": direction,
             "impact_score": impact,
             "confidence_score": confidence,
@@ -115,7 +117,7 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
 def save_results(rows):
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     fields = [
-        "news_id", "coin", "direction", "impact_score", "confidence_score",
+        "news_id", "coin", "symbol", "direction", "impact_score", "confidence_score",
         "news_time", "entry_time", "entry_price", "horizon", "target_time",
         "exit_time", "exit_price", "return_pct", "directional_return_pct", "hit"
     ]
@@ -202,28 +204,44 @@ def summarize(rows):
 def main():
     connection = sqlite3.connect(DB_NAME)
     try:
+        try:
+            spot_symbols = get_spot_symbols()
+        except Exception as exc:
+            print(f"HATA: Binance spot sembolleri alınamadı: {exc}")
+            return
+
         signal_rows = load_signal_rows(connection)
         results = []
+        skipped_coins = set()
 
         for news_id, published_at, coins, direction, impact, confidence in signal_rows:
             news_time = parse_time(published_at)
             for coin in coins.split(","):
-                coin = coin.strip()
-                if coin:
-                    results.extend(
-                        evaluate_signal(
-                            connection,
-                            news_id,
-                            news_time,
-                            coin,
-                            direction,
-                            impact,
-                            confidence,
-                        )
+                coin = coin.strip().upper()
+                if not coin:
+                    continue
+
+                symbol = spot_symbols.get(coin)
+                if not symbol:
+                    skipped_coins.add(coin)
+                    continue
+
+                results.extend(
+                    evaluate_signal(
+                        connection,
+                        news_id,
+                        news_time,
+                        coin,
+                        symbol,
+                        direction,
+                        impact,
+                        confidence,
                     )
+                )
 
         save_results(results)
         print("AG Crypto Analyst - News Signal Backtest")
+        print("Symbol rule: Binance active spot USDT symbols resolved dynamically")
         print("Entry rule: first 1h candle OPEN at/after the news timestamp")
         print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
         print("Directional return: positive keeps return; negative reverses return")
@@ -235,6 +253,10 @@ def main():
         print_score_breakdown(results, "confidence_score", "confidence_score")
         print()
         print_baseline_comparison(results)
+        if skipped_coins:
+            print()
+            print("Backtest dışında kalan coinler:")
+            print(", ".join(sorted(skipped_coins)))
         print()
         print(f"Sonuç dosyası: {OUTPUT_FILE}")
     finally:
