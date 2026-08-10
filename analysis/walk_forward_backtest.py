@@ -1,19 +1,32 @@
-"""Walk-forward evaluation for News Intelligence.
+"""Leakage-safe expanding walk-forward backtest for News Intelligence.
 
-The test for each period uses only news/analyzer observations available before
-that period. Price outcomes are used only after the signal timestamp. This is
-an evaluation framework; it does not overwrite the production classifier.
+For every test date, only observations strictly earlier than that date may be
+used to choose the signal policy. The selected policy is then frozen for the
+entire test date. Outcomes from the test date are added only after evaluation,
+so the simulation behaves as if it were actually living through history.
+
+The first adaptive layer deliberately tunes only *when to act* (minimum impact
+and confidence thresholds). It does not retrospectively rewrite the production
+classifier or flip directions using future knowledge.
 """
 
+import csv
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from data.historical_market_data import get_spot_symbols
 
 DB_NAME = "crypto_data.db"
+REPORT_PATH = Path("reports/walk_forward_backtest.csv")
 HORIZONS = {"1h": timedelta(hours=1), "4h": timedelta(hours=4), "24h": timedelta(hours=24)}
 MIN_TRAIN_ROWS = 20
+
+# Small, deliberately constrained policy grid. The point is to adapt to the
+# market without creating a giant hyperparameter search that would overfit.
+IMPACT_THRESHOLDS = (0, 50, 65, 85)
+CONFIDENCE_THRESHOLDS = (0, 70, 85)
 
 
 def parse_time(value):
@@ -27,8 +40,8 @@ def load_rows(connection):
     cursor = connection.cursor()
     cursor.execute("""
         SELECT n.id, n.published_at, n.title, n.description,
-               a.coins, a.direction, a.impact_score, a.confidence_score,
-               a.matched_keywords
+               a.coins, a.direction, a.event_type, a.impact_score,
+               a.confidence_score, a.matched_keywords
         FROM crypto_news n
         JOIN crypto_news_analysis a ON a.news_id = n.id
         WHERE n.published_at IS NOT NULL
@@ -38,6 +51,17 @@ def load_rows(connection):
         ORDER BY n.published_at ASC, n.id ASC
     """)
     return cursor.fetchall()
+
+
+def get_entry(connection, symbol, news_time):
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT open_time, open
+        FROM market_klines
+        WHERE symbol = ? AND interval = '1h' AND open_time >= ?
+        ORDER BY open_time ASC LIMIT 1
+    """, (symbol, news_time.isoformat()))
+    return cursor.fetchone()
 
 
 def get_close(connection, symbol, target_time):
@@ -52,25 +76,25 @@ def get_close(connection, symbol, target_time):
 
 
 def evaluate_row(connection, row, symbols):
-    news_id, published_at, title, description, coins, direction, impact, confidence, matched = row
+    (
+        news_id, published_at, title, description, coins, direction,
+        event_type, impact, confidence, matched,
+    ) = row
     news_time = parse_time(published_at)
     results = []
+
     for coin in coins.split(','):
         coin = coin.strip().upper()
         symbol = symbols.get(coin)
         if not symbol:
             continue
-        cursor = connection.cursor()
-        cursor.execute("""
-            SELECT open_time, open FROM market_klines
-            WHERE symbol = ? AND interval = '1h' AND open_time >= ?
-            ORDER BY open_time LIMIT 1
-        """, (symbol, news_time.isoformat()))
-        entry = cursor.fetchone()
+
+        entry = get_entry(connection, symbol, news_time)
         if not entry:
             continue
         entry_time = parse_time(entry[0])
         entry_price = float(entry[1])
+
         for horizon, delta in HORIZONS.items():
             future = get_close(connection, symbol, entry_time + delta)
             if not future:
@@ -79,22 +103,86 @@ def evaluate_row(connection, row, symbols):
             raw = (exit_price / entry_price - 1.0) * 100.0
             directional = raw if direction == 'positive' else -raw
             results.append({
-                'news_id': news_id, 'news_time': news_time, 'coin': coin,
-                'direction': direction, 'impact': impact, 'confidence': confidence,
-                'matched_keywords': matched or '', 'horizon': horizon,
+                'news_id': news_id,
+                'news_time': news_time,
+                'coin': coin,
+                'direction': direction,
+                'event_type': event_type,
+                'impact': impact,
+                'confidence': confidence,
+                'matched_keywords': matched or '',
+                'horizon': horizon,
                 'directional_return': directional,
                 'hit': int(directional > 0),
             })
+
     return results
+
+
+def select_policy(training_rows, horizon):
+    """Choose a policy using only completed outcomes from the past."""
+    candidates = []
+    horizon_rows = [r for r in training_rows if r['horizon'] == horizon]
+
+    if len(horizon_rows) < MIN_TRAIN_ROWS:
+        return {'impact_min': 0, 'confidence_min': 0, 'train_n': len(horizon_rows), 'train_avg': 0.0}
+
+    for impact_min in IMPACT_THRESHOLDS:
+        for confidence_min in CONFIDENCE_THRESHOLDS:
+            subset = [
+                r for r in horizon_rows
+                if r['impact'] >= impact_min and r['confidence'] >= confidence_min
+            ]
+            if len(subset) < MIN_TRAIN_ROWS:
+                continue
+            avg = sum(r['directional_return'] for r in subset) / len(subset)
+            hit = sum(r['hit'] for r in subset) / len(subset)
+            # Primary objective: average directional return. Secondary: hit
+            # rate. Final tie-break: prefer more observations.
+            candidates.append((avg, hit, len(subset), impact_min, confidence_min))
+
+    if not candidates:
+        return {'impact_min': 0, 'confidence_min': 0, 'train_n': len(horizon_rows), 'train_avg': 0.0}
+
+    best = max(candidates, key=lambda x: (x[0], x[1], x[2]))
+    return {
+        'impact_min': best[3],
+        'confidence_min': best[4],
+        'train_n': best[2],
+        'train_avg': best[0],
+    }
+
+
+def apply_policy(rows, policy):
+    return [
+        r for r in rows
+        if r['impact'] >= policy['impact_min']
+        and r['confidence'] >= policy['confidence_min']
+    ]
+
+
+def write_report(rows):
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        'news_id', 'news_time', 'coin', 'direction', 'event_type',
+        'impact', 'confidence', 'horizon', 'directional_return', 'hit',
+        'policy_impact_min', 'policy_confidence_min', 'train_n', 'train_avg',
+    ]
+    with REPORT_PATH.open('w', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def summarize(rows):
     grouped = defaultdict(list)
     for row in rows:
         grouped[row['horizon']].append(row)
+
     for horizon in HORIZONS:
         subset = grouped[horizon]
         if not subset:
+            print(f"{horizon}: n=0")
             continue
         hit = sum(r['hit'] for r in subset) / len(subset) * 100
         avg = sum(r['directional_return'] for r in subset) / len(subset)
@@ -105,27 +193,70 @@ def main():
     connection = sqlite3.connect(DB_NAME)
     try:
         symbols = get_spot_symbols()
-        rows = load_rows(connection)
-        if not rows:
+        raw_rows = load_rows(connection)
+        if not raw_rows:
             print('Walk-forward: veri yok.')
             return
 
         evaluated = []
-        for row in rows:
+        for row in raw_rows:
             evaluated.extend(evaluate_row(connection, row, symbols))
 
-        # Chronological walk-forward windows. The current v0.5 classifier is
-        # intentionally not modified here; this first pass establishes the
-        # leakage-safe evaluation dataset and chronological coverage.
+        if not evaluated:
+            print('Walk-forward: fiyat verisiyle eşleşen sonuç yok.')
+            return
+
         dates = sorted({r['news_time'].date() for r in evaluated})
-        print('AG Crypto Analyst - Walk-Forward Backtest')
-        print('Rule: each test period is evaluated only after its timestamp.')
-        print(f'Available test dates: {len(dates)}')
-        print(f'Minimum training rows reserved for future adaptive models: {MIN_TRAIN_ROWS}')
+        history = []
+        test_rows = []
+        policy_log = []
+
+        print('AG Crypto Analyst - Leakage-Safe Walk-Forward Backtest')
+        print('Kural: Her test günü yalnızca önceki günlerin sonuçlarından öğrenir.')
+        print(f'Test günleri: {len(dates)}')
+        print(f'Minimum eğitim örneği: {MIN_TRAIN_ROWS}')
         print()
-        summarize(evaluated)
+
+        for test_date in dates:
+            day_rows = [r for r in evaluated if r['news_time'].date() == test_date]
+
+            day_output = []
+            for horizon in HORIZONS:
+                policy = select_policy(history, horizon)
+                candidates = apply_policy([r for r in day_rows if r['horizon'] == horizon], policy)
+                for result in candidates:
+                    enriched = dict(result)
+                    enriched.update({
+                        'policy_impact_min': policy['impact_min'],
+                        'policy_confidence_min': policy['confidence_min'],
+                        'train_n': policy['train_n'],
+                        'train_avg': policy['train_avg'],
+                    })
+                    day_output.append(enriched)
+                policy_log.append((test_date, horizon, policy))
+
+            # IMPORTANT: only after the entire test day is evaluated do its
+            # outcomes enter history for the next day.
+            test_rows.extend(day_output)
+            history.extend(day_rows)
+
+        write_report(test_rows)
+        summarize(test_rows)
         print()
-        print('Not yet auto-tuning production classifier: historical outcomes are evaluation labels only.')
+        print('Sonuç dosyası:', REPORT_PATH)
+        print('Model/policy güncellemesi yalnızca geçmiş sonuçlardan yapıldı; gelecek sonuçları aynı günün kararına girmedi.')
+
+        if policy_log:
+            print()
+            print('Son politika örnekleri:')
+            for test_date, horizon, policy in policy_log[-6:]:
+                print(
+                    f"  {test_date} {horizon}: "
+                    f"impact>={policy['impact_min']} | "
+                    f"confidence>={policy['confidence_min']} | "
+                    f"train_n={policy['train_n']} | "
+                    f"train_avg={policy['train_avg']:.3f}%"
+                )
     finally:
         connection.close()
 
