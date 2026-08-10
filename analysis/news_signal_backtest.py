@@ -1,5 +1,6 @@
 import csv
 import sqlite3
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -56,7 +57,6 @@ def get_entry_candle(connection, symbol, news_time):
 
 
 def get_close_at_or_after(connection, symbol, target_time):
-    """Return the first completed candle close at or after the target time."""
     cursor = connection.cursor()
     cursor.execute("""
         SELECT close_time, close
@@ -88,10 +88,7 @@ def evaluate_signal(connection, news_id, news_time, coin, direction, impact, con
 
         exit_price = float(future[1])
         return_pct = ((exit_price / entry_price) - 1.0) * 100.0
-        hit = (
-            return_pct > 0 if direction == "positive"
-            else return_pct < 0
-        )
+        hit = return_pct > 0 if direction == "positive" else return_pct < 0
 
         results.append({
             "news_id": news_id,
@@ -126,11 +123,10 @@ def save_results(rows):
         writer.writerows(rows)
 
 
-def print_summary(rows):
-    print("AG Crypto Analyst - News Signal Backtest")
-    print("Entry rule: first 1h candle OPEN at/after the news timestamp")
-    print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
-    print()
+def summarize(rows):
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[(row["horizon"], row["direction"])].append(row)
 
     for horizon in HORIZONS:
         subset = [row for row in rows if row["horizon"] == horizon]
@@ -142,9 +138,19 @@ def print_summary(rows):
         avg_return = sum(row["return_pct"] for row in subset) / len(subset)
         print(
             f"{horizon}: n={len(subset)} | "
-            f"hit_rate={hit_rate:.1f}% | "
-            f"avg_return={avg_return:.3f}%"
+            f"hit_rate={hit_rate:.1f}% | avg_return={avg_return:.3f}%"
         )
+
+        for direction in ("positive", "negative"):
+            direction_rows = grouped.get((horizon, direction), [])
+            if not direction_rows:
+                continue
+            direction_hit = sum(row["hit"] for row in direction_rows) / len(direction_rows) * 100
+            direction_return = sum(row["return_pct"] for row in direction_rows) / len(direction_rows)
+            print(
+                f"  {direction:<8} n={len(direction_rows)} | "
+                f"hit_rate={direction_hit:.1f}% | avg_return={direction_return:.3f}%"
+            )
 
 
 def main():
@@ -171,7 +177,11 @@ def main():
                     )
 
         save_results(results)
-        print_summary(results)
+        print("AG Crypto Analyst - News Signal Backtest")
+        print("Entry rule: first 1h candle OPEN at/after the news timestamp")
+        print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
+        print()
+        summarize(results)
         print()
         print(f"Sonuç dosyası: {OUTPUT_FILE}")
     finally:
