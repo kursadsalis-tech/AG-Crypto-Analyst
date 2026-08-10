@@ -1,9 +1,7 @@
 """Resilient historical crypto-news backfill using the public GDELT DOC 2.0 API.
 
-No API key is required. The backfill is intentionally conservative and
-restartable: it stores a per-source checkpoint, retries rate limits/timeouts
-with exponential backoff, and recursively splits busy windows so a GDELT
-result cap cannot silently discard articles.
+No API key is required. The backfill is restartable, rate-limit aware, and
+stores an explicit checkpoint so long runs can be resumed safely.
 """
 
 import json
@@ -21,10 +19,10 @@ from news_intelligence.news_repository import create_news_table, get_news_count,
 DB_NAME = "crypto_data.db"
 API_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 PAGE_SIZE = 250
-DEFAULT_DAYS = 30
+DEFAULT_DAYS = 7
 WINDOW_HOURS = 24
 MIN_WINDOW_MINUTES = 60
-BASE_DELAY = 2.0
+BASE_DELAY = 4.0
 MAX_RETRIES = 6
 STATE_PATH = Path("reports/gdelt_backfill_state.json")
 
@@ -86,8 +84,8 @@ def fetch_window(domain, start_dt, end_dt):
             response = requests.get(API_URL, params=params, timeout=30)
             if response.status_code == 429:
                 retry_after = response.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else min(120.0, BASE_DELAY * (2 ** attempt))
-                wait += random.uniform(0.5, 1.5)
+                wait = float(retry_after) if retry_after else min(180.0, BASE_DELAY * (2 ** attempt))
+                wait += random.uniform(1.0, 2.0)
                 print(f"    GDELT rate-limit (429), {wait:.1f} sn bekleniyor...")
                 time.sleep(wait)
                 continue
@@ -97,7 +95,7 @@ def fetch_window(domain, start_dt, end_dt):
             last_error = exc
             if attempt == MAX_RETRIES - 1:
                 break
-            wait = min(120.0, BASE_DELAY * (2 ** attempt)) + random.uniform(0.5, 1.5)
+            wait = min(180.0, BASE_DELAY * (2 ** attempt)) + random.uniform(1.0, 2.0)
             print(f"    Geçici bağlantı hatası, {wait:.1f} sn sonra tekrar...")
             time.sleep(wait)
 
@@ -107,7 +105,6 @@ def fetch_window(domain, start_dt, end_dt):
 def fetch_complete_window(domain, start_dt, end_dt):
     """Fetch a complete interval; split busy intervals at the GDELT cap."""
     articles = fetch_window(domain, start_dt, end_dt)
-
     duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
     if len(articles) < PAGE_SIZE or duration_minutes <= MIN_WINDOW_MINUTES:
         return articles
@@ -162,12 +159,8 @@ def main():
 
     for domain, source_name in DOMAINS.items():
         key = domain
-        if key in state and state[key].get("next_start"):
-            current = parse_iso(state[key]["next_start"])
-            if current < requested_start:
-                current = requested_start
-        else:
-            current = requested_start
+        current = parse_iso(state[key]["next_start"]) if key in state and state[key].get("next_start") else requested_start
+        current = max(current, requested_start)
 
         if current >= now:
             print(f"{source_name}: tamamlanmış görünüyor, atlanıyor.")
@@ -194,16 +187,15 @@ def main():
                     f"{len(articles):3d} haber"
                 )
 
-                # Checkpoint advances only after a successful complete window.
                 state[key] = {"next_start": window_end.isoformat()}
                 save_state(state)
                 current = window_end
-                time.sleep(BASE_DELAY + random.uniform(0.5, 1.0))
+                time.sleep(BASE_DELAY + random.uniform(1.0, 2.0))
 
             except Exception as exc:
                 print(f"  HATA: {exc}")
                 print("  Bu pencere tamamlanamadı; checkpoint ilerletilmiyor.")
-                print("  Programu yeniden çalıştırmak güvenlidir; aynı pencereden devam eder.")
+                print("  Yeniden çalıştırmak güvenlidir; aynı pencereden devam eder.")
                 save_state(state)
                 break
 
