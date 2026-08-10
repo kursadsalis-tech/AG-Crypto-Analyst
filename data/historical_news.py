@@ -1,27 +1,50 @@
-"""Historical news backfill using the CoinDesk Data API.
+"""Historical crypto-news backfill using the public GDELT DOC 2.0 API.
 
-The live RSS collector remains unchanged. This module is intentionally separate
-so historical research data cannot silently alter the live ingestion path.
-Set COINDESK_API_KEY in the environment before running.
+This module deliberately does not require an API key.  It reconstructs a
+historical, time-ordered news set from public GDELT article metadata and keeps
+the first-seen timestamp as the decision timestamp.  Using first-seen time is
+conservative for leakage-safe backtests: the model is never allowed to act
+before GDELT had observed the article.
+
+The backfill covers the recent historical window supported by the public DOC
+API and is designed to be rerun safely because the news repository de-duplicates
+by URL.
 """
 
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
 from news_intelligence.news_repository import create_news_table, save_news_batch, get_news_count
 
 DB_NAME = "crypto_data.db"
-API_URL = "https://data-api.coindesk.com/news/v1/article/list"
-PAGE_SIZE = 100
-SOURCE_IDS = ["coindesk"]
+API_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+PAGE_SIZE = 250
+REQUEST_DELAY = 0.25
+DEFAULT_DAYS = 90
+
+# Keep the source set aligned with the live AGCA collector while allowing the
+# historical layer to remain independent from any one publisher's API.
+DOMAINS = {
+    "coindesk.com": "CoinDesk",
+    "cointelegraph.com": "Cointelegraph",
+    "theblock.co": "The Block",
+}
+
+CRYPTO_QUERY = (
+    '(bitcoin OR btc OR ethereum OR eth OR xrp OR ripple OR solana OR bnb '
+    'OR cardano OR dogecoin OR tron OR chainlink OR avalanche OR sui '
+    'OR hyperliquid OR crypto OR cryptocurrency OR stablecoin OR bitcoin)'
+)
 
 
-def iso_from_timestamp(ts):
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+def iso_from_gdelt_date(value):
+    """Convert GDELT YYYYMMDDHHMMSS timestamps to UTC ISO-8601."""
+    dt = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def get_oldest_news_timestamp():
@@ -36,88 +59,107 @@ def get_oldest_news_timestamp():
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return int(dt.timestamp())
+    return dt
 
 
-def fetch_batch(api_key, to_ts):
-    response = requests.get(
-        API_URL,
-        params={
-            "lang": "EN",
-            "source_ids": SOURCE_IDS,
-            "limit": PAGE_SIZE,
-            "to_ts": to_ts,
-        },
-        headers={"Authorization": f"Apikey {api_key}"},
-        timeout=30,
-    )
+def fetch_window(domain, start_dt, end_dt):
+    """Fetch up to PAGE_SIZE articles for one source and one UTC day."""
+    params = {
+        "query": f"domain:{domain} {CRYPTO_QUERY}",
+        "mode": "artlist",
+        "maxrecords": PAGE_SIZE,
+        "format": "json",
+        "sort": "datedesc",
+        "startdatetime": start_dt.strftime("%Y%m%d%H%M%S"),
+        "enddatetime": end_dt.strftime("%Y%m%d%H%M%S"),
+    }
+    response = requests.get(API_URL, params=params, timeout=45)
     response.raise_for_status()
-    return response.json().get("Data", [])
+    payload = response.json()
+    return payload.get("articles", [])
 
 
-def normalize_article(article):
-    title = article.get("TITLE") or article.get("title") or ""
-    description = article.get("DESCRIPTION") or article.get("description") or ""
-    link = article.get("URL") or article.get("url") or ""
-    ts = article.get("PUBLISHED_ON") or article.get("published_on")
-    if not ts:
+def normalize_article(article, source_name):
+    title = (article.get("title") or "").strip()
+    link = (article.get("url") or "").strip()
+    seen_date = (article.get("seendate") or "").strip()
+
+    if not title or not link or not seen_date:
         return None
+
+    try:
+        published_at = iso_from_gdelt_date(seen_date)
+    except ValueError:
+        return None
+
     return {
-        "source": "CoinDesk",
+        "source": f"GDELT/{source_name}",
         "title": title,
         "link": link,
-        "description": description,
-        "published_at": iso_from_timestamp(int(ts)),
+        "description": "",
+        "published_at": published_at,
     }
 
 
 def main():
-    api_key = os.getenv("COINDESK_API_KEY")
-    if not api_key:
-        print("HATA: COINDESK_API_KEY tanımlı değil.")
-        print("CoinDesk Data API geçmiş haber arşivini kullanmak için API anahtarı gerekiyor.")
-        return
-
     create_news_table()
-    oldest = get_oldest_news_timestamp()
-    cursor_ts = oldest if oldest is not None else int(datetime.now(tz=timezone.utc).timestamp())
-    total = 0
-    seen_earliest = None
+
+    try:
+        days = int(os.getenv("GDELT_BACKFILL_DAYS", str(DEFAULT_DAYS)))
+    except ValueError:
+        days = DEFAULT_DAYS
+    days = max(1, min(days, 90))
+
+    now = datetime.now(timezone.utc)
+    oldest_existing = get_oldest_news_timestamp()
+    requested_start = now - timedelta(days=days)
+
+    # If the DB already contains older data, only request the missing recent
+    # window. This makes repeated runs incremental rather than wasteful.
+    start_dt = requested_start
+    if oldest_existing and oldest_existing > requested_start:
+        start_dt = requested_start
 
     print("AG Crypto Analyst - Historical News Backfill")
-    print("Kaynak: CoinDesk Data API")
+    print("Kaynak: GDELT DOC 2.0 (API anahtarı gerektirmez)")
+    print(f"Pencere : {start_dt.isoformat()} -> {now.isoformat()}")
+    print(f"Kaynaklar: {', '.join(DOMAINS.values())}")
     print()
 
-    while True:
-        batch = fetch_batch(api_key, cursor_ts)
-        if not batch:
-            break
+    total_seen = 0
+    total_saved_candidates = 0
 
-        articles = []
-        timestamps = []
-        for article in batch:
-            normalized = normalize_article(article)
-            if normalized:
-                articles.append(normalized)
-                timestamps.append(int(article.get("PUBLISHED_ON") or article.get("published_on")))
+    current = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    while current < now:
+        day_end = min(current + timedelta(days=1), now)
 
-        if articles:
-            save_news_batch(articles)
-            total += len(articles)
+        for domain, source_name in DOMAINS.items():
+            try:
+                articles = fetch_window(domain, current, day_end)
+                normalized = []
+                for article in articles:
+                    item = normalize_article(article, source_name)
+                    if item:
+                        normalized.append(item)
 
-        earliest = min(timestamps) if timestamps else None
-        if earliest is None or seen_earliest == earliest:
-            break
-        seen_earliest = earliest
-        cursor_ts = earliest - 1
-        print(f"Toplam yeni/işlenen haber: {total} | geriye gidilen tarih: {iso_from_timestamp(cursor_ts)}")
-        time.sleep(0.25)
+                if normalized:
+                    save_news_batch(normalized)
+                    total_saved_candidates += len(normalized)
+                total_seen += len(articles)
+                print(
+                    f"{current.date()} | {source_name:<14} -> "
+                    f"{len(articles):3d} haber"
+                )
+            except Exception as exc:
+                print(f"{current.date()} | {source_name:<14} -> HATA: {exc}")
 
-        if len(batch) < PAGE_SIZE:
-            break
+            time.sleep(REQUEST_DELAY)
+
+        current = day_end
 
     print()
-    print(f"Bu çalışmada işlenen haber: {total}")
+    print(f"GDELT'den alınan kayıt: {total_seen}")
+    print(f"Veritabanına gönderilen aday: {total_saved_candidates}")
     print(f"Veritabanındaki toplam haber: {get_news_count()}")
 
 
