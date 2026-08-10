@@ -12,6 +12,7 @@ from news_intelligence.news_repository import (
 RSS_SOURCES = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "Cointelegraph": "https://cointelegraph.com/rss",
+    "The Block": "https://www.theblock.co/rss.xml",
 }
 
 
