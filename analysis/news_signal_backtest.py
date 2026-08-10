@@ -12,12 +12,6 @@ HORIZONS = {
     "4h": timedelta(hours=4),
     "24h": timedelta(hours=24),
 }
-SCORE_BUCKETS = (
-    ("0-49", 0, 49),
-    ("50-69", 50, 69),
-    ("70-84", 70, 84),
-    ("85-100", 85, 100),
-)
 
 
 def parse_time(value):
@@ -63,7 +57,6 @@ def get_entry_candle(connection, symbol, news_time):
 
 
 def get_close_at_or_after(connection, symbol, target_time):
-    """Return the first completed candle close at or after the target time."""
     cursor = connection.cursor()
     cursor.execute("""
         SELECT close_time, close
@@ -146,34 +139,40 @@ def print_group(label, rows):
     )
 
 
-def score_bucket(value):
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return "unknown"
-
-    for label, low, high in SCORE_BUCKETS:
-        if low <= score <= high:
-            return label
-    return "unknown"
-
-
-def summarize_score(rows, score_name):
-    print(f"{score_name} breakdown:")
-    grouped = defaultdict(list)
-    for row in rows:
-        grouped[(row["horizon"], score_bucket(row[score_name]))].append(row)
-
+def print_score_breakdown(rows, field, label):
+    bands = ((0, 49), (50, 69), (70, 84), (85, 100))
+    print(f"{label} breakdown:")
     for horizon in HORIZONS:
         print(f"  {horizon}:")
-        found = False
-        for label, _, _ in SCORE_BUCKETS:
-            bucket_rows = grouped.get((horizon, label), [])
-            if bucket_rows:
-                found = True
-                print_group(label, bucket_rows)
-        if not found:
-            print("    veri yok")
+        horizon_rows = [row for row in rows if row["horizon"] == horizon]
+        for low, high in bands:
+            subset = [row for row in horizon_rows if low <= row[field] <= high]
+            if not subset:
+                continue
+            hit_rate = sum(row["hit"] for row in subset) / len(subset) * 100
+            avg_return = sum(row["return_pct"] for row in subset) / len(subset)
+            avg_directional = sum(row["directional_return_pct"] for row in subset) / len(subset)
+            print(
+                f"  {low}-{high:<5} n={len(subset)} | "
+                f"hit_rate={hit_rate:.1f}% | "
+                f"avg_return={avg_return:.3f}% | "
+                f"directional_return={avg_directional:.3f}%"
+            )
+
+
+def print_baseline_comparison(rows):
+    print("baseline comparison:")
+    for horizon in HORIZONS:
+        subset = [row for row in rows if row["horizon"] == horizon]
+        if not subset:
+            continue
+        baseline = sum(row["return_pct"] for row in subset) / len(subset)
+        signal = sum(row["directional_return_pct"] for row in subset) / len(subset)
+        edge = signal - baseline
+        print(
+            f"  {horizon}: signal_directional={signal:.3f}% | "
+            f"always_long={baseline:.3f}% | edge={edge:+.3f}%"
+        )
 
 
 def summarize(rows):
@@ -192,7 +191,8 @@ def summarize(rows):
         avg_directional = sum(row["directional_return_pct"] for row in subset) / len(subset)
         print(
             f"{horizon}: n={len(subset)} | "
-            f"hit_rate={hit_rate:.1f}% | avg_return={avg_return:.3f}% | "
+            f"hit_rate={hit_rate:.1f}% | "
+            f"avg_return={avg_return:.3f}% | "
             f"directional_return={avg_directional:.3f}%"
         )
         print_group("positive", grouped.get((horizon, "positive"), []))
@@ -230,9 +230,11 @@ def main():
         print()
         summarize(results)
         print()
-        summarize_score(results, "impact_score")
+        print_score_breakdown(results, "impact_score", "impact_score")
         print()
-        summarize_score(results, "confidence_score")
+        print_score_breakdown(results, "confidence_score", "confidence_score")
+        print()
+        print_baseline_comparison(results)
         print()
         print(f"Sonuç dosyası: {OUTPUT_FILE}")
     finally:
