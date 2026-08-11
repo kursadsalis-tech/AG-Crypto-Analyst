@@ -1,5 +1,37 @@
 # AG Crypto Analyst - Changelog
 
+## v0.6.0
+
+### Social Sentiment Agent - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- Geniş Reddit kripto topluluk akışından tek istekte 100 güncel paylaşım toplama
+- SQLite kalıcı kayıt ve global external_id tekilleştirme
+- Başlık + gönderi içeriği sentiment analizi
+- Takip listesi aliasları ve dinamik Binance Spot USDT ticker keşfi
+- Belirsiz sosyal ticker yanlış eşleşmelerine karşı koruma
+- Coin bazlı 24 saatlik sentiment özeti
+- Pozitif / negatif / nötr yön sınıflandırması
+- Örneklem, yönlü kanıt ve fikir birliğine dayalı muhafazakâr güven puanı
+- 15 dakikalık rate-safe çalışma aralığı
+- 5 dakikalık canlı ürün döngüsüne hata izolasyonlu entegrasyon
+
+Doğrulama:
+
+- Collector gerçek veride 100 paylaşım aldı.
+- Tekilleştirme testi aynı akışta yeni kayıt=0 üretti.
+- Yanlış LINK eşleşmesi tespit edilip düzeltildi.
+- Analyzer gerçek coin bazlı sinyaller ve muhafazakâr güven puanları üretti.
+- Cadence testi 15 dakika dolmadan ikinci isteği doğru biçimde atladı.
+- NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> SOCIAL SENTIMENT tam cycle testi geçti.
+
+Not:
+
+Özel takip listesindeki düşük hacimli coinler için sosyal örneklem henüz yetersizdir. Düşük güvenli sosyal sonuçlar üretim alarmı veya işlem sinyali sayılmaz; validasyon paralelde devam eder.
+
+---
+
 ## Unreleased - v0.5.x Research / Validation Layer
 
 ### News Intelligence doğrulama ve ürünleştirme
@@ -147,9 +179,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v0.6.0
-Social Sentiment Agent
 
 ## v0.7.0
 On-chain Agent
