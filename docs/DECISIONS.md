@@ -190,3 +190,41 @@ Planlı rapor Europe/Istanbul saat diliminde 11:00'den sonra günde bir kez üre
 
 Ana ürün yol haritasının on modülü v1.2.0 ile tamamlanmıştır. Bundan sonraki geliştirmeler ölçülmüş ihtiyaç, operasyonel güvenilirlik ve gerçek forward kanıt tarafından yönlendirilecektir; sırf yeni mimari eklemek için yeni modül açılmayacaktır.
 
+---
+
+## Karar 015 - Tarihsel Replay Sonucu ve Fiyat-Durum Kuralının Reddi
+
+Decision Engine'in mevcut teknik yön + 24h piyasa yönü + Risk Manager izni
+birleşimi, geleceğe bilgi sızdırmayan tarihsel replay ile ölçülmüştür.
+
+Replay sözleşmesi:
+
+- 13 takip sembolü ve yaklaşık 400 günlük kapalı 1h mum
+- yalnız karar anına kadar kapanmış veriler
+- sonraki mum açılışında giriş
+- 1h, 4h ve 24h sonuç
+- 10 baz puan gidiş-dönüş maliyet
+- kronolojik LEARN / VALIDATION / EXAM
+- gerçek Binance quote volume ve point-in-time Risk Manager
+
+Mevcut politika EXAM'da üç ufukta da negatif net getiri üretmiştir. Önceden
+sabit 36 FOLLOW/CONTRARIAN challenger; teknik güç, momentum ve piyasa durumu
+filtreleriyle, 7 günlük blok güven sınırları kullanılarak denenmiş ve üç
+ufukta da NO_LEARN_EDGE sonucu vermiştir.
+
+Bu nedenle:
+
+- Mevcut fiyat-durum kuralı üretim adayı değildir.
+- Eşikler ve canlı Decision Engine politikası değiştirilmez.
+- Sonuç SHADOW_ONLY kalır.
+- Aynı sürekli-durum kural ailesi üzerinde yeni kombinasyon araması yapılmaz.
+- Fiyat-teknik tarafta yalnız bir önceden tanımlı seyrek geçiş/kırılım
+  hipotezi daha test edilir.
+- Bu hipotez de LEARN edge üretmezse fiyat-teknik optimizasyonu durdurulur ve
+  sonraki araştırma bağımsız katalizör verisine yönelir.
+
+Challenger ailesi tanımlanmadan önce mevcut politikanın toplu EXAM sonucu
+görülmüştür. Bu nedenle challenger EXAM mekanik olarak seçimden saklansa da
+tamamen bakir kanıt sayılmaz; herhangi bir tarihsel başarı yine fresh forward
+doğrulama gerektirir.
+
