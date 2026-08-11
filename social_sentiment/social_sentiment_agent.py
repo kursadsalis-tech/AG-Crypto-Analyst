@@ -225,6 +225,11 @@ def main():
     finally:
         con.close()
 
+    return {
+        "collected": len(collected),
+        "saved": saved,
+    }
+
 
 if __name__ == "__main__":
     main()
