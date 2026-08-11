@@ -1,5 +1,37 @@
 # AG Crypto Analyst - Changelog
 
+## v0.7.0
+
+### On-chain Agent - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- Bitcoin mempool işlem sayısı, vsize ve toplam ücret metrikleri
+- Bitcoin fastest/half-hour/hour/economy fee verileri
+- Ethereum, Solana, BSC, Arbitrum, Base, Avalanche ve Sui güncel DeFi TVL verileri
+- SQLite kalıcı ve idempotent on-chain gözlemleri
+- 15 dakikalık rate-safe on-chain cycle
+- Kaynak hata izolasyonu
+- Sekiz zincir için son 7 günlük tarihsel TVL bootstrap
+- Yaklaşık 24 saatlik (18-30h) değişim analizi
+- WARMING_UP ve NO_DATA veri olgunluğu korumaları
+- Collector + analyzer'ın canlı ürün döngüsüne entegrasyonu
+
+Doğrulama:
+
+- İlk collector testinde 14 metrik, sıfır kaynak hatası.
+- Tarihsel bootstrap testinde 64 gözlem, sıfır hata.
+- Yanlış 43.87 saatlik pencere tespit edilip en yakın ~24 saatlik baseline seçimiyle düzeltildi.
+- Sıfır Celestia TVL verisinin hazır sayılması engellendi.
+- Son analyzer testinde yedi zincir STABLE, Bitcoin ağ metrikleri WARMING_UP.
+- Otomatik On-chain cycle: SUCCESS, metrics=14, analyzed=15, source_errors=0.
+
+Not:
+
+İlk sürüm zincir seviyesi likidite ve Bitcoin ağ sağlığını kapsar. Token transferleri, borsa giriş/çıkışları ve büyük cüzdan hareketleri ileri on-chain/Whale Tracker kapsamındadır. Olgunlaşmamış metrikler işlem veya alarm sinyali değildir.
+
+---
+
 ## v0.6.0
 
 ### Social Sentiment Agent - İlk Çalışan Sürüm
@@ -179,9 +211,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v0.7.0
-On-chain Agent
 
 ## v0.8.0
 Macro Agent
