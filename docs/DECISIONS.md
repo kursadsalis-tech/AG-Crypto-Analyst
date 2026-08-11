@@ -228,3 +228,48 @@ görülmüştür. Bu nedenle challenger EXAM mekanik olarak seçimden saklansa d
 tamamen bakir kanıt sayılmaz; herhangi bir tarihsel başarı yine fresh forward
 doğrulama gerektirir.
 
+---
+
+## Karar 016 - Seyrek Geçiş Sonucu ve Fiyat/Teknik Aramanın Durdurulması
+
+Önceden kayıtlı son fiyat-teknik hipotezi; skor, MACD/EMA sıfır geçişi ve
+kapalı-fiyat 24h kırılım olaylarını coin başına 24 saat cooldown ile sınadı.
+Hacim ve NORMAL piyasa korumalarının sabit varyantları dahil 36 config/horizon,
+10 baz puan maliyet ve 7 günlük blok güven sınırları kullanıldı.
+
+9.576 karar noktasında 68.616 risk-izinli bağlam oluştu; 55.872 bağlam Risk
+Manager tarafından veto edildi, point-in-time boşluk oluşmadı ve config başına
+146-2.107 olay değerlendirildi. 1h, 4h ve 24h ufuklarının hiçbirinde bir config
+LEARN aşamasında pozitif alt güven sınırı üretmedi: üç sonuç da NO_LEARN_EDGE.
+
+Bu nedenle:
+
+- Fiyat/teknik yön kuralı araması durdurulur.
+- Aynı veri üzerinde yeni RSI/MACD/EMA eşiği veya kombinasyonu aranmaz.
+- Teknik veri yalnız risk, piyasa bağlamı ve açıklanabilirlikte kullanılabilir.
+- Canlı Decision Engine politikası değişmez ve ürün SHADOW_ONLY kalır.
+- Sonraki araştırma, fiyat göstergelerinden bağımsız ve kendi zaman damgasına
+  sahip katalizör kanıtıyla sınırlanır.
+
+---
+
+## Karar 017 - Haber Katalizörü İçin Fail-Closed Tarihsel Sözleşme
+
+Eski tarihsel NEWS BASE sonucu; maliyet, aynı-hikâye tekrarı, coin cooldown ve
+zaman-blok korelasyonunu bugünkü standartta taşımadığı için üretim kanıtı kabul
+edilmez. Bağımsız haber katalizörü tek bir önceden sabit laboratuvarla yeniden
+ölçülür.
+
+Laboratuvar yalnız açık coin adı veya güvenli ticker eşleşmesini kullanır;
+belirsiz kısa kelimeleri reddeder. Canonical URL ve 72 saatlik aynı başlık
+tekilleştirilir. GKG gün-noon fallback zamanları dışlanır; kesin olay zamanına
+60 dakika güvenlik gecikmesi eklenir ve sonraki 1h mum açılışında giriş yapılır.
+Coin başına 24 saat cooldown, 10 baz puan maliyet ve 7 günlük blok alt güven
+sınırı zorunludur. Teknik yön seçim filtresi değildir.
+
+Ham veri, zaman, başlık, tekrar, kaynak, fiyat eşleşmesi, örneklem ve coin
+kapsamı önceden sabit kalite kapılarının tamamını geçmezse aday seçimi ve EXAM
+çalışmaz; sonuç DATA_QUALITY_BLOCKED olur. Kapılar geçerse 16 sabit
+FOLLOW/CONTRARIAN config önce LEARN, sonra en fazla ilk üçle VALIDATION ve tek
+dondurulmuş kazananla EXAM akışına girer. Tarihsel geçiş yalnız SHADOW adaydır;
+canlı Risk Manager ve fresh forward kanıt zorunluluğunu aşamaz.
