@@ -388,3 +388,51 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 - BLOCK kararı gelecek Decision Engine tarafından telafi edilemez.
 - Zayıf, PROVISIONAL, WARMING_UP, NO_DATA, UNVERIFIED veya SHADOW_ONLY kanıt güçlü karara dönüştürülemez.
 - Sıradaki ana ürün modülü v1.1.0 Decision Engine'dir.
+
+---
+
+## Oturum 2026-08-11 - v1.1.0 Decision Engine
+
+### Açıklanabilir Gölge Karar Çekirdeği
+
+- Decision Engine v1.1.0, DECISION_POLICY_V1_SHADOW politikasıyla eklendi.
+- 13 risk-kapsamlı coin için kapalı 1h teknik bağlam ve market bağlamı üretildi.
+- Forward, Social, On-chain, Macro, Whale ve Risk kanıtlarının olgunluk durumu tek snapshot'ta görünür tutuldu.
+- PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY kanıtların güçlü ürün kararına çevrilmesi engellendi.
+- Risk Manager BLOCK kararı nihai veto olarak uygulandı.
+- Gölge AL/SAT adayı ile product_decision ayrıldı; ürün kararı SHADOW modunda BEKLE tutuldu.
+
+### Canlı İlk Test
+
+- Risk snapshot=4, market_state=NORMAL, age=0,7 dakika.
+- Forward kanıt SHADOW_ONLY: settled=5, hit=%20, Wilson alt=%3,6, directional return=-%0,013.
+- BTC SAT_ADAYI ve WLD AL_ADAYI oluştu.
+- 10 coin Risk Manager tarafından bloklandı.
+- 13/13 ürün kararı BEKLE kaldı.
+- Kaynak hatası oluşmadı.
+
+### Çakışmasız 1h Gölge Doğrulama
+
+- decision_shadow_predictions tablosu eklendi.
+- Aynı coin için yalnızca bir açık tahmine izin verildi.
+- Açık tahmin sonuçlanmadan 15 dakikalık tekrarların yeni örnek sayılması engellendi.
+- AL ve SAT yönleri için ayrı directional return ve hit hesaplaması eklendi.
+- İlk çalışmada BTC ve WLD için iki açık tahmin kaydedildi; source_errors=0.
+- Deterministik validator kontrolleri 18/18, cadence kontrolleri 6/6 geçti.
+
+### Cadence ve Ana Ürün Entegrasyonu
+
+- Decision Engine 15 dakikalık hata izolasyonlu cycle'a bağlandı.
+- Canlı akış NEWS -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER oldu.
+- Tam ürün döngüsü gerçek veride 10/10 tamamlandı.
+- Hemen sonraki bütünleşik testte Risk Manager ve Decision Engine cadence nedeniyle güvenli biçimde SKIPPED oldu.
+- Ürün alarm köprüsü gönderilen=0, bekleyen=0 kaldı.
+
+### Ürün Kararı
+
+- v1.1.0 Decision Engine çalışan gölge sürümü tamamlandı.
+- Gölge adayları alarm, işlem önerisi veya üretim kararı değildir.
+- İki açık 1h sonuç otomatik cycle ile sonuçlanacaktır.
+- Küçük örneklemde politika/eşik değiştirilmeyecek ve otomatik üretim onayı verilmeyecektir.
+- Ana yol haritasındaki sıradaki modül v1.2.0 Report Generator'dır; Decision Engine doğrulaması paralelde sürecektir.
+
