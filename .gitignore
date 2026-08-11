@@ -15,3 +15,6 @@ reports/decision_engine_transition_selection.csv
 reports/news_catalyst_replay_lab.csv
 reports/news_catalyst_selection.csv
 reports/news_catalyst_data_audit.csv
+reports/forecast_core_lab.csv
+reports/forecast_core_selection.csv
+reports/forecast_core_candidate.json
