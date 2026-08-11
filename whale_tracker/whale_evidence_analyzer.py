@@ -50,13 +50,19 @@ def ensure_snapshot_table(con):
     con.commit()
 
 
+def canonical_chain_name(scan_key):
+    if str(scan_key).startswith("Ethereum"):
+        return "Ethereum"
+    return str(scan_key)
+
+
 def load_scanned_chains(con):
-    return [
-        row[0]
+    return sorted({
+        canonical_chain_name(row[0])
         for row in con.execute(
             "SELECT chain FROM whale_scan_state ORDER BY chain ASC"
         ).fetchall()
-    ]
+    })
 
 
 def load_events(con, cutoff_iso):
