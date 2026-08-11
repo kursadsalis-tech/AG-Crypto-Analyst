@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v0.9.0**
+Proje ürün sürümü: **v1.0.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -45,10 +45,11 @@ Tamamlanan ana ürün modülleri:
 - On-chain Agent ✅
 - Macro Agent ✅
 - Whale Tracker ✅
+- Risk Manager ✅
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v1.0.0 Risk Manager**.
+Ana ürün yol haritasındaki sıradaki yeni modül: **v1.1.0 Decision Engine**.
 
-Forward Shadow V2, Social Sentiment, On-chain, Macro ve Whale Tracker veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
+Forward Shadow V2, Social Sentiment, On-chain, Macro, Whale Tracker ve Risk Manager süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
 ---
 
@@ -107,11 +108,13 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> RISK MANAGER -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER
 - Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - On-chain cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - Macro cadence: 6 saat; ara cycle'larda güvenli biçimde atlanır
 - Whale Tracker cadence: 5 dakika; BTC, native ETH ve Ethereum ERC-20 kaynakları birbirinden izole çalışır
+- Risk Manager cadence: 15 dakika; canlı ürün akışında alarm köprüsünden önce çalışır
+- Tam canlı ürün akışı 9/9 adımla gerçek veride doğrulandı
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
 
 ---
@@ -198,13 +201,37 @@ Brüt transfer/çıktı toplamı net akış değildir. Change, self-transfer, mi
 
 ---
 
+## 5E. RISK MANAGER - v1.0.0 TAMAMLANDI
+
+İlk çalışan sürüm, sinyal üretmek yerine diğer modüllerin aşamayacağı fail-closed risk sınırları olarak gerçek veride doğrulandı.
+
+Tamamlananlar:
+
+- BTC, ETH ve 11 öncelikli coin için 169 kapalı 1h mumdan 24h getiri, 24h fiyat aralığı, saatlik volatilite, 7 günlük düşüş ve 24h spot hacim vekili hesabı
+- Coin bazlı NORMAL / ELEVATED / HIGH / EXTREME risk sınıfı
+- Toplam maruziyet, altcoin maruziyeti, tek pozisyon, işlem başı risk, günlük kayıp ve yeni pozisyon tavanları
+- Eksik BTC veya <%80 veri kapsamı için DATA_BLOCKED; aşırı piyasa stresi için LOCKDOWN
+- Düşük hacimli coin riskini global piyasa stresinden ayıran kalibrasyon
+- risk_policy_snapshots ve asset_risk_snapshots kalıcı kayıtları
+- 15 dakikalık cadence, kaynak izolasyonu ve canlı ürün akışında alarm köprüsünden önce entegrasyon
+- Forward Shadow için fail-closed Signal Risk Gate ve idempotent risk_gate_decisions kayıtları
+- Ürün alarmının yalnızca güncel risk politikası, izinli coin ve yeterli forward kanıt birlikte varsa gönderilmesi
+
+Son canlı piyasa testinde kapsam 13/13, dinamik piyasa stresi 0/13 ve global durum NORMAL oldu. BTC ve ETH için azami pozisyon tavanı %10, WLD için %5; 24h spot hacmi 2 milyon doların altında kalan 10 coin yeni pozisyona kapalı kaldı. İlk yanlış LOCKDOWN sonucu, yapısal düşük hacmin global stres sayılmasından kaynaklandığı için düzeltildi.
+
+Forward üretim kapısı için asgari koşullar: en az 30 sonuçlanmış multifactor tahmini, en az %60 hit rate, %95 Wilson alt sınırı en az %50, pozitif ortalama directional return ve 30 dakikadan yeni risk snapshot'ıdır. Mevcut gerçek sonuçlar settled=5, hit=%20, Wilson alt=%3,6 ve directional return=-%0,013 olduğu için SHADOW_ONLY kalır; ürün alarmı üretemez.
+
+Bu limitler getiri tahmini veya işlem tavsiyesi değildir. QVOL emir defteri derinliği değil, 24 saatlik spot hacim vekilidir. Risk kapısı onayı da işlem emri değil, yalnızca alarm gösterme iznidir.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
 
 ARKM, FIDA, WLD, TIA, ETHFI, BIO, LQTY, ILV, SLP, UMA, IO
 
-News Analyzer bu coinler için açık alias desteği içerir. Whale Tracker ilk token kapsamı Ethereum ana ağındaki doğrulanmış ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA kontratlarıdır; diğer zincirlerdeki takip-listesi varlıkları destekleniyor gibi gösterilmez.
+News Analyzer bu coinler için açık alias desteği içerir. Whale Tracker ilk token kapsamı Ethereum ana ağındaki doğrulanmış ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA kontratlarıdır; diğer zincirlerdeki takip-listesi varlıkları destekleniyor gibi gösterilmez. Risk Manager BTC, ETH ve 11 coinlik öncelikli listenin Binance Spot USDT verisini kapsar; kapsam dışı dinamik coin, risk profili oluşmadan üretim alarmına giremez.
 
 Ek olarak Binance Spot USDT ticker keşfi dinamik hale getirildi. Hedef, sistemin yalnızca önceden belirlenmiş coinlere bağlı kalmaması; yarın yeni bir coin piyasaya çıktığında ve ilgili fırsat/haber oluştuğunda da tespit edebilmesidir.
 
@@ -224,6 +251,7 @@ Kritik alarm prensibi:
 - Önemli gelişme yoksa bildirim gönderilmez.
 - Büyük token unlock, güvenlik olayı, listing/delist, olağanüstü balina/on-chain hareketi, piyasa yapısını değiştirecek haber veya güçlü AGCA/Forward Shadow sinyali varsa kullanıcı uyarılır.
 - Ham büyük transfer veya çıktı tek başına alarm değildir; balina alarmı için yön ve borsa bağlamı doğrulanmalıdır.
+- Forward Shadow üründe SHADOW_ONLY'dır; Signal Risk Gate izin vermedikçe yönlü ürün alarmı gönderilmez.
 - Saatlik görev gerçek zamanlı saniyelik izleme değildir; kritik gelişme bir sonraki saatlik kontrolde bildirilir.
 
 Telegram katmanı yardımcı/opsiyonel altyapıdır; ana kullanıcı bildirim kanalı olarak zorunlu değildir.
@@ -243,7 +271,8 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 5. On-chain 24h geçmişini ve veri kalitesini paralel izlemeye devam et; WARMING_UP/NO_DATA metriklerini karara dahil etme.
 6. Macro rejim snapshot'larını paralel biriktir; PROVISIONAL etiketi alarm veya işlem sinyali olarak kullanma.
 7. Whale Tracker kanıtlarını paralel biriktir; UNVERIFIED hareketleri alarm veya işlem sinyali sayma.
-8. Ana ürün yol haritasında **v1.0.0 Risk Manager** geliştirmesine geç.
+8. Risk Manager snapshot ve kapı kararlarını paralel biriktir; limitleri sinyal gücü gibi yorumlama.
+9. Ana ürün yol haritasında **v1.1.0 Decision Engine** geliştirmesine geç.
 
 ---
 
