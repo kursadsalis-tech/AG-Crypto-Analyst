@@ -253,3 +253,55 @@ Bu sonuç doğrulanmış işlem sinyali değildir.
 - Forward Shadow, Social Sentiment, On-chain ve Macro paralelde veri toplamaya devam edecek.
 - Sıradaki ana modül v0.9.0 Whale Tracker'dır.
 
+
+---
+
+## Oturum 2026-08-11 - v0.9.0 Whale Tracker
+
+### Bitcoin Kanıt Toplama
+
+Doğrulanmış Blockchain.com blok verisi ve Binance BTCUSDT fiyatıyla 10 milyon dolar üstü tekil Bitcoin çıktıları izlenmeye başlandı.
+
+İlk gerçek taramada:
+
+- blok 962.051: 8 eşik üstü çıktı
+- blok 962.052: 1 eşik üstü çıktı
+- 24 saatlik toplam: 9 olay, 9 benzersiz işlem
+- brüt çıktı tahmini: yaklaşık 308,2 milyon dolar
+- en büyük tekil çıktı: yaklaşık 83,0 milyon dolar
+
+Bu çıktılar change veya self-transfer olabileceği için borsa akışı ya da alım/satım sayılmadı.
+
+### Ethereum Native ve ERC-20 Kanıtı
+
+Ethereum PublicNode JSON-RPC safe bloklarıyla iki ayrı kaynak geliştirildi:
+
+- 10 milyon dolar üstü üst-seviye native ETH transferleri
+- doğrulanmış kontratlarda 10 milyon dolar üstü ERC-20 Transfer olayları
+
+İlk ERC-20 kapsamı: ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA. Kontrat decimals değerleri due tarama öncesinde zincir üstünde doğrulanır; fiyatlar Binance public spot verisinden alınır.
+
+Son canlı test:
+
+- Bitcoin blok: 0 yeni
+- native ETH: 32 safe blok, 0 olay
+- ERC-20: 1 safe blok, 7 kontrat doğrulandı, 0 olay
+- kaynak hatası: 0
+- cross-chain durum: MONITOR_ONLY
+- alarm uygun olay: 0
+
+### Analyzer, Cadence ve Ürün Entegrasyonu
+
+- whale_events ve bağımsız whale_scan_state kayıtları eklendi.
+- 24 saatlik cross-chain evidence analyzer geliştirildi.
+- BTC, native ETH ve ERC-20 kaynakları birbirinden izole edildi.
+- Whale Tracker 5 dakikalık cadence ile canlı ürün döngüsüne sekizinci adım olarak bağlandı.
+- Ham transferlerin net akış olmadığı ve doğrulanmamış olayların alarm üretemeyeceği ürün politikasına bağlandı.
+
+### Ürün Kararı
+
+- v0.9.0 Whale Tracker ilk çalışan sürüm olarak tamamlandı.
+- Kapsanmayan zincir/tokenlar destekleniyor gibi gösterilmeyecek.
+- UNVERIFIED olaylar alarm, işlem sinyali veya Decision Engine girdisi olmayacak.
+- Forward Shadow, Social Sentiment, On-chain, Macro ve Whale Tracker paralelde veri toplamaya devam edecek.
+- Sıradaki ana ürün modülü v1.0.0 Risk Manager'dır.
