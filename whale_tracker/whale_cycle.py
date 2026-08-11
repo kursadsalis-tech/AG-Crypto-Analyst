@@ -4,7 +4,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from whale_tracker import bitcoin_whale_analyzer, bitcoin_whale_collector
+from whale_tracker import (
+    bitcoin_whale_collector,
+    ethereum_whale_collector,
+    whale_evidence_analyzer,
+)
 
 
 DB_NAME = "crypto_data.db"
@@ -76,32 +80,60 @@ def main(force=False):
             return {"status": "SKIPPED"}
 
         try:
-            collection = bitcoin_whale_collector.main()
-            if not collection:
-                raise RuntimeError("Bitcoin whale collector sonuç döndürmedi")
+            results = {}
+            source_errors = {}
+            collectors = (
+                ("btc", bitcoin_whale_collector.main),
+                ("eth", ethereum_whale_collector.main),
+            )
+            for source_name, collector in collectors:
+                try:
+                    result = collector()
+                    if not result:
+                        raise RuntimeError("collector sonuç döndürmedi")
+                    results[source_name] = result
+                except Exception as exc:
+                    source_errors[source_name] = str(exc)
+                    print(f"Whale Tracker {source_name.upper()}: HATA -> {exc}")
 
-            if collection["blocks_scanned"] <= 0:
-                message = (
-                    f"latest_height={collection['latest_height']} | "
-                    "blocks_scanned=0 | analysis=UNCHANGED"
+            if not results:
+                joined = " | ".join(
+                    f"{name}={message}"
+                    for name, message in source_errors.items()
                 )
-                save_state(con, "SUCCESS", message, now)
-                print(f"Whale Tracker cycle: SUCCESS | {message}")
-                return {"status": "SUCCESS", "message": message}
+                raise RuntimeError(f"tüm whale kaynakları başarısız: {joined}")
 
-            analysis = bitcoin_whale_analyzer.main()
+            btc = results.get("btc", {})
+            eth = results.get("eth", {})
+            btc_blocks = int(btc.get("blocks_scanned", 0))
+            eth_blocks = int(eth.get("blocks_scanned", 0))
+            total_blocks = btc_blocks + eth_blocks
+            total_new = int(btc.get("inserted", 0)) + int(eth.get("inserted", 0))
+            cycle_status = "PARTIAL" if source_errors else "SUCCESS"
+
+            if total_blocks <= 0:
+                message = (
+                    f"btc_blocks={btc_blocks} | eth_blocks={eth_blocks} | "
+                    f"new=0 | source_errors={len(source_errors)} | "
+                    "analysis=UNCHANGED"
+                )
+                save_state(con, cycle_status, message, now)
+                print(f"Whale Tracker cycle: {cycle_status} | {message}")
+                return {"status": cycle_status, "message": message}
+
+            analysis = whale_evidence_analyzer.main()
             message = (
-                f"latest_height={collection['latest_height']} | "
-                f"blocks_scanned={collection['blocks_scanned']} | "
-                f"detected={collection['detected']} | "
-                f"new={collection['inserted']} | "
+                f"btc_blocks={btc_blocks} | eth_blocks={eth_blocks} | "
+                f"btc_detected={int(btc.get('detected', 0))} | "
+                f"eth_detected={int(eth.get('detected', 0))} | "
+                f"new={total_new} | source_errors={len(source_errors)} | "
                 f"window_events={analysis['event_count']} | "
                 f"alert_eligible={analysis['alert_eligible_count']} | "
                 f"analysis={analysis['status']}"
             )
-            save_state(con, "SUCCESS", message, now)
-            print(f"Whale Tracker cycle: SUCCESS | {message}")
-            return {"status": "SUCCESS", "message": message}
+            save_state(con, cycle_status, message, now)
+            print(f"Whale Tracker cycle: {cycle_status} | {message}")
+            return {"status": cycle_status, "message": message}
         except Exception as exc:
             message = str(exc)
             save_state(con, "ERROR", message)
