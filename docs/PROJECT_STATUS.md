@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v0.5.0**
+Proje ürün sürümü: **v0.6.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -41,10 +41,11 @@ Tamamlanan ana ürün modülleri:
 - Market Analyzer ✅
 - Technical Analysis Agent ✅
 - News Intelligence Agent ✅
+- Social Sentiment Agent ✅
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v0.6.0 Social Sentiment Agent**.
+Ana ürün yol haritasındaki sıradaki yeni modül: **v0.7.0 On-chain Agent**.
 
-Ancak şu an aktif çalışma önceliği, v0.5.0 News Intelligence sinyallerinin gerçek tahmin değerini doğrulayan Forward Shadow Validation verisinin birikmesi ve bu çıktının günlük rapor/kritik alarm sistemine entegre edilmesidir.
+Forward Shadow V2 ve Social Sentiment veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
 ---
 
@@ -103,8 +104,29 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW SETTLE/RECORD
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT
+- Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
+
+---
+
+## 5A. SOCIAL SENTIMENT AGENT - v0.6.0 TAMAMLANDI
+
+İlk çalışan sürüm gerçek Reddit topluluk verisiyle doğrulandı.
+
+Tamamlananlar:
+
+- Tek istekte geniş kripto topluluk akışından 100 güncel paylaşım toplama
+- SQLite kalıcı kayıt ve global external_id tekilleştirme
+- Başlık + gönderi içeriği analizi
+- Takip listesi aliasları ve dinamik Binance ticker keşfi
+- LINK/GMT/ALT gibi belirsiz ticker yanlış eşleşmelerine karşı koruma
+- Coin bazlı 24 saatlik pozitif/negatif/nötr sentiment özeti
+- Örneklem, yönlü kanıt ve fikir birliğine dayalı muhafazakâr güven puanı
+- 15 dakikalık rate-safe cadence
+- Mevcut 5 dakikalık canlı ürün döngüsüne hata izolasyonlu entegrasyon
+
+İlk canlı testte BTC, ETH ve bazı büyük coinlerde veri oluştu. Özel takip listesindeki düşük hacimli coinler için örneklem henüz yetersizdir. Düşük güvenli sosyal sonuçlar alarm veya işlem sinyali olarak kullanılmayacak; veri birikimi ve ileri validasyon paralelde sürecektir.
 
 ---
 
@@ -145,11 +167,11 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Forward Shadow V2'nin gerçek sinyal üretmeye başladığını ve 1h sonuçların düzenli settle edildiğini kontrol et.
-2. Yeterli forward örneklem oluşunca NEWS BASE vs MULTIFACTOR gerçek forward performansını değerlendir.
-3. Günlük 11:00 yatırım komitesi raporunda Forward Shadow performansını karar bağlamına dahil et.
+1. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+2. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
+3. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
 4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
-5. Araştırma ürünü geciktirmeyecek şekilde ana yol haritasındaki v0.6.0 Social Sentiment Agent'a geçiş zamanını belirle.
+5. Ana ürün yol haritasında **v0.7.0 On-chain Agent** geliştirmesine geç.
 
 ---
 
