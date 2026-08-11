@@ -1,101 +1,102 @@
 # AG Crypto Analyst - Session Log
 
-## Oturum 2026-08-10
+## Oturum 2026-08-11
 
-### Oturumun Amacı
+### Oturumun Ana Amacı
 
-Proje hafıza sisteminin güncellenmesi ve ana ürün hedefinin/yol haritasının kalıcı hale getirilmesi.
+News Intelligence sinyallerini yalnızca tarihsel backtest ile değil, gerçek gelecekte leakage olmadan doğrulamak ve bu doğrulama katmanını çalışan ürüne bağlamak.
 
-### Tespit Edilen Problem
+### Tarihsel Araştırma Özeti
 
-Önceki proje hafıza dosyalarının bir kısmı eski sürümlerde kalmıştı.
+Yaklaşık 360 günlük haber/fiyat veri seti üzerinde aşağıdaki laboratuvarlar tamamlandı:
 
-Özellikle:
+- leakage-safe walk-forward
+- locked out-of-sample validation
+- rolling research lab
+- policy robustness
+- frozen monthly stress test
+- market regime analysis
+- regime-aware validation
+- high-confidence calibration
+- news + technical confluence
+- weighted multifactor champion/challenger
+- multifactor robustness
+- adaptive dual-champion
 
-- TASKS.md eski görevleri gösteriyordu.
-- SESSION_LOG.md eski geliştirme aşamasını gösteriyordu.
-- PROJECT_STATUS.md ana ürün hedefini ve tam yol haritasını yeterince açık göstermiyordu.
+Base 1h news policy yaklaşık %77.6 frozen EXAM hit rate üretti.
 
-Bu durum yeni oturumlarda projenin gerçek mevcut durumunun yanlış anlaşılmasına yol açabilirdi.
+Weighted REGIME_AWARE multifactor aday model base'i bazı frozen karşılaştırmalarda geçti ve robustness analizinde ROBUST_B statüsü aldı.
 
-### Yapılan Düzeltmeler
+Adaptive dual-champion selector sabit multifactor modele göre daha zayıf kaldığı için reddedildi.
 
-PROJECT_STATUS.md güncellendi.
+Aynı tarihsel veriyi daha fazla optimize ederek overfitting riskini artırmamak için model donduruldu ve forward aşamasına geçildi.
 
-Artık aşağıdakileri açıkça içeriyor:
+### Forward Shadow Validation
 
-- Projenin nihai hedefi
-- Değişmez ana ürün yol haritası
-- Mevcut sürüm
-- Tamamlanan modüller
-- Sıradaki modül
-- Çalışma prensipleri
-- Proje hafıza sistemi
+İlk Forward Shadow V1 çalıştırmasında eski haberler ilk görülme anı "şimdi" kabul edilerek 16 tahmin oluşturuldu. Bunun gerçek forward olmadığı fark edildi.
 
-TASKS.md güncellendi.
+Düzeltme yapıldı:
 
-Artık:
+- V1 kayıtları INVALID_PRESTART_SEED olarak geçersiz sayıldı.
+- REGIME_AWARE_FORWARD_V2 oluşturuldu.
+- Forward başlangıcı: 2026-08-11T01:29:56.397166+00:00
+- Yalnızca bu başlangıçtan sonra ilk kez toplanan haberler tahmin doğurabilir.
+- Horizon 1h.
+- Cutoff 0.249 frozen.
+- Ağırlıklar sonuçlara bakılarak değiştirilmeyecek.
 
-- Ana ürün yol haritasını
-- Tamamlanan sürümleri
-- Mevcut v0.5.0 görevini
-- News Intelligence Agent görevlerini
+V2 temiz scoreboard ile başladı: settled=0, open=0.
 
-içeriyor.
+### Otomasyon
 
-CHANGELOG.md güncellendi.
+Forward cycle tek akışa bağlandı:
 
-Tamamlanan sürümler ve gelecek sürümler doğru sırayla kaydedildi.
+NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW SETTLE/RECORD
 
-### Mevcut Proje Durumu
+Mac LaunchAgent kuruldu:
 
-Sürüm: v0.4.0
+- Label: com.agca.forward-shadow
+- Aralık: 5 dakika
+- launchctl doğrulaması: runs=2, last exit code=0
+- Log üzerinden otomatik cycle başarıyla doğrulandı.
 
-Tamamlanan son modül:
+### Coin Kapsamı
 
-Technical Analysis Agent
+Takip listesi aliasları News Analyzer'a eklendi:
 
-Sıradaki modül:
+ARKM, FIDA, WLD, TIA, ETHFI, BIO, LQTY, ILV, SLP, UMA, IO
 
-v0.5.0 - News Intelligence Agent
+Ayrıca Binance Spot USDT ticker keşfi dinamik hale getirildi. Amaç sistemin yalnızca sabit coin listesine bağlı kalmaması ve yeni coin fırsatlarını da tespit edebilmesi.
 
-### Ana Ürün Hedefi
+### Bildirim ve Rapor Kararı
 
-"Dünyanın en başarılı tahminlerini yapan bir kripto tahmin ve analiz sistemi" oluşturmak.
+Telegram yardımcı altyapı olarak denendi ancak ana kullanıcı bildirim kanalı olarak gerekli olmadığına karar verildi.
 
-### Ana Yol Haritası
+ChatGPT görevleri yeniden aktif edildi:
 
-1. Market Data Agent ✅
-2. Technical Analysis Agent ✅
-3. News Intelligence Agent
-4. Social Sentiment Agent
-5. On-chain Agent
-6. Macro Agent
-7. Whale Tracker
-8. Risk Manager
-9. Decision Engine
-10. Report Generator
+- Günlük Kripto Brifingi: 11:00
+- Kripto Kritik Gelişme Takibi: saatlik condition watch
 
-### Sonraki Oturum
+Kritik gelişme takibi yalnızca gerçekten anlamlı gelişme olduğunda bildirim gönderecek; önemli olay yoksa sessiz kalacak.
 
-v0.5.0 - News Intelligence Agent geliştirmesine başlanacak.
+### Ürün Kararları
 
-İlk hedef:
+- Araştırma ürünü geciktirmemeli.
+- Forward validation paralelde veri toplamaya devam ederken ana yol haritası ilerlemeli.
+- Yeni oturumlarda kullanıcı proje geçmişini yeniden anlatmayacak.
+- Resmi hafıza dosyaları ve GitHub kodu başlangıç referansı olacak.
 
-Haber veri kaynağının belirlenmesi ve News Intelligence Agent'ın ürün hedefimize uygun şekilde tasarlanması.
+### Bir Sonraki Oturum
 
-### Çalışma Prensibi
+Önce Forward Shadow V2 durumunu kontrol et:
 
-Yeni oturumlarda proje geçmişi yeniden oluşturulmayacak.
+1. İlk gerçek open/settled forward tahminleri oluşmuş mu?
+2. LaunchAgent hâlâ sağlıklı mı?
+3. NEWS BASE vs MULTIFACTOR scoreboard nasıl gelişiyor?
+4. Günlük ve kritik ChatGPT görevleri aktif mi?
 
-PROJECT_STATUS.md temel başlangıç noktası olarak kullanılacak.
+Ardından ürün yol haritasında v0.6.0 Social Sentiment Agent'a geçiş zamanını belirle. Forward test paralelde çalışmaya devam etsin.
 
-Geliştirme:
+### Kullanıcıyla Çalışma Şekli
 
-Tek adım → test → doğrulama → sonraki adım
-
-şeklinde sürdürülecek.
-
-Gereksiz mimari karmaşıklıktan kaçınılacak.
-
-Amaç çalışan ve giderek daha başarılı tahminler yapan gerçek bir ürün ortaya çıkarmaktır.
+Teknik işlemlerde kullanıcıya her zaman tek sonraki adım verilecek. Bir adım tamamlanmadan diğerine geçilmeyecek. Kullanıcıdan proje geçmişini yeniden anlatması istenmeyecek.
