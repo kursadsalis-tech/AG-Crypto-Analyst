@@ -551,4 +551,17 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
   VALIDATION -> kapalı EXAM sözleşmesine bağlandı.
 - Veri kalitesi geçmezse aday seçimi ve EXAM çalışmayan fail-closed kapı eklendi.
 - Sentetik next-open, maliyet, cooldown ve EXAM-körlüğü testleri geçti.
-- Gerçek Mac veri sonucu bekleniyor; hiçbir canlı politika değiştirilmedi.
+- Gerçek Mac kalite kapısı 5.571 ham haberde çalıştırıldı.
+- Zaman formatı kapsamı %100 ve kullanılabilir başlık oranı %99,8 olmasına
+  rağmen kesin intraday timestamp oranı %0 çıktı.
+- Tüm haberlerin arşiv-günü 12:00 fallback zamanı taşıdığı doğrulandı.
+- Yönlü olay, dedup, span, kaynak, fiyat ve coin kapılarındaki sıfırların kök
+  zaman kapısının aşağı akış sonucu olduğu kaydedildi.
+- Sonuç DATA_QUALITY_BLOCKED oldu; aday seçimi ve EXAM çalıştırılmadı.
+- Tarihsel saat uydurulmadı ve GDELT günlük arşivle event-time replay kapatıldı.
+- Aynı tarihsel arşive dayanan eski %77,6 NEWS BASE, ROBUST_B ve provisional
+  Champion etiketleri edge/ürün kanıtı olmaktan çıkarıldı.
+- REGIME_AWARE_FORWARD_V2 yalnız gerçek forward veride sıfır tarihsel krediyle
+  ölçülen dondurulmuş SHADOW hipotezi olarak bırakıldı.
+- Haber doğrulamasının yalnız kesin timestamp taşıyan forward örneklerle devam
+  etmesine karar verildi; hiçbir canlı politika değiştirilmedi.
