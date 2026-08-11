@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v0.6.0**
+Proje ürün sürümü: **v0.7.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -42,10 +42,11 @@ Tamamlanan ana ürün modülleri:
 - Technical Analysis Agent ✅
 - News Intelligence Agent ✅
 - Social Sentiment Agent ✅
+- On-chain Agent ✅
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v0.7.0 On-chain Agent**.
+Ana ürün yol haritasındaki sıradaki yeni modül: **v0.8.0 Macro Agent**.
 
-Forward Shadow V2 ve Social Sentiment veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
+Forward Shadow V2, Social Sentiment ve On-chain veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
 ---
 
@@ -130,6 +131,28 @@ Tamamlananlar:
 
 ---
 
+## 5B. ON-CHAIN AGENT - v0.7.0 TAMAMLANDI
+
+İlk çalışan sürüm gerçek zincir ve DeFi verileriyle doğrulandı.
+
+Tamamlananlar:
+
+- mempool.space üzerinden Bitcoin mempool işlem sayısı, vsize, toplam ücret ve önerilen ücretler
+- DefiLlama üzerinden Ethereum, Solana, BSC, Arbitrum, Base, Avalanche ve Sui TVL verileri
+- SQLite kalıcı on-chain gözlem tablosu ve idempotent kayıt kimliği
+- 15 dakikalık rate-safe on-chain cycle
+- Kaynak hatalarının diğer ürün modüllerini durdurmamasını sağlayan izolasyon
+- DefiLlama tarihsel endpoint ile sekiz zincirde 64 gözlemlik 7 günlük bootstrap
+- Yaklaşık 24 saatlik (18-30h kabul pencereli) değişim analizi
+- Yetersiz geçmiş için WARMING_UP, sıfır/geçersiz veri için NO_DATA koruması
+- Canlı ürün döngüsüne collector + analyzer entegrasyonu
+
+İlk doğrulamada yedi zincirin TVL değişimi STABLE bulundu. Bitcoin ağ metrikleri 24 saatlik gerçek geçmiş oluşana kadar WARMING_UP durumundadır. Bu sonuçlar tek başına işlem/alarm sinyali değildir.
+
+İlk sürüm zincir seviyesi likidite ve Bitcoin ağ sağlığını kapsar. Token bazlı transferler, borsa giriş/çıkışları ve büyük cüzdan hareketleri sonraki genişletme/Whale Tracker kapsamındadır.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
@@ -171,7 +194,8 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 2. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
 3. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
 4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
-5. Ana ürün yol haritasında **v0.7.0 On-chain Agent** geliştirmesine geç.
+5. On-chain 24h geçmişini ve veri kalitesini paralel izlemeye devam et; WARMING_UP/NO_DATA metriklerini karara dahil etme.
+6. Ana ürün yol haritasında **v0.8.0 Macro Agent** geliştirmesine geç.
 
 ---
 
