@@ -1,5 +1,40 @@
 # AG Crypto Analyst - Changelog
 
+## v1.2.0
+
+### Report Generator - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- Decision Engine, Risk Manager, Forward Shadow ve Decision Shadow verilerinden günlük yatırım komitesi brifingi
+- Coin karar tablosunda market, teknik, gölge aday, ürün kararı, risk ve pozisyon tavanı ayrımı
+- SHADOW modunda etkili ürün kararını BEKLE'ye kapatan rapor seviyesi güvenlik
+- Risk BLOCK bulunan coinlerin fırsat olarak sunulmaması
+- En güçlü fırsat için PRODUCTION + product AL + Risk ALLOW zorunluluğu
+- Risk/Decision snapshot eskiliği için 30 dakikalık DATA_BLOCKED kapısı
+- Kanıt olgunluk tablosu ve küçük örneklem uyarıları
+- Markdown günlük rapor çıktısı ve idempotent committee_report_snapshots kaydı
+- Europe/Istanbul 11:00 sonrası günde tek çalışma
+- Manuel testin planlı günlük slotu tüketmemesi
+- 11 adımlı canlı ürün döngüsü entegrasyonu
+
+Canlı doğrulama:
+
+- Report state=SHADOW_ONLY
+- 13 coin, 10 risk bloğu
+- Ürün aksiyonu=BEKLE
+- En güçlü fırsat=YOK
+- En riskli coin=BIOUSDT
+- BTC SAT_ADAYI ve WLD AL_ADAYI yalnız gölge araştırma olarak kaldı
+- Saat 00:51 Europe/Istanbul iken 11:00 cadence doğru biçimde bekledi
+- Tam canlı döngü 11/11 başarı
+
+Not:
+
+İlk doğal 11:00 çalışması operasyonel olarak izlenecektir. Rapor, gölge veya olgunlaşmamış kanıtı güçlü fırsata çeviremez.
+
+---
+
 ## v1.1.0
 
 ### Decision Engine - İlk Çalışan Gölge Sürüm
@@ -340,7 +375,6 @@ Tamamlandı.
 
 ---
 
-# Gelecek Sürümler
+# Sonraki Faz
 
-## v1.2.0
-Report Generator
+Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren geliştirmeler yalnız ölçülmüş ürün ihtiyacıyla açılacaktır; yakın öncelik operasyonel doğrulama, veri birikimi ve güvenilirliktir.
