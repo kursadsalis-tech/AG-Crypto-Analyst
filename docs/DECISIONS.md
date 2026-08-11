@@ -123,3 +123,19 @@ Her bileşen risk-off için +1, risk-on için -1, eşik içindeyse 0 üretir. To
 
 Bu rejim PROVISIONAL'dır. Tarihsel ve forward doğrulama tamamlanmadan alarm, işlem sinyali veya Decision Engine girdisi olamaz. Kaynak gözlem tarihleri farklı olabilir ve FRED serileri revize edilebilir; sonuçlar bu veri gerçekliğiyle birlikte değerlendirilir.
 
+
+---
+
+## Karar 011 - Whale Kanıtı ve Alarm Sınırı
+
+Whale Tracker v0.9.0 canlı ürün döngüsünde 5 dakikalık cadence ile çalışacaktır.
+
+İlk güvenilir kapsam:
+
+- doğrulanmış Bitcoin bloklarında büyük tekil çıktılar,
+- Ethereum safe bloklarında büyük native transferler,
+- doğrulanmış Ethereum ana ağ kontratlarında takip-listesi ERC-20 Transfer olaylarıdır.
+
+Ham zincir olayı yalnızca kanıttır. Brüt çıktı/transfer net akış değildir; change, self-transfer, mint, burn veya sözleşme içi hareket olabilir. Cüzdan sahipliği, borsa adresi ve akış yönü doğrulanmadıkça direction=UNKNOWN, exchange_flow=UNVERIFIED ve sonuç MONITOR_ONLY kalacaktır.
+
+UNVERIFIED whale olayı alarm, işlem sinyali veya Decision Engine girdisi olamaz. Yalnızca güvenilir adres kaynağıyla doğrulanmış borsa giriş/çıkış yönü ileride alarm adayı olabilir. Kapsanmayan zincir veya token destekleniyor gibi gösterilmeyecektir.
