@@ -1,5 +1,36 @@
 # AG Crypto Analyst - Changelog
 
+## v0.9.0
+
+### Whale Tracker - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- Blockchain.com doğrulanmış bloklarından 10 milyon dolar üstü Bitcoin çıktı taraması
+- Ethereum safe bloklarından 10 milyon dolar üstü native ETH transfer taraması
+- ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA için doğrulanmış Ethereum ERC-20 kontrat allowlist'i
+- ERC-20 Transfer log taraması ve zincir üstü decimals doğrulaması
+- Binance public spot fiyatlarıyla gözlem anı USD tahmini
+- Ayrı BTC, native ETH ve ERC-20 tarama yükseklikleri
+- SQLite idempotent whale event kayıtları
+- 24 saatlik muhafazakâr cross-chain evidence analyzer
+- Bağımsız kaynak hata izolasyonu ve 5 dakikalık cycle
+- Canlı ürün döngüsüne sekizinci adım olarak entegrasyon
+
+Doğrulama:
+
+- İlk Bitcoin taramasında 962.051 numaralı blokta 8, sonraki blokta 1 eşik üstü çıktı kaydedildi.
+- Son 24 saatlik Bitcoin kanıtı: 9 olay, 9 işlem, yaklaşık 308,2 milyon dolar brüt çıktı; en büyük tekil çıktı yaklaşık 83,0 milyon dolar.
+- Ethereum native collector gerçek testte 32 safe blok taradı ve kaynak hatası vermedi.
+- ERC-20 collector 7 kontratın decimals değerini zincir üzerinde doğruladı; ilk safe blok taramasında hata veya eşik üstü olay oluşmadı.
+- Bütünleşik Whale Tracker cycle: SUCCESS, source_errors=0, alert_eligible=0, MONITOR_ONLY.
+
+Not:
+
+Brüt transfer/çıktı toplamı net akış değildir. Change, self-transfer, mint, burn veya sözleşme içi hareket olabilir. Sahiplik ile borsa giriş/çıkış yönü doğrulanmayan olaylar alarm ya da işlem sinyali değildir.
+
+---
+
 ## v0.8.0
 
 ### Macro Agent - İlk Çalışan Sürüm
