@@ -201,6 +201,6 @@ Resmi hafıza dosyaları:
 - docs/CHANGELOG.md
 - docs/SESSION_LOG.md
 - docs/DECISIONS.md
-- docs/LAST_SESSION_HANDOFF.md
+- docs/SESSION_HANDOFF_2026-08-11.md
 
 Yeni oturumlarda önce bu dosyalar ve mevcut GitHub kodu kontrol edilir; kullanıcıdan proje geçmişini yeniden anlatması istenmez.
