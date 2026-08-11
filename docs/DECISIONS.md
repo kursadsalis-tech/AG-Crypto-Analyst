@@ -104,3 +104,22 @@ Yaklaşık 24 saatlik değişim için kabul edilen karşılaştırma aralığı 
 WARMING_UP ve NO_DATA metrikleri alarm, işlem önerisi veya Decision Engine girdisi olamaz. RISING/FALLING/STABLE sınıfları da forward doğrulama olmadan tek başına alım-satım kararı değildir.
 
 v0.7.0 ilk kapsamı zincir seviyesi TVL ve Bitcoin ağ/mempool sağlığıdır. Token bazlı transfer, borsa giriş/çıkış ve büyük cüzdan hareketleri ileri on-chain genişletmesi ile Whale Tracker modülünde ele alınacaktır.
+
+---
+
+## Karar 010 - Macro Rejimi ve Üretim Kullanım Sınırı
+
+Macro Agent v0.8.0 canlı ürün döngüsünde 6 saatlik cadence ile çalışacaktır.
+
+İlk makro bileşenleri:
+
+- Fed Funds 90 günlük değişim,
+- ABD 10 yıllık faiz 30 günlük değişim,
+- geniş dolar endeksi 30 günlük değişim,
+- VIX seviyesi,
+- CPI yıllık eğilim değişimi.
+
+Her bileşen risk-off için +1, risk-on için -1, eşik içindeyse 0 üretir. Toplam skor geçici RISK_ON / MIXED / RISK_OFF bağlamı sağlar.
+
+Bu rejim PROVISIONAL'dır. Tarihsel ve forward doğrulama tamamlanmadan alarm, işlem sinyali veya Decision Engine girdisi olamaz. Kaynak gözlem tarihleri farklı olabilir ve FRED serileri revize edilebilir; sonuçlar bu veri gerçekliğiyle birlikte değerlendirilir.
+
