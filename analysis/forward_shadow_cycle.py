@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from analysis import forward_shadow_validator
+from decision_engine import decision_cycle
 from macro import macro_cycle
 from news_intelligence import news_analyzer, news_collector
 from onchain import onchain_cycle
@@ -23,24 +24,27 @@ def main():
     print(f"Başlangıç: {stamp()}")
     print(
         "Akış: NEWS -> FORWARD SHADOW -> RISK MANAGER -> "
-        "ALERT BRIDGE -> SOCIAL SENTIMENT -> "
+        "DECISION ENGINE -> ALERT BRIDGE -> SOCIAL SENTIMENT -> "
         "ON-CHAIN -> MACRO -> WHALE TRACKER"
     )
     print("=" * 80)
 
-    print("\n[1/9] Canlı haberler toplanıyor...")
+    print("\n[1/10] Canlı haberler toplanıyor...")
     news_collector.main()
 
-    print("\n[2/9] Haberler analiz ediliyor...")
+    print("\n[2/10] Haberler analiz ediliyor...")
     news_analyzer.main()
 
-    print("\n[3/9] Forward Shadow çalıştırılıyor...")
+    print("\n[3/10] Forward Shadow çalıştırılıyor...")
     forward_shadow_validator.main()
 
-    print("\n[4/9] Risk Manager cadence kontrolü...")
+    print("\n[4/10] Risk Manager cadence kontrolü...")
     risk_cycle.main()
 
-    print("\n[5/9] Ürün alarm köprüsü çalıştırılıyor...")
+    print("\n[5/10] Decision Engine cadence kontrolü...")
+    decision_cycle.main()
+
+    print("\n[6/10] Ürün alarm köprüsü çalıştırılıyor...")
     con = sqlite3.connect(forward_shadow_product_bridge.DB_NAME)
     try:
         sent, pending = forward_shadow_product_bridge.deliver_pending_alerts(con)
@@ -48,16 +52,16 @@ def main():
     finally:
         con.close()
 
-    print("\n[6/9] Social Sentiment cadence kontrolü...")
+    print("\n[7/10] Social Sentiment cadence kontrolü...")
     social_sentiment_cycle.main()
 
-    print("\n[7/9] On-chain cadence kontrolü...")
+    print("\n[8/10] On-chain cadence kontrolü...")
     onchain_cycle.main()
 
-    print("\n[8/9] Macro cadence kontrolü...")
+    print("\n[9/10] Macro cadence kontrolü...")
     macro_cycle.main()
 
-    print("\n[9/9] Whale Tracker cadence kontrolü...")
+    print("\n[10/10] Whale Tracker cadence kontrolü...")
     whale_cycle.main()
 
     print("\n" + "=" * 80)
