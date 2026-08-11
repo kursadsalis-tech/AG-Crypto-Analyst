@@ -16,7 +16,7 @@
 - [x] Macro Agent
 - [x] Whale Tracker
 - [x] Risk Manager
-- [ ] Decision Engine
+- [x] Decision Engine
 - [ ] Report Generator
 
 ---
@@ -33,6 +33,7 @@
 - [x] v0.8.0 - Macro Agent
 - [x] v0.9.0 - Whale Tracker
 - [x] v1.0.0 - Risk Manager
+- [x] v1.1.0 - Decision Engine (SHADOW politika; ürün kararı BEKLE)
 
 ---
 
@@ -141,6 +142,22 @@
 
 ---
 
+## v1.1.0 DECISION ENGINE - TAMAMLANAN
+
+- [x] Kanıt olgunluğu durumlarını tek açıklanabilir karar kaydında görünür tut
+- [x] Kapalı 1h mumlara dayalı teknik/market araştırma bağlamı üret
+- [x] PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY kanıtı ürün kararından dışla
+- [x] Risk Manager BLOCK kararını nihai veto olarak uygula
+- [x] Gölge AL/SAT adayını ürün kararından ayır; SHADOW politikada ürünü BEKLE tut
+- [x] Decision Engine snapshot'larını SQLite'a kalıcı kaydet
+- [x] Gölge adayları için 1 saatlik forward sonuçlandırma ekle
+- [x] Aynı coin için tek açık tahmin kuralıyla overlap şişmesini engelle
+- [x] 15 dakikalık Decision Engine cycle ve hata izolasyonu ekle
+- [x] Decision Engine'i Risk Manager sonrasında canlı ürün döngüsüne bağla
+- [x] Gerçek verili standalone, gölge validator ve 10/10 bütünleşik cycle testlerini geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -151,7 +168,9 @@
 - [ ] Yeterli forward kanıt oluşunca provisional multifactor Champion için üretim kararı ver
 - [ ] Forward Signal Risk Gate koşullarını kanıt biriktikçe değiştirmeden izle
 - [ ] SHADOW_ONLY sinyallerin ürün alarmı üretemediğini izlemeye devam et
-- [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine girdisi için biriktir
+- [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine gölge doğrulamasıyla birlikte biriktir
+- [ ] Decision Engine 1h gölge AL/SAT sonuçlarını örneklem büyüdükçe izle
+- [ ] Gölge politika için küçük örneklemde eşik değiştirme veya üretim onayı verme
 - [ ] Social Sentiment örneklemini özellikle takip listesi coinlerinde büyüt
 - [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
@@ -166,15 +185,15 @@
 
 ## SONRAKİ ANA MODÜL
 
-### v1.1.0 - Decision Engine
+### v1.2.0 - Report Generator
 
 Amaç:
 
-Fiyat, teknik, haber ve yalnızca kullanım izni kazanmış yardımcı kanıtları tek bir açıklanabilir karar kaydında birleştirmek; Risk Manager sınırlarını hiçbir koşulda aşmadan AL / SAT / BEKLE benzeri ürün kararları üretmek.
+Her gün 11:00 yatırım komitesi brifingini aynı doğrulanmış veri sözleşmelerinden otomatik ve tutarlı biçimde üretmek; fiyat, teknik bağlam, risk limitleri, forward performansı ve kanıt olgunluğunu açıkça ayırmak.
 
 Geçiş koşulu:
 
-Decision Engine puan toplayarak zayıf, PROVISIONAL, WARMING_UP, NO_DATA, UNVERIFIED veya SHADOW_ONLY girdileri güçlü sinyale dönüştüremez. Her girdinin olgunluk durumu görünür kalmalı; Risk Manager BLOCK kararı nihai veto olmalıdır.
+Rapor yalnızca gerçek ürün kararlarını karar olarak sunar. Decision Engine gölge adayları araştırma olarak açıkça etiketlenir; PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED veya SHADOW_ONLY veriler güçlü fırsat gibi gösterilmez. Risk BLOCK bulunan coin için alım önerisi üretilemez.
 
 ---
 
