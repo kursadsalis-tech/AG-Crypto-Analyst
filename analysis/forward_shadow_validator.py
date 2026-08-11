@@ -1,22 +1,19 @@
 """Forward-only shadow validation for the locked AG Crypto Analyst 1h Champion.
 
-This module does NOT backfill predictions. A prediction is born only when this
-program sees an eligible live news analysis for the first time. Its entry price
-and timestamp are frozen immediately. After one hour, the result is settled
-from Binance minute data near the pre-committed exit timestamp.
+A valid prediction may be born only from news first collected AFTER the
+validator's own start timestamp. Existing/pre-start articles are never turned
+into prospective predictions.
 
 Locked research candidates:
 - NEWS_BASE: negative news, confidence >= 70
-- REGIME_AWARE multifactor: fixed weights, keep logic represented by the frozen
-  score cutoff 0.249 discovered before forward validation.
+- REGIME_AWARE multifactor: fixed weights and frozen cutoff 0.249
 
-No outcome is used to change weights or cutoff. This is intentionally boring:
-its job is to provide honest prospective evidence.
+After one hour, the prediction is settled from Binance minute data near the
+pre-committed due timestamp. No outcome changes weights or cutoff.
 """
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -37,7 +34,8 @@ LOCKED_WEIGHTS = {
     "volume": 0.0,
     "regime": 2.0,
 }
-MODEL_VERSION = "REGIME_AWARE_FORWARD_V1"
+MODEL_VERSION = "REGIME_AWARE_FORWARD_V2"
+LEGACY_INVALID_VERSION = "REGIME_AWARE_FORWARD_V1"
 
 
 def utcnow():
@@ -73,7 +71,9 @@ def spot_symbols():
     return {
         x["baseAsset"]: x["symbol"]
         for x in data.get("symbols", [])
-        if x.get("quoteAsset") == "USDT" and x.get("status") == "TRADING" and x.get("isSpotTradingAllowed", True)
+        if x.get("quoteAsset") == "USDT"
+        and x.get("status") == "TRADING"
+        and x.get("isSpotTradingAllowed", True)
     }
 
 
@@ -124,11 +124,14 @@ def technical_features(symbol):
     e20, e50 = ema_series(closes, 20), ema_series(closes, 50)
     ema_spread_pct = (e20[-1] / e50[-1] - 1.0) * 100.0
     ret6 = (closes[-1] / closes[-7] - 1.0) * 100.0
-    base_vol = sum(volumes[-21:-1]) / 20.0 if sum(volumes[-21:-1]) else 0.0
+    previous_volume = volumes[-21:-1]
+    base_vol = sum(previous_volume) / len(previous_volume) if previous_volume and sum(previous_volume) else 0.0
     volume_ratio = volumes[-1] / base_vol if base_vol else 1.0
     return {
-        "rsi": rsi(closes), "histogram": histogram,
-        "ema_spread_pct": ema_spread_pct, "ret6": ret6,
+        "rsi": rsi(closes),
+        "histogram": histogram,
+        "ema_spread_pct": ema_spread_pct,
+        "ret6": ret6,
         "volume_ratio": volume_ratio,
     }
 
@@ -170,9 +173,14 @@ def feature_vector(confidence, impact, tech, regime, entry_price):
     else:
         regime_f = -1.0
     return {
-        "confidence": confidence_f, "impact": impact_f, "rsi": rsi_f,
-        "macd": macd_f, "ema": ema_f, "momentum": momentum_f,
-        "volume": volume_f, "regime": regime_f,
+        "confidence": confidence_f,
+        "impact": impact_f,
+        "rsi": rsi_f,
+        "macd": macd_f,
+        "ema": ema_f,
+        "momentum": momentum_f,
+        "volume": volume_f,
+        "regime": regime_f,
     }
 
 
@@ -181,7 +189,7 @@ def score(features):
     return sum(features[k] * w for k, w in LOCKED_WEIGHTS.items()) / denom
 
 
-def create_table(con):
+def create_tables(con):
     con.execute("""
         CREATE TABLE IF NOT EXISTS forward_shadow_predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,27 +219,62 @@ def create_table(con):
             UNIQUE(model_version, news_id, coin)
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS forward_shadow_state (
+            model_version TEXT PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
     con.commit()
 
 
-def eligible_news(con):
+def invalidate_legacy_seed(con):
+    changed = con.execute("""
+        UPDATE forward_shadow_predictions
+        SET status='INVALID_PRESTART_SEED'
+        WHERE model_version=? AND status='OPEN'
+    """, (LEGACY_INVALID_VERSION,)).rowcount
+    con.commit()
+    return changed
+
+
+def get_or_create_start(con):
+    row = con.execute(
+        "SELECT started_at FROM forward_shadow_state WHERE model_version=?",
+        (MODEL_VERSION,),
+    ).fetchone()
+    if row:
+        return parse_dt(row[0]), False
+    started = utcnow()
+    con.execute(
+        "INSERT INTO forward_shadow_state (model_version,started_at,created_at) VALUES (?,?,?)",
+        (MODEL_VERSION, iso(started), iso(started)),
+    )
+    con.commit()
+    return started, True
+
+
+def eligible_news(con, started_at):
     return con.execute("""
         SELECT a.news_id, a.coins, a.direction, a.impact_score, a.confidence_score,
-               n.title, n.published_at
+               n.title, n.published_at, n.collected_at
         FROM crypto_news_analysis a
         JOIN crypto_news n ON n.id=a.news_id
-        WHERE a.direction='negative' AND a.confidence_score>=70
+        WHERE a.direction='negative'
+          AND a.confidence_score>=70
+          AND datetime(n.collected_at) >= datetime(?)
         ORDER BY a.news_id
-    """).fetchall()
+    """, (iso(started_at),)).fetchall()
 
 
-def record_new_predictions(con):
+def record_new_predictions(con, started_at):
     symbols = spot_symbols()
     regime, btc_ret24 = btc_regime()
     created = skipped = 0
     now = utcnow()
-    for row in eligible_news(con):
-        news_id, coins, direction, impact, confidence, title, published_at = row
+    for row in eligible_news(con, started_at):
+        news_id, coins, direction, impact, confidence, title, published_at, collected_at = row
         for coin in [x.strip() for x in coins.split(",") if x.strip() and x.strip() != "MARKET"]:
             symbol = symbols.get(coin)
             if not symbol:
@@ -243,8 +286,9 @@ def record_new_predictions(con):
             ).fetchone()
             if exists:
                 continue
-            # Critical forward-only rule: old articles are never reconstructed as predictions.
-            # The first observation time is the immutable entry time.
+
+            # Forward-only rule: entry exists only now, after the article was first
+            # collected after validator start. No pre-start article can enter V2.
             entry_time = utcnow()
             price = current_price(symbol)
             tech = technical_features(symbol)
@@ -252,7 +296,12 @@ def record_new_predictions(con):
             mf_score = score(features)
             due = entry_time + timedelta(hours=HORIZON_HOURS)
             payload = dict(features)
-            payload.update({"btc_ret24": btc_ret24, "news_published_at": published_at, "title": title})
+            payload.update({
+                "btc_ret24": btc_ret24,
+                "news_published_at": published_at,
+                "news_collected_at": collected_at,
+                "title": title,
+            })
             con.execute("""
                 INSERT INTO forward_shadow_predictions (
                     model_version,news_id,coin,symbol,direction,confidence,impact,
@@ -266,7 +315,11 @@ def record_new_predictions(con):
                 regime, iso(now),
             ))
             created += 1
-            print(f"YENİ #{news_id} {coin}: base=YES | multifactor={'YES' if mf_score >= LOCKED_CUTOFF else 'NO'} | score={mf_score:.3f} | entry={price:.8g}")
+            print(
+                f"YENİ #{news_id} {coin}: base=YES | "
+                f"multifactor={'YES' if mf_score >= LOCKED_CUTOFF else 'NO'} | "
+                f"score={mf_score:.3f} | entry={price:.8g}"
+            )
     con.commit()
     return created, skipped
 
@@ -274,8 +327,11 @@ def record_new_predictions(con):
 def price_at_due(symbol, due):
     start_ms = int(due.timestamp() * 1000)
     raw = get_json("/api/v3/klines", {
-        "symbol": symbol, "interval": "1m", "startTime": start_ms,
-        "endTime": start_ms + 5 * 60 * 1000, "limit": 5,
+        "symbol": symbol,
+        "interval": "1m",
+        "startTime": start_ms,
+        "endTime": start_ms + 5 * 60 * 1000,
+        "limit": 5,
     })
     if not raw:
         return None, None
@@ -285,9 +341,11 @@ def price_at_due(symbol, due):
 def settle_due(con):
     now = utcnow()
     rows = con.execute("""
-        SELECT id,symbol,entry_price,due_time FROM forward_shadow_predictions
-        WHERE status='OPEN' AND due_time<=? ORDER BY due_time
-    """, (iso(now),)).fetchall()
+        SELECT id,symbol,entry_price,due_time
+        FROM forward_shadow_predictions
+        WHERE model_version=? AND status='OPEN' AND due_time<=?
+        ORDER BY due_time
+    """, (MODEL_VERSION, iso(now))).fetchall()
     settled = 0
     for pred_id, symbol, entry_price, due_raw in rows:
         due = parse_dt(due_raw)
@@ -295,11 +353,12 @@ def settle_due(con):
         if exit_price is None:
             continue
         ret = (exit_price / float(entry_price) - 1.0) * 100.0
-        directional = -ret  # locked signal direction is negative/down.
+        directional = -ret
         hit = int(directional > 0.0)
         con.execute("""
             UPDATE forward_shadow_predictions
-            SET exit_time=?,exit_price=?,return_pct=?,directional_return=?,hit=?,status='SETTLED',settled_at=?
+            SET exit_time=?,exit_price=?,return_pct=?,directional_return=?,hit=?,
+                status='SETTLED',settled_at=?
             WHERE id=?
         """, (iso(exit_time), exit_price, ret, directional, hit, iso(now), pred_id))
         settled += 1
@@ -315,22 +374,38 @@ def summary(con):
     ):
         n, hits, avg = con.execute(f"""
             SELECT COUNT(*), COALESCE(SUM(hit),0), COALESCE(AVG(directional_return),0)
-            FROM forward_shadow_predictions WHERE status='SETTLED' AND {condition}
-        """).fetchone()
-        open_n = con.execute(f"SELECT COUNT(*) FROM forward_shadow_predictions WHERE status='OPEN' AND {condition}").fetchone()[0]
+            FROM forward_shadow_predictions
+            WHERE model_version=? AND status='SETTLED' AND {condition}
+        """, (MODEL_VERSION,)).fetchone()
+        open_n = con.execute(f"""
+            SELECT COUNT(*) FROM forward_shadow_predictions
+            WHERE model_version=? AND status='OPEN' AND {condition}
+        """, (MODEL_VERSION,)).fetchone()[0]
         rate = (hits / n * 100.0) if n else 0.0
-        print(f"  {label:<11}: settled={n} | open={open_n} | hit_rate={rate:.1f}% | directional_return={avg:+.3f}%")
+        print(
+            f"  {label:<11}: settled={n} | open={open_n} | "
+            f"hit_rate={rate:.1f}% | directional_return={avg:+.3f}%"
+        )
 
 
 def main():
     con = sqlite3.connect(DB_NAME)
     try:
-        create_table(con)
+        create_tables(con)
+        invalidated = invalidate_legacy_seed(con)
+        started_at, first_start = get_or_create_start(con)
+
         print("AG Crypto Analyst - Forward Shadow Validation")
         print(f"LOCKED model: {MODEL_VERSION} | cutoff={LOCKED_CUTOFF:.3f} | horizon={HORIZON_HOURS}h")
-        print("Kural: geçmiş tahmin üretilmez; ilk görüldüğü anda entry dondurulur, model parametreleri değiştirilmez.")
+        print(f"Forward başlangıcı: {iso(started_at)}")
+        print("Kural: yalnızca bu başlangıçtan SONRA toplanan haberler tahmin doğurabilir.")
+        if invalidated:
+            print(f"Düzeltme: önceki V1 çalıştırmasındaki {invalidated} pre-start tahmin geçersiz olarak işaretlendi.")
+        if first_start:
+            print("V2 başlangıç mührü şimdi oluşturuldu; mevcut eski haberlerden tahmin üretilmeyecek.")
+
         settled = settle_due(con)
-        created, skipped = record_new_predictions(con)
+        created, skipped = record_new_predictions(con, started_at)
         print(f"\nBu çalıştırma: yeni tahmin={created} | sonuçlanan={settled} | spot eşleşmeyen={skipped}")
         summary(con)
     finally:
