@@ -14,7 +14,7 @@
 - [x] Social Sentiment Agent
 - [x] On-chain Agent
 - [x] Macro Agent
-- [ ] Whale Tracker
+- [x] Whale Tracker
 - [ ] Risk Manager
 - [ ] Decision Engine
 - [ ] Report Generator
@@ -31,6 +31,7 @@
 - [x] v0.6.0 - Social Sentiment Agent
 - [x] v0.7.0 - On-chain Agent
 - [x] v0.8.0 - Macro Agent
+- [x] v0.9.0 - Whale Tracker
 
 ---
 
@@ -104,6 +105,22 @@
 
 ---
 
+## v0.9.0 WHALE TRACKER - TAMAMLANAN
+
+- [x] Doğrulanmış Bitcoin bloklarında 10 milyon dolar üstü tekil çıktıları tara
+- [x] Ethereum safe bloklarında 10 milyon dolar üstü native ETH transferlerini tara
+- [x] Yedi doğrulanmış takip-listesi ERC-20 kontratını Transfer loglarıyla izle
+- [x] ERC-20 decimals değerlerini zincir üstünde doğrula
+- [x] USD değerini canlı Binance public spot fiyatıyla hesapla
+- [x] Tarama yüksekliklerini ve olayları SQLite'a idempotent kaydet
+- [x] Bitcoin, native ETH ve ERC-20 kaynaklarını birbirinden izole et
+- [x] Cross-chain 24 saatlik kanıt özeti üret
+- [x] Doğrulanmamış sahiplik/yön/borsa akışını MONITOR_ONLY tut
+- [x] 5 dakikalık Whale Tracker cycle'ını canlı ürün döngüsüne sekizinci adım olarak bağla
+- [x] Gerçek verili collector, cross-chain analyzer ve bütünleşik cycle testlerini geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -116,7 +133,9 @@
 - [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
 - [ ] WARMING_UP ve NO_DATA on-chain metriklerini alarm/karar girdisi yapma
-- [ ] Token bazlı on-chain kapsamı sonraki genişletme/Whale Tracker ile büyüt
+- [x] Token bazlı on-chain kapsamın ilk bölümünü Whale Tracker ile doğrulanmış Ethereum kontratlarına genişlet
+- [ ] Whale Tracker kanıtlarını biriktir; UNVERIFIED hareketleri alarm/karar girdisi yapma
+- [ ] Diğer zincirlerdeki takip-listesi tokenlarını yalnızca güvenilir ve doğrudan doğrulanabilir kaynak bulunduğunda genişlet
 - [ ] PROVISIONAL makro rejim snapshot'larını tarihsel/forward doğrulama için biriktir
 - [ ] Makro rejimi doğrulanmadan alarm, işlem kararı veya Decision Engine girdisi yapma
 
@@ -124,15 +143,15 @@
 
 ## SONRAKİ ANA MODÜL
 
-### v0.9.0 - Whale Tracker
+### v1.0.0 - Risk Manager
 
 Amaç:
 
-Büyük cüzdan hareketlerini, yüksek değerli token transferlerini ve mümkün olan güvenilir kaynaklarda borsa giriş/çıkış bağlamını izleyerek erken risk/fırsat göstergeleri üretmek.
+Fiyat, teknik, haber ve olgunlaşan yardımcı sinyaller için ortak risk sınırları; pozisyon büyüklüğü, zarar sınırı, maksimum maruziyet ve sinyal reddetme kuralları üretmek.
 
 Geçiş koşulu:
 
-Forward Shadow, Social Sentiment, On-chain ve Macro veri toplama süreçleri paralelde devam edecek; yalnızca doğrulanmış balina göstergeleri alarm veya ileride Decision Engine girdisi olabilecek.
+Risk Manager hiçbir zayıf veya doğrulanmamış girdiyi güçlü sinyale dönüştürmeyecek. Forward Shadow, Social Sentiment, On-chain, Macro ve Whale Tracker veri toplama süreçleri paralelde devam edecek; yalnızca kullanım politikası açık ve yeterli kanıtı olan girdiler risk kararına girebilecek.
 
 ---
 
