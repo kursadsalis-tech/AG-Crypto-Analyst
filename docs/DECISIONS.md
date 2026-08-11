@@ -161,3 +161,18 @@ Forward multifactor ürün alarmının izin kazanması için birlikte şu asgari
 - coin için pozitif azami pozisyon tavanı.
 
 Koşullardan biri eksikse Signal Risk Gate kararı BLOCK'tur. Risk Manager BLOCK kararı gelecek Decision Engine için nihai vetodur; diğer puanlar bu vetoyu telafi edemez. Gate eşikleri frozen model ağırlıklarını veya cutoff'u değiştirmez.
+
+---
+
+## Karar 013 - Decision Engine Gölge Politikası ve Çakışmasız Doğrulama
+
+Decision Engine v1.1.0 ilk olarak SHADOW modunda çalışacaktır. Araştırma amaçlı gölge AL/SAT adayı ile kullanıcıya gösterilebilecek ürün kararı ayrı alanlarda tutulur. Decision Engine politikası ayrı forward doğrulama kazanana kadar product_decision daima BEKLE'dir.
+
+Market ve kapalı 1h teknik verisi araştırma bağlamı oluşturabilir; ancak doğrulanmamış bileşenler puan toplanarak üretim kararına çevrilemez. PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY durumları açıkça görünür kalır ve production_usable=false olur.
+
+Risk Manager BLOCK kararı nihai vetodur. Risk BLOCK bulunan coin gölge AL/SAT adayı da üretemez. Risk izni, tek başına alım/satım kararı değildir; yalnızca diğer politikaların aşamayacağı tavanı tanımlar.
+
+Gölge performansı bir saatlik forward pencerede ölçülür. Aynı coin için bir açık tahmin sonuçlanmadan yenisi kaydedilmez; böylece 15 dakikalık tekrarlar bağımsız tahmin gibi sayılarak örneklem şişirilmez. AL için gerçek getiri, SAT için ters getiri directional return sayılır. Sonuçlar politikayı otomatik değiştirmez veya üretime açmaz.
+
+Decision Engine 15 dakikalık cadence ile Risk Manager sonrasında ve ürün alarm köprüsünden önce çalışır. Gölge adayları alarm köprüsüne iletilmez.
+
