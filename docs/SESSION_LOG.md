@@ -526,3 +526,29 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
   tek sınırlı hipotez test edilecek.
 - Bu hipotez de başarısızsa fiyat-teknik optimizasyonu durdurulacak.
 
+## Sparse Transition Replay - Nihai Fiyat/Teknik Sonucu
+
+- Seyrek skor, MACD/EMA sıfır geçişi ve kapalı-fiyat 24h kırılım hipotezleri
+  coin başına 24h cooldown ile çalıştırıldı.
+- Hacim ve NORMAL-piyasa korumalarıyla 36 sabit config/horizon test edildi.
+- 9.576 karar noktası, 68.616 risk-izinli bağlam, 55.872 risk vetosu ve sıfır
+  point-in-time boşluk oluştu; config başına 146-2.107 olay değerlendirildi.
+- 1h, 4h ve 24h ufuklarının tamamı NO_LEARN_EDGE verdi.
+- Sonuç NO_CONFIRMED_PRICE_TECHNICAL_EDGE ve SHADOW_ONLY oldu.
+- Araştırma kararı STOP_PRICE_TECHNICAL_RULE_SEARCH olarak kilitlendi; canlı
+  eşik veya politika değiştirilmedi.
+
+## News Catalyst Replay - Kalite Kapılı Hazırlık
+
+- Eski NEWS BASE sonucu yeniden üretim kanıtı sayılmadan GDELT veri sözleşmesi
+  incelendi.
+- Eski akışta maliyet, aynı-hikâye tekrarı, coin cooldown ve zaman-blok
+  korelasyonunun bugünkü standartta eksik olduğu belirlendi.
+- Precision-first coin eşleştirme, canonical URL + 72h başlık dedup, yaklaşık
+  zaman dışlama, 60m gecikme, sonraki mum açılışı, 24h cooldown ve 10 bps
+  maliyet içeren `analysis.news_catalyst_replay_lab` hazırlandı.
+- Teknik yön kullanılmadan 16 sabit FOLLOW/CONTRARIAN kural, LEARN ->
+  VALIDATION -> kapalı EXAM sözleşmesine bağlandı.
+- Veri kalitesi geçmezse aday seçimi ve EXAM çalışmayan fail-closed kapı eklendi.
+- Sentetik next-open, maliyet, cooldown ve EXAM-körlüğü testleri geçti.
+- Gerçek Mac veri sonucu bekleniyor; hiçbir canlı politika değiştirilmedi.
