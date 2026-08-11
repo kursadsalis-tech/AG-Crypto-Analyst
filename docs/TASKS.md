@@ -13,7 +13,7 @@
 - [x] News Intelligence Agent
 - [x] Social Sentiment Agent
 - [x] On-chain Agent
-- [ ] Macro Agent
+- [x] Macro Agent
 - [ ] Whale Tracker
 - [ ] Risk Manager
 - [ ] Decision Engine
@@ -30,6 +30,7 @@
 - [x] v0.5.0 - News Intelligence Agent
 - [x] v0.6.0 - Social Sentiment Agent
 - [x] v0.7.0 - On-chain Agent
+- [x] v0.8.0 - Macro Agent
 
 ---
 
@@ -89,6 +90,20 @@
 
 ---
 
+## v0.8.0 MACRO - TAMAMLANAN
+
+- [x] Beş resmî FRED serisini anahtarsız CSV kaynağından topla
+- [x] 800 günlük tarihsel pencereyi SQLite'a idempotent kaydet
+- [x] Fed Funds, ABD 10Y, geniş dolar, VIX ve CPI değişimlerini hesapla
+- [x] Şeffaf bileşen skorlarıyla PROVISIONAL makro rejim üret
+- [x] Makro rejim snapshot'larını kalıcı kaydet
+- [x] 6 saatlik güvenli çalışma aralığı ve hata izolasyonu ekle
+- [x] Macro collector + analyzer cycle testini gerçek veride geçir
+- [x] Macro cycle'ı canlı ürün döngüsüne yedinci adım olarak bağla
+- [x] Entegrasyon ve cadence-atlama testini geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -102,20 +117,22 @@
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
 - [ ] WARMING_UP ve NO_DATA on-chain metriklerini alarm/karar girdisi yapma
 - [ ] Token bazlı on-chain kapsamı sonraki genişletme/Whale Tracker ile büyüt
+- [ ] PROVISIONAL makro rejim snapshot'larını tarihsel/forward doğrulama için biriktir
+- [ ] Makro rejimi doğrulanmadan alarm, işlem kararı veya Decision Engine girdisi yapma
 
 ---
 
 ## SONRAKİ ANA MODÜL
 
-### v0.8.0 - Macro Agent
+### v0.9.0 - Whale Tracker
 
 Amaç:
 
-Faiz, enflasyon, dolar likiditesi, risk iştahı ve kripto piyasasını etkileyen makro göstergelerden ölçülebilir piyasa rejimi sinyalleri üretmek.
+Büyük cüzdan hareketlerini, yüksek değerli token transferlerini ve mümkün olan güvenilir kaynaklarda borsa giriş/çıkış bağlamını izleyerek erken risk/fırsat göstergeleri üretmek.
 
 Geçiş koşulu:
 
-Forward Shadow, Social Sentiment ve On-chain veri toplama süreçleri paralelde devam edecek; ana ürün yol haritası bu validasyonlar tarafından bloke edilmeyecek.
+Forward Shadow, Social Sentiment, On-chain ve Macro veri toplama süreçleri paralelde devam edecek; yalnızca doğrulanmış balina göstergeleri alarm veya ileride Decision Engine girdisi olabilecek.
 
 ---
 
