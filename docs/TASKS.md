@@ -184,8 +184,12 @@
 - [x] 36 sabit FOLLOW/CONTRARIAN challenger'ı 7 günlük blok güven sınırlarıyla değerlendir
 - [x] Üç ufukta NO_LEARN_EDGE sonucunda mevcut fiyat-durum kuralını üretim için reddet
 - [x] Başarısız tarihsel sonucu canlı politika/eşik değişikliğine çevirmeden SHADOW_ONLY tut
-- [ ] Tek sınırlı seyrek teknik-geçiş hipotezini 24h coin cooldown ile replay et
-- [ ] Geçiş hipotezi de LEARN edge üretmezse fiyat-teknik kural optimizasyonunu durdur
+- [x] Tek sınırlı seyrek teknik-geçiş hipotezini 24h coin cooldown ile replay et
+- [x] Üç ufukta NO_LEARN_EDGE sonrası fiyat-teknik kural optimizasyonunu durdur
+- [x] Bağımsız haber-katalizör replay'ini veri-kalitesi kapıları, strict coin eşleştirme, dedup, 60m gecikme, 24h cooldown ve 10 bps maliyetle hazırla
+- [x] Haber-katalizör laboratuvarında sentetik leakage, next-open, maliyet, cooldown ve EXAM-körlüğü testlerini geçir
+- [ ] Haber-katalizör replay'ini gerçek Mac veri tabanında bir kez çalıştır ve kalite/LEARN/VALIDATION/EXAM sonucunu kaydet
+- [ ] Haber verisi kalite kapısını geçmezse seçimi zorlamadan DATA_QUALITY_BLOCKED olarak kapat
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
 - [ ] 1h süresi dolan tahminlerin otomatik settle edildiğini doğrula
 - [ ] NEWS BASE vs MULTIFACTOR gerçek forward scoreboard'u örneklem büyüdükçe değerlendir
