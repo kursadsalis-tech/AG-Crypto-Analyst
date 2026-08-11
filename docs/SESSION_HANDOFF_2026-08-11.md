@@ -175,6 +175,35 @@ Pending natural observation:
 - Confirm the first unattended 11:00 generation and persisted daily snapshot.
 - This observation does not block the completed product roadmap.
 
+## Historical Decision replay
+
+Completed:
+
+- Point-in-time replay over 13 symbols and roughly 400 days of closed 1h data.
+- 127,322 newly stored candles; 13/13 ready; zero fetch or time-gap errors.
+- Next-candle-open entry; 1h/4h/24h outcomes; 10 bps round-trip cost.
+- Chronological 60% LEARN / 20% VALIDATION / 20% EXAM.
+- True Binance quote-volume persistence and migration.
+- Deterministic future-leakage, cost, split, continuity and risk-veto tests.
+
+Measured result:
+
+- 9,576 decision timestamps produced 23,881 candidates.
+- Current-policy EXAM net return was negative at 1h, 4h and 24h.
+- A fixed family of 36 FOLLOW/CONTRARIAN challengers per horizon was tested
+  with seven-day block confidence bounds.
+- No challenger passed LEARN at any horizon: NO_LEARN_EDGE.
+
+Decision:
+
+- Current price-state rule family is rejected for production.
+- Live thresholds and policies remain unchanged; product stays SHADOW_ONLY.
+- Do not continue searching combinations of the same persistent-state rule.
+- Test one pre-registered sparse transition/breakout hypothesis with a 24h
+  per-symbol cooldown.
+- If it also has no LEARN edge, stop price/technical optimization and move
+  research to independently sourced catalyst evidence.
+
 ## Notification policy
 
 - Daily investment-committee briefing: 11:00 Europe/Istanbul.
@@ -196,12 +225,13 @@ Pending natural observation:
 ## Next session priority
 
 1. Do not rebuild completed modules from scratch; the core roadmap is complete through v1.2.0.
-2. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
-3. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
-4. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
-5. Never let scoring or reporting convert PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED or SHADOW_ONLY evidence into a strong decision.
-6. Keep Risk Manager BLOCK final and preserve both frozen shadow policies while real samples grow.
-7. Prioritize operational reliability and measured performance; do not open new architecture without evidence of need.
+2. Run the single pre-registered sparse transition/breakout historical lab.
+3. Stop price/technical rule search if that lab also has no LEARN edge.
+4. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
+5. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
+6. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
+7. Never let scoring or reporting upgrade immature evidence into a strong decision.
+8. Keep Risk Manager BLOCK final and preserve frozen live policies while real samples grow.
 
 ## Working style
 
