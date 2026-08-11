@@ -78,3 +78,17 @@ Telegram yardımcı/opsiyonel altyapıdır; ana kanal olarak zorunlu değildir.
 Yeni oturumlarda kullanıcıdan projenin hedefini, geçmişini ve önceki kararları sıfırdan anlatması istenmeyecektir.
 
 Önce resmi hafıza dosyaları ve mevcut GitHub kodu kontrol edilerek kaldığı yerden devam edilecektir.
+
+---
+
+## Karar 008 - Social Sentiment Güven ve Üretim Kullanımı
+
+Social Sentiment Agent v0.6.0 canlı ürün döngüsünde 15 dakikalık cadence ile veri toplayacaktır.
+
+Sosyal sinyal güveni yalnızca paylaşım sayısına göre hesaplanamaz. Güven puanı birlikte şu üç kanıta dayanacaktır:
+
+- yeterli örneklem,
+- yönlü paylaşım oranı,
+- pozitif/negatif fikir birliği.
+
+Nötr veya çelişkili yüksek hacim yüksek güven sayılmaz. Düşük güvenli sosyal sonuçlar alarm, işlem sinyali veya Decision Engine girdisi olarak kullanılmayacaktır. Veri birikimi ve forward doğrulama ana ürün yol haritasını bloke etmeden paralelde sürdürülecektir.
