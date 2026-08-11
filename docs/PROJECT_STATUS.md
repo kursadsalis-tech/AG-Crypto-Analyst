@@ -4,9 +4,11 @@
 
 AG Crypto Analyst'ın nihai amacı:
 
-"Dünyanın en başarılı tahminlerini yapan bir kripto tahmin ve analiz sistemi" oluşturmak.
+"Dünyanın en başarılı tahminlerini yapan, fırsatları ve riskleri erken tespit eden profesyonel bir kripto analiz ve karar destek ürünü" oluşturmak.
 
-Proje; piyasa verileri, teknik analiz, haberler ve ileride eklenecek diğer veri kaynaklarını bir araya getirerek ölçülebilir, test edilebilir ve sürekli geliştirilebilir profesyonel bir AI analiz ve tahmin ürünü olacaktır.
+Sistem yalnızca sabit bir takip listesi için değil, Binance Spot USDT evreninde yeni ortaya çıkan coinleri ve yeni fırsatları da mümkün olduğunca dinamik biçimde tespit edebilmelidir.
+
+Amaç falcılık değil; fiyat, teknik yapı, haber, piyasa rejimi ve ileride eklenecek on-chain, sosyal, makro ve balina verilerini matematiksel/istatistiksel olarak birleştiren, ölçülebilir ve sürekli doğrulanan bir sistem kurmaktır.
 
 Gereksiz mimari karmaşıklıktan kaçınılacaktır. Amaç sürekli yeni mimariler tasarlamak değil, çalışan ve giderek daha başarılı hale gelen gerçek bir ürün çıkarmaktır.
 
@@ -25,103 +27,158 @@ Gereksiz mimari karmaşıklıktan kaçınılacaktır. Amaç sürekli yeni mimari
 9. Decision Engine
 10. Report Generator
 
+Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut modüllerin doğruluğunu ölçmek ve Decision Engine'e güvenilir sinyal üretmek için kullanılır.
+
 ---
 
 ## 3. MEVCUT SÜRÜM
 
-Proje Sürümü: **v0.5.0**
+Proje ürün sürümü: **v0.5.0**
 
-Mevcut Durum:
+Tamamlanan ana ürün modülleri:
 
-**News Intelligence Agent ilk çalışan sürümü tamamlandı ve gerçek verilerle başarıyla doğrulandı.**
+- Market Data Agent ✅
+- Market Analyzer ✅
+- Technical Analysis Agent ✅
+- News Intelligence Agent ✅
 
----
+Ana ürün yol haritasındaki sıradaki yeni modül: **v0.6.0 Social Sentiment Agent**.
 
-## 4. TAMAMLANAN MODÜLLER
-
-### v0.1.0
-Market Data Agent v1 ✅
-
-### v0.2.0
-Market Data Agent v2 ✅
-
-### v0.3.0
-Market Analyzer Agent ✅
-
-### v0.4.0
-Technical Analysis Agent ✅
-
-### v0.5.0
-News Intelligence Agent ✅
+Ancak şu an aktif çalışma önceliği, v0.5.0 News Intelligence sinyallerinin gerçek tahmin değerini doğrulayan Forward Shadow Validation verisinin birikmesi ve bu çıktının günlük rapor/kritik alarm sistemine entegre edilmesidir.
 
 ---
 
-## 5. NEWS INTELLIGENCE AGENT DURUMU
+## 4. NEWS INTELLIGENCE + ARAŞTIRMA DURUMU
 
-News Intelligence Agent şu anda:
+Tarihsel haber veri seti yaklaşık 360 günlük döneme genişletildi.
 
-- CoinDesk RSS'ten haber alıyor.
-- Cointelegraph RSS'ten haber alıyor.
-- Haberleri SQLite'a kaydediyor.
-- Link bazında duplicate kayıtları engelliyor.
-- Haberleri coin/sembol ile ilişkilendiriyor.
-- Olay türü sınıflandırıyor.
-- Pozitif / negatif / nötr yön üretiyor.
-- Etki skoru üretiyor.
-- Güven skoru üretiyor.
-- Analiz sonuçlarını SQLite'a kaydediyor.
+Geliştirilen ölçüm/araştırma katmanları:
 
-Başarılı test:
+- historical news analyzer
+- historical market data eşleştirme
+- leakage-safe walk-forward backtest
+- locked out-of-sample validation
+- rolling research laboratory
+- policy robustness analyzer
+- frozen monthly stress test
+- market regime analyzer
+- regime-aware rolling validation
+- high-confidence calibration
+- news + technical confluence lab
+- weighted multifactor champion/challenger lab
+- multifactor robustness analyzer
+- adaptive dual-champion lab
 
-- 55 haber toplandı.
-- 55 haber SQLite'a kaydedildi.
-- Collector ikinci kez çalıştırıldığında sayı 55 kaldı.
-- 55 haber analiz edildi.
-- 55 analiz sonucu SQLite'a kaydedildi.
+Önemli sonuçlar:
 
-Bu sürüm kural tabanlı ilk çalışan News Intelligence katmanıdır. Nihai tahmin başarısı olarak değerlendirilmez. Sonraki geliştirmelerde haber sinyalleri gerçek fiyat hareketleriyle ölçülecek ve sınıflandırma doğruluğu geliştirilecektir.
-
----
-
-## 6. SONRAKİ SOMUT GELİŞTİRME
-
-**News Intelligence doğruluk ve etki ölçüm katmanı.**
-
-Amaç, üretilen haber sinyallerini sonraki fiyat hareketleriyle eşleştirerek:
-
-- hangi haber türlerinin gerçekten etkili olduğunu,
-- hangi yön sinyallerinin doğru olduğunu,
-- etki ve güven skorlarının ne kadar isabetli olduğunu
-
-ölçülebilir hale getirmektir.
-
-Bu ölçüm tamamlandıktan sonra ana yol haritasındaki **v0.6.0 Social Sentiment Agent** modülüne geçilecektir.
+- Güçlü 1h NEWS BASE policy: negative direction + confidence >= 70.
+- Tarihsel frozen EXAM temel başarı seviyesi yaklaşık %77.6 hit rate.
+- Weighted REGIME_AWARE multifactor aday model bazı frozen karşılaştırmalarda base'i geçti.
+- Multifactor robustness statüsü: ROBUST_B.
+- Aynı tarihsel veriyi daha fazla optimize ederek yapay başarı üretmemek için model donduruldu.
+- Adaptive dual-champion seçici şu haliyle reddedildi; sabit multifactor daha güçlü kaldı.
 
 ---
 
-## 7. PROJE HAFIZA DOSYALARI
+## 5. FORWARD SHADOW VALIDATION - AKTİF
+
+Gerçek forward doğrulama sistemi kuruldu.
+
+Kilitli model:
+
+- Model: REGIME_AWARE_FORWARD_V2
+- Horizon: 1 saat
+- Frozen cutoff: 0.249
+- Ağırlıklar forward başladıktan sonra değiştirilmez.
+- Geçmiş haberlerden geriye dönük tahmin üretilmez.
+- Yalnızca validator başlangıcından sonra ilk kez toplanan haberler forward tahmin doğurabilir.
+
+V1 ilk çalıştırmada eski haberleri yanlışlıkla forward tahmin gibi seed etmişti; bu 16 kayıt INVALID_PRESTART_SEED olarak geçersiz sayıldı. V2 temiz başlangıç yaptı.
+
+Forward başlangıç zamanı:
+
+2026-08-11T01:29:56.397166+00:00
+
+Mac LaunchAgent:
+
+- Label: com.agca.forward-shadow
+- Çalışma aralığı: 5 dakika
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW SETTLE/RECORD
+- Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
+
+---
+
+## 6. COIN KAPSAMI
+
+Takip listesi:
+
+ARKM, FIDA, WLD, TIA, ETHFI, BIO, LQTY, ILV, SLP, UMA, IO
+
+News Analyzer bu coinler için açık alias desteği içerir.
+
+Ek olarak Binance Spot USDT ticker keşfi dinamik hale getirildi. Hedef, sistemin yalnızca önceden belirlenmiş coinlere bağlı kalmaması; yarın yeni bir coin piyasaya çıktığında ve ilgili fırsat/haber oluştuğunda da tespit edebilmesidir.
+
+---
+
+## 7. RAPOR VE KRİTİK ALARM DURUMU
+
+ChatGPT görev sistemi ana kullanıcı bildirim kanalıdır.
+
+Aktif görevler:
+
+- Günlük Kripto Brifingi: her gün 11:00
+- Kripto Kritik Gelişme Takibi: saatlik koşullu kontrol
+
+Kritik alarm prensibi:
+
+- Önemli gelişme yoksa bildirim gönderilmez.
+- Büyük token unlock, güvenlik olayı, listing/delist, olağanüstü balina/on-chain hareketi, piyasa yapısını değiştirecek haber veya güçlü AGCA/Forward Shadow sinyali varsa kullanıcı uyarılır.
+- Saatlik görev gerçek zamanlı saniyelik izleme değildir; kritik gelişme bir sonraki saatlik kontrolde bildirilir.
+
+Telegram katmanı yardımcı/opsiyonel altyapıdır; ana kullanıcı bildirim kanalı olarak zorunlu değildir.
+
+---
+
+## 8. SONRAKİ SOMUT ÇALIŞMA
+
+Yeni oturumda sıfırdan mimari konuşulmayacak.
+
+Öncelik sırası:
+
+1. Forward Shadow V2'nin gerçek sinyal üretmeye başladığını ve 1h sonuçların düzenli settle edildiğini kontrol et.
+2. Yeterli forward örneklem oluşunca NEWS BASE vs MULTIFACTOR gerçek forward performansını değerlendir.
+3. Günlük 11:00 yatırım komitesi raporunda Forward Shadow performansını karar bağlamına dahil et.
+4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
+5. Araştırma ürünü geciktirmeyecek şekilde ana yol haritasındaki v0.6.0 Social Sentiment Agent'a geçiş zamanını belirle.
+
+---
+
+## 9. ÇALIŞMA PRENSİPLERİ
+
+1. Ürün odaklı geliştirme yapılır.
+2. Bir adım tamamlanmadan sonraki adıma geçilmez.
+3. Kullanıcı teknik işlemlerde tek tek yönlendirilir.
+4. Her modül gerçek verilerle test edilir.
+5. Leakage kesinlikle engellenir.
+6. Challenge/Exam verisi kendi seçiminden önce kullanılamaz.
+7. Küçük örneklem ve overfitting'e karşı temkinli olunur.
+8. Başarı düşükse parametre/ağırlıklar LEARN tarafında optimize edilebilir; ancak unseen validation başarısı olmadan üretime alınmaz.
+9. Aynı tarihsel veri sonsuza kadar kurcalanmaz; uygun noktada model dondurulur ve forward test başlatılır.
+10. Her teknik karar şu soruyla değerlendirilir: "Bu geliştirme bizi daha başarılı kripto tahminleri yapan çalışan bir ürüne gerçekten yaklaştırıyor mu?"
+11. Tüm çalışmalar birbirleriyle uyumlu olmalı; eski kararlar ve hedefler unutulmamalıdır.
+12. Günlük rapor ve kritik erken alarm sistemleri aksatılmamalıdır.
+
+---
+
+## 10. PROJE HAFIZA DOSYALARI
+
+Resmi hafıza dosyaları:
 
 - docs/PROJECT_STATUS.md
 - docs/TASKS.md
 - docs/CHANGELOG.md
 - docs/SESSION_LOG.md
 - docs/DECISIONS.md
+- docs/LAST_SESSION_HANDOFF.md
 
-Her oturum sonunda ilgili dosyalar güncel tutulmalıdır.
-
----
-
-## 8. TEMEL PRENSİPLER
-
-1. Ürün odaklı geliştirme yapılacaktır.
-2. Her modül gerçek ve ölçülebilir bir işlev sağlamalıdır.
-3. Gereksiz mimari karmaşıklıktan kaçınılır.
-4. Küçük ve test edilebilir adımlar uygulanır.
-5. Bir adım tamamlanmadan sonraki adıma geçilmez.
-6. Her modül gerçek verilerle test edilir.
-7. Başarılı test sonrasında proje sürümü güncellenir.
-8. Proje hafıza dosyaları güncel tutulur.
-9. Ana ürün yol haritası korunur.
-10. Her teknik karar şu soruyla değerlendirilir:
-
-"Bu geliştirme bizi daha başarılı kripto tahminleri yapan bir ürüne gerçekten yaklaştırıyor mu?"
+Yeni oturumlarda önce bu dosyalar ve mevcut GitHub kodu kontrol edilir; kullanıcıdan proje geçmişini yeniden anlatması istenmez.
