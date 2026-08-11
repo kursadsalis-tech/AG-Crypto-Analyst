@@ -100,3 +100,48 @@ Ardından ürün yol haritasında v0.6.0 Social Sentiment Agent'a geçiş zaman�
 ### Kullanıcıyla Çalışma Şekli
 
 Teknik işlemlerde kullanıcıya her zaman tek sonraki adım verilecek. Bir adım tamamlanmadan diğerine geçilmeyecek. Kullanıcıdan proje geçmişini yeniden anlatması istenmeyecek.
+
+---
+
+## Oturum 2026-08-11 - v0.6.0 Social Sentiment Agent
+
+### Başlangıç Durumu
+
+Forward Shadow V2'nin ilk gerçek sonuçları kontrol edildi:
+
+- NEWS BASE: settled=13, hit_rate=%23.1, directional_return=-%0.050
+- MULTIFACTOR: settled=5, hit_rate=%20.0, directional_return=-%0.013
+
+Örneklem küçük ve performans zayıf olduğu için frozen model değiştirilmedi; Champion üretim onayı verilmedi. Forward validasyon ana yol haritasını bloke etmeden paralelde devam edecek.
+
+### Social Sentiment Agent
+
+v0.6.0 ilk çalışan sürüm geliştirildi:
+
+- Reddit geniş kripto topluluk akışı
+- Tek istekte 100 paylaşım
+- SQLite gözlem tablosu ve global tekilleştirme
+- Başlık + içerik analizi
+- Coin/ticker tanıma ve belirsiz ticker koruması
+- 24 saatlik coin bazlı sentiment aggregate
+- Örneklem, yönlü kanıt ve fikir birliğine bağlı güven puanı
+- 15 dakikalık rate-safe cadence
+- 5 dakikalık mevcut canlı ürün cycle entegrasyonu
+
+### Test ve Düzeltmeler
+
+- Çoklu RSS isteğinde oluşan Reddit 429 sorunu birleşik tek akışla giderildi.
+- İlk testlerde kaynak etiketi değişiminden doğan yinelenen kayıtlar temizlendi ve external_id tekilleştirmesi kalıcı hale getirildi.
+- Sıradan "link" kelimesinin LINK coini sanılması düzeltildi.
+- Paylaşım sayısına bakarak üretilen yanıltıcı 100/100 güven hesabı kaldırıldı.
+- Düşük örneklem ve çelişkili sentiment için muhafazakâr güven üretimi doğrulandı.
+- Social cycle zorunlu testte SUCCESS verdi.
+- 15 dakika dolmadan tekrar çalışma doğru biçimde SKIPPED verdi.
+- Tam NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> SOCIAL SENTIMENT cycle testi başarıyla tamamlandı.
+
+### Ürün Kararı
+
+- v0.6.0 tamamlandı.
+- Düşük güvenli sosyal sonuçlar alarm veya işlem sinyali değildir.
+- Social Sentiment ve Forward Shadow paralelde veri toplamaya devam edecektir.
+- Sıradaki ana ürün modülü v0.7.0 On-chain Agent'tır.
