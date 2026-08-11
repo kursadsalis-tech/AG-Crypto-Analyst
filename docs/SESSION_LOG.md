@@ -483,3 +483,46 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 - Forward/Decision gölge doğrulamaları paralelde sürecek; küçük örneklemde üretim kapıları değiştirilmeyecek.
 - Sıradaki faz yeni mimari değil, çalışan ürünün güvenilirliği ve ölçülmüş performansıdır.
 
+---
+
+## Oturum 2026-08-11 - Decision Engine Historical Replay
+
+### Point-in-Time Replay
+
+- 13 coin için yaklaşık 400 günlük kapalı 1h mum indirildi.
+- market_klines tablosuna gerçek Binance quote_volume alanı ve geriye uyumlu
+  migrasyon eklendi.
+- 127.322 yeni mum, 13/13 hazır sembol, sıfır kaynak hatası ve sıfır
+  point-in-time boşluğu doğrulandı.
+- Kararlar yalnız kapanmış mumlarla oluşturuldu ve giriş bir sonraki mum
+  açılışından yapıldı.
+- 1h, 4h ve 24h sonuçlarına 10 baz puan maliyet uygulandı.
+- Veri kronolojik LEARN / VALIDATION / EXAM olarak ayrıldı.
+- Zaman sızıntısı, maliyet, risk veto, veri boşluğu ve split kontrolleri geçti.
+
+### Mevcut Politika Sonucu
+
+- 9.576 karar noktasında 23.881 aday oluştu: 11.505 AL ve 12.376 SAT.
+- 55.872 coin-zaman Risk Manager tarafından veto edildi.
+- EXAM 1h: n=3.556, hit=%40,0, net=-%0,142, block_LB=-%0,178.
+- EXAM 4h: n=3.556, hit=%41,7, net=-%0,193, block_LB=-%0,303.
+- EXAM 24h: n=3.556, hit=%46,9, net=-%0,160, block_LB=-%0,733.
+- Mevcut fiyat-durum kuralı tarihsel sınavı geçemedi.
+
+### Challenger Sonucu
+
+- Her ufukta 36 sabit FOLLOW/CONTRARIAN kuralı değerlendirildi.
+- Teknik güç, momentum ve normal piyasa filtreleri kullanıldı.
+- Güven sınırları 7 günlük zaman bloklarıyla hesaplandı.
+- 1h, 4h ve 24h için hiçbir kural LEARN aşamasında pozitif alt güven sınırı
+  üretmedi.
+- Sonuç NO_HISTORICALLY_CONFIRMED_CHALLENGER ve SHADOW_ONLY oldu.
+
+### Ürün Kararı
+
+- Canlı Decision Engine politikası ve üretim kapıları değiştirilmedi.
+- Mevcut sürekli fiyat-durum kural ailesi üretim için reddedildi.
+- Eşikleri yeniden kurcalamak yerine yalnız seyrek geçiş/kırılım olayları için
+  tek sınırlı hipotez test edilecek.
+- Bu hipotez de başarısızsa fiyat-teknik optimizasyonu durdurulacak.
+
