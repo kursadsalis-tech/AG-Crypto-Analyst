@@ -1,13 +1,14 @@
 """Product bridge for Forward Shadow Validation.
 
 Responsibilities:
-- surface newly created high-confidence multifactor predictions as one-time alerts,
-- expose forward-validation performance for the daily investment-committee report,
+- risk-gate newly created multifactor predictions before any product alert,
+- surface only evidence-ready, risk-permitted predictions as one-time alerts,
+- expose forward-validation performance for the daily committee report,
 - never alter the locked research model or its predictions.
 
-Alert delivery is idempotent through ``forward_shadow_alert_log``. If Telegram
-credentials are unavailable or delivery fails, the alert remains unsent and is
-retried on the next live cycle.
+Alert delivery is idempotent through ``forward_shadow_alert_log``. Risk-gate
+decisions are independently idempotent. Missing/stale risk data or insufficient
+forward evidence fails closed and is never presented as a high-confidence alert.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from notifications.telegram_notifier import is_configured, send_message
+from risk_manager import signal_risk_gate
 
 DB_NAME = "crypto_data.db"
 MODEL_VERSION = "REGIME_AWARE_FORWARD_V2"
@@ -51,7 +53,7 @@ def pending_multifactor_alerts(con):
     """, (MODEL_VERSION,)).fetchall()
 
 
-def alert_text(row):
+def alert_text(row, gate_result=None):
     pred_id, news_id, coin, symbol, confidence, impact, entry_price, score, regime, feature_json, entry_time, due_time = row
     try:
         feature = json.loads(feature_json or "{}")
@@ -59,8 +61,14 @@ def alert_text(row):
     except Exception:
         title = ""
     title_line = f"\nHaber: {title}" if title else ""
+    risk_line = ""
+    if gate_result:
+        risk_line = (
+            f"\nRisk policy: #{gate_result['policy_snapshot_id']} | "
+            f"max pozisyon: %{gate_result['max_position_pct']:.2f}"
+        )
     return (
-        "🚨 AGCA YÜKSEK GÜVEN 1H SİNYALİ\n"
+        "🚨 AGCA DOĞRULANMIŞ 1H SİNYALİ\n"
         f"Coin: {coin} ({symbol})\n"
         "Yön: AŞAĞI / NEGATIVE\n"
         f"Multifactor skor: {score:.3f} (cutoff 0.249)\n"
@@ -70,8 +78,42 @@ def alert_text(row):
         f"Tahmin ID: {pred_id} | Haber #{news_id}\n"
         f"Başlangıç: {entry_time}\n"
         f"1h değerlendirme: {due_time}"
+        f"{risk_line}"
         f"{title_line}"
     )
+
+
+def risk_permitted_alerts(con, rows):
+    permitted = []
+    blocked = 0
+    gate_errors = 0
+    for row in rows:
+        try:
+            result = signal_risk_gate.evaluate_forward_candidate(
+                con,
+                prediction_id=row[0],
+                coin=row[2],
+                symbol=row[3],
+                model_version=MODEL_VERSION,
+            )
+        except Exception as exc:
+            gate_errors += 1
+            blocked += 1
+            print(
+                f"Risk gate HATA: prediction_id={row[0]} alarm engellendi -> {exc}"
+            )
+            continue
+
+        if result["decision"] == "ALLOW":
+            permitted.append((row, result))
+        else:
+            blocked += 1
+            if result["recorded"]:
+                print(
+                    f"Risk gate BLOCK: prediction_id={row[0]} {row[2]} | "
+                    f"reasons={','.join(result['reasons'])}"
+                )
+    return permitted, blocked, gate_errors
 
 
 def deliver_pending_alerts(con):
@@ -79,12 +121,26 @@ def deliver_pending_alerts(con):
     rows = pending_multifactor_alerts(con)
     if not rows:
         return 0, 0
+
+    permitted, blocked, gate_errors = risk_permitted_alerts(con, rows)
+    if blocked:
+        print(
+            f"Ürün alarm risk kapısı: aday={len(rows)} | izinli={len(permitted)} | "
+            f"engellenen={blocked} | kapı_hatası={gate_errors}"
+        )
+    if not permitted:
+        return 0, 0
+
     if not is_configured():
-        print(f"Ürün alarmı: {len(rows)} bekleyen sinyal var; Telegram env ayarları bulunamadı.")
-        return 0, len(rows)
+        print(
+            f"Ürün alarmı: {len(permitted)} risk-izinli sinyal var; "
+            "Telegram env ayarları bulunamadı."
+        )
+        return 0, len(permitted)
+
     sent = 0
-    for row in rows:
-        if send_message(alert_text(row)):
+    for row, gate_result in permitted:
+        if send_message(alert_text(row, gate_result)):
             con.execute(
                 "INSERT OR IGNORE INTO forward_shadow_alert_log(prediction_id,sent_at,channel) VALUES (?,?,?)",
                 (row[0], utcnow_iso(), "telegram"),
@@ -92,7 +148,7 @@ def deliver_pending_alerts(con):
             con.commit()
             sent += 1
             print(f"Telegram alarm gönderildi: prediction_id={row[0]} {row[2]}")
-    return sent, len(rows) - sent
+    return sent, len(permitted) - sent
 
 
 def performance_snapshot(con):
