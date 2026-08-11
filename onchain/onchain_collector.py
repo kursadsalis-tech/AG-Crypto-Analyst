@@ -59,6 +59,10 @@ def ensure_table(con):
         CREATE INDEX IF NOT EXISTS ix_onchain_chain_metric_time
         ON onchain_observations(chain, metric, collected_at)
     """)
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_onchain_observation_identity
+        ON onchain_observations(source, chain, metric, collected_at)
+    """)
     con.commit()
 
 
