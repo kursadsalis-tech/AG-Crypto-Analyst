@@ -5,3 +5,4 @@ __pycache__/
 !.env.example
 crypto_data.db
 .DS_Store
+reports/daily_investment_committee_report.md
