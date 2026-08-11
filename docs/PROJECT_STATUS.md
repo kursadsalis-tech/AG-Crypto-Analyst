@@ -8,7 +8,7 @@ AG Crypto Analyst'ın nihai amacı:
 
 Sistem yalnızca sabit bir takip listesi için değil, Binance Spot USDT evreninde yeni ortaya çıkan coinleri ve yeni fırsatları da mümkün olduğunca dinamik biçimde tespit edebilmelidir.
 
-Amaç falcılık değil; fiyat, teknik yapı, haber, piyasa rejimi, on-chain, sosyal, makro ve ileride eklenecek balina verilerini matematiksel/istatistiksel olarak birleştiren, ölçülebilir ve sürekli doğrulanan bir sistem kurmaktır.
+Amaç falcılık değil; fiyat, teknik yapı, haber, piyasa rejimi, on-chain, sosyal, makro ve balina verilerini matematiksel/istatistiksel olarak birleştiren, ölçülebilir ve sürekli doğrulanan bir sistem kurmaktır.
 
 Gereksiz mimari karmaşıklıktan kaçınılacaktır. Amaç sürekli yeni mimariler tasarlamak değil, çalışan ve giderek daha başarılı hale gelen gerçek bir ürün çıkarmaktır.
 
@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v0.8.0**
+Proje ürün sürümü: **v0.9.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -44,10 +44,11 @@ Tamamlanan ana ürün modülleri:
 - Social Sentiment Agent ✅
 - On-chain Agent ✅
 - Macro Agent ✅
+- Whale Tracker ✅
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v0.9.0 Whale Tracker**.
+Ana ürün yol haritasındaki sıradaki yeni modül: **v1.0.0 Risk Manager**.
 
-Forward Shadow V2, Social Sentiment, On-chain ve Macro veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
+Forward Shadow V2, Social Sentiment, On-chain, Macro ve Whale Tracker veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
 ---
 
@@ -106,10 +107,11 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER
 - Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - On-chain cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - Macro cadence: 6 saat; ara cycle'larda güvenli biçimde atlanır
+- Whale Tracker cadence: 5 dakika; BTC, native ETH ve Ethereum ERC-20 kaynakları birbirinden izole çalışır
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
 
 ---
@@ -174,13 +176,35 @@ Son gerçek doğrulamada 2.481 gözlem alındı, 4 yeni kayıt eklendi ve kaynak
 
 ---
 
+## 5D. WHALE TRACKER - v0.9.0 TAMAMLANDI
+
+İlk çalışan sürüm doğrudan zincir kanıtı ve muhafazakâr alarm politikasıyla gerçek veride doğrulandı.
+
+Tamamlananlar:
+
+- Blockchain.com doğrulanmış bloklarından tekil Bitcoin çıktılarında 10 milyon dolar üstü hareket taraması
+- Ethereum güvenli bloklarında 10 milyon dolar üstü native ETH transfer taraması
+- ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA için doğrulanmış Ethereum ana ağ kontratlarında ERC-20 Transfer log taraması
+- ERC-20 kontrat ondalıklarının her due taramada zincir üstünde doğrulanması
+- Binance public spot fiyatlarıyla gözlem anı USD tahmini
+- SQLite tarama yüksekliği, idempotent olay kaydı ve 24 saatlik cross-chain kanıt özeti
+- BTC, native ETH ve ERC-20 kaynaklarının bağımsız hata izolasyonu
+- 5 dakikalık Whale Tracker cadence ve sekizinci canlı ürün adımı entegrasyonu
+- Sahiplik, borsa yönü ve alım/satım niyeti doğrulanmadıkça MONITOR_ONLY ve sıfır alarm ilkesi
+
+Son canlı doğrulamada Bitcoin yeni blok üretmedi; native ETH kaynağı 32, ERC-20 kaynağı 1 güvenli blok taradı. Yedi token kontratının ondalıkları zincir üstünde doğrulandı, kaynak hatası oluşmadı ve yeni eşik üstü Ethereum olayı görülmedi. Son 24 saatlik kanıtta Bitcoin tarafında 9 olay, yaklaşık 308,2 milyon dolar brüt çıktı ve sıfır alarm-uygun olay vardı.
+
+Brüt transfer/çıktı toplamı net akış değildir. Change, self-transfer, mint, burn veya sözleşme içi hareket olabilir. Yalnızca doğrulanmış borsa yönü ileride alarm adayı olabilir.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
 
 ARKM, FIDA, WLD, TIA, ETHFI, BIO, LQTY, ILV, SLP, UMA, IO
 
-News Analyzer bu coinler için açık alias desteği içerir.
+News Analyzer bu coinler için açık alias desteği içerir. Whale Tracker ilk token kapsamı Ethereum ana ağındaki doğrulanmış ARKM, BIO, ETHFI, ILV, LQTY, SLP ve UMA kontratlarıdır; diğer zincirlerdeki takip-listesi varlıkları destekleniyor gibi gösterilmez.
 
 Ek olarak Binance Spot USDT ticker keşfi dinamik hale getirildi. Hedef, sistemin yalnızca önceden belirlenmiş coinlere bağlı kalmaması; yarın yeni bir coin piyasaya çıktığında ve ilgili fırsat/haber oluştuğunda da tespit edebilmesidir.
 
@@ -199,6 +223,7 @@ Kritik alarm prensibi:
 
 - Önemli gelişme yoksa bildirim gönderilmez.
 - Büyük token unlock, güvenlik olayı, listing/delist, olağanüstü balina/on-chain hareketi, piyasa yapısını değiştirecek haber veya güçlü AGCA/Forward Shadow sinyali varsa kullanıcı uyarılır.
+- Ham büyük transfer veya çıktı tek başına alarm değildir; balina alarmı için yön ve borsa bağlamı doğrulanmalıdır.
 - Saatlik görev gerçek zamanlı saniyelik izleme değildir; kritik gelişme bir sonraki saatlik kontrolde bildirilir.
 
 Telegram katmanı yardımcı/opsiyonel altyapıdır; ana kullanıcı bildirim kanalı olarak zorunlu değildir.
@@ -217,7 +242,8 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
 5. On-chain 24h geçmişini ve veri kalitesini paralel izlemeye devam et; WARMING_UP/NO_DATA metriklerini karara dahil etme.
 6. Macro rejim snapshot'larını paralel biriktir; PROVISIONAL etiketi alarm veya işlem sinyali olarak kullanma.
-7. Ana ürün yol haritasında **v0.9.0 Whale Tracker** geliştirmesine geç.
+7. Whale Tracker kanıtlarını paralel biriktir; UNVERIFIED hareketleri alarm veya işlem sinyali sayma.
+8. Ana ürün yol haritasında **v1.0.0 Risk Manager** geliştirmesine geç.
 
 ---
 
