@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v1.1.0**
+Proje ürün sürümü: **v1.2.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -47,8 +47,9 @@ Tamamlanan ana ürün modülleri:
 - Whale Tracker ✅
 - Risk Manager ✅
 - Decision Engine ✅ — SHADOW modunda; ürün kararları doğrulama kazanmadıkça BEKLE
+- Report Generator ✅ — fail-closed günlük yatırım komitesi brifingi
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v1.2.0 Report Generator**.
+**Ana ürün yol haritasındaki 10 modülün tamamı çalışan ilk sürümleriyle tamamlandı.** Sıradaki faz yeni mimari değil; doğal 11:00 çalışmasının gözlenmesi, veri birikimi, performans doğrulaması ve ürün güvenilirliğinin artırılmasıdır.
 
 Forward Shadow V2, Decision Engine Shadow Validation, Social Sentiment, On-chain, Macro, Whale Tracker ve Risk Manager süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
@@ -109,14 +110,15 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> REPORT GENERATOR -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER
 - Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - On-chain cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - Macro cadence: 6 saat; ara cycle'larda güvenli biçimde atlanır
 - Whale Tracker cadence: 5 dakika; BTC, native ETH ve Ethereum ERC-20 kaynakları birbirinden izole çalışır
 - Risk Manager cadence: 15 dakika; canlı ürün akışında Decision Engine ve alarm köprüsünden önce çalışır
 - Decision Engine cadence: 15 dakika; gölge adayları 1 saatlik çakışmasız forward doğrulamaya kaydeder
-- Tam canlı ürün akışı 10/10 adımla gerçek veride doğrulandı
+- Report Generator cadence: Europe/Istanbul saat diliminde 11:00'den sonra günde bir kez; aynı gün tekrar üretmez
+- Tam canlı ürün akışı 11/11 adımla gerçek veride doğrulandı
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
 
 ---
@@ -250,6 +252,31 @@ Gölge adayları alarm, işlem talimatı veya üretim kararı değildir. Decisio
 
 ---
 
+## 5G. REPORT GENERATOR - v1.2.0 TAMAMLANDI
+
+İlk çalışan sürüm, mevcut Decision Engine ve Risk sözleşmelerini yeniden yorumlamadan fail-closed yatırım komitesi brifingi üretir.
+
+Tamamlananlar:
+
+- Son Decision Engine run, Risk Manager policy/asset snapshot, Forward scoreboard ve Decision Shadow performansını tek günlük raporda birleştirme
+- Coin bazında 24h bağlam, teknik yön, gölge araştırma adayı, ürün kararı, risk izni ve pozisyon tavanını ayrı sütunlarda gösterme
+- SHADOW modunda bozuk bir product AL kaydı bulunsa dahi rapor seviyesinde BEKLE'ye kapatma
+- Risk BLOCK bulunan coini alım fırsatı olarak göstermeme
+- En güçlü fırsatı yalnız gerçek PRODUCTION + product AL + Risk ALLOW birlikteyse seçme
+- En riskli coini coin bazlı risk skoru ve likidite kanıtından gösterme
+- Risk veya Decision snapshot 30 dakikadan eski/eksikse DATA_BLOCKED rapor üretme
+- PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY kanıtları olgunluk tablosunda açıkça etiketleme
+- committee_report_snapshots tablosunda günlük idempotent rapor kaydı
+- reports/daily_investment_committee_report.md çıktısı
+- Europe/Istanbul 11:00 günlük tek-çalışma cadence'i
+- Mevcut 5 dakikalık LaunchAgent akışına hata izolasyonlu entegrasyon
+
+İlk canlı rapor SHADOW_ONLY durumunda üretildi: 13 coin, 10 risk bloğu, ürün aksiyonu BEKLE, en güçlü fırsat YOK ve en riskli coin BIOUSDT. Gölge BTC SAT_ADAYI ile WLD AL_ADAYI ürün fırsatı olarak sunulmadı.
+
+Ardından 11/11 ana ürün döngüsü başarıyla tamamlandı. İstanbul saati 00:51 iken Report Generator 11:00 slotunu tüketmeden WAITING durumunda kaldı. İlk doğal 11:00 üretimi LaunchAgent tarafından otomatik yapılacaktır ve operasyonel gözlem olarak izlenecektir.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
@@ -278,6 +305,7 @@ Kritik alarm prensibi:
 - Ham büyük transfer veya çıktı tek başına alarm değildir; balina alarmı için yön ve borsa bağlamı doğrulanmalıdır.
 - Forward Shadow üründe SHADOW_ONLY'dır; Signal Risk Gate izin vermedikçe yönlü ürün alarmı gönderilmez.
 - Decision Engine gölge AL/SAT adayları ürün alarmı veya işlem kararı değildir; ürün kararı SHADOW politikada BEKLE kalır.
+- Günlük komite raporu İstanbul saatiyle 11:00'den sonra günde bir kez üretilir; SHADOW adayları fırsat olarak sunmaz.
 - Saatlik görev gerçek zamanlı saniyelik izleme değildir; kritik gelişme bir sonraki saatlik kontrolde bildirilir.
 
 Telegram katmanı yardımcı/opsiyonel altyapıdır; ana kullanıcı bildirim kanalı olarak zorunlu değildir.
@@ -299,7 +327,8 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 7. Whale Tracker kanıtlarını paralel biriktir; UNVERIFIED hareketleri alarm veya işlem sinyali sayma.
 8. Risk Manager snapshot ve kapı kararlarını paralel biriktir; limitleri sinyal gücü gibi yorumlama.
 9. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; küçük örneklemde üretim onayı verme.
-10. Ana ürün yol haritasında **v1.2.0 Report Generator** geliştirmesine geç.
+10. İlk doğal 11:00 Report Generator çalışmasını gözle; günlük dosya ve SQLite snapshot'ın üretildiğini doğrula.
+11. Ana yol haritası tamamlandığı için yeni mimari açmadan ürün güvenilirliği, veri kalitesi ve ölçülmüş performans üzerinde ilerle.
 
 ---
 
