@@ -436,3 +436,50 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 - Küçük örneklemde politika/eşik değiştirilmeyecek ve otomatik üretim onayı verilmeyecektir.
 - Ana yol haritasındaki sıradaki modül v1.2.0 Report Generator'dır; Decision Engine doğrulaması paralelde sürecektir.
 
+---
+
+## Oturum 2026-08-11 - v1.2.0 Report Generator
+
+### Fail-Closed Komite Raporu
+
+- Son Decision Engine run, Risk policy/asset snapshot, Forward scoreboard ve Decision Shadow performansı tek raporda birleştirildi.
+- 13 coin için 24h bağlam, teknik yön, gölge aday, ürün kararı, risk izni ve tavan ayrı gösterildi.
+- Gölge adayların fırsat gibi sunulması engellendi.
+- SHADOW durumunda veritabanında yanlış product AL bulunsa dahi raporun BEKLE'ye kapandığı doğrulandı.
+- Risk BLOCK bulunan coinlerin fırsat olarak seçilemediği doğrulandı.
+- Risk veya Decision verisi 30 dakikadan eskiyse DATA_BLOCKED kuralı eklendi.
+- Günlük Markdown dosyası ve idempotent committee_report_snapshots kaydı eklendi.
+
+### Canlı İlk Rapor
+
+- Report Generator v1.2.0 başarıyla çalıştı.
+- Durum SHADOW_ONLY, Decision run 13 coin ve risk_blocked=10 oldu.
+- Ürün aksiyonu BEKLE, en güçlü fırsat YOK oldu.
+- BIOUSDT risk verisine göre en riskli coin seçildi.
+- BTC SAT_ADAYI ile WLD AL_ADAYI yalnız gölge araştırma olarak gösterildi.
+- reports/daily_investment_committee_report.md üretildi.
+- Fail-closed testler 20/20 temel + 6/6 tutarsız veri senaryosunda geçti.
+
+### Günlük 11:00 Cadence
+
+- Europe/Istanbul 11:00 sonrası günde bir çalışma kuralı eklendi.
+- 10:59 bekleme, 11:00 çalışma, aynı gün tekrar engeli, ertesi gün yeniden açılma ve hata tekrar deneme senaryoları 9/9 geçti.
+- Manuel modül çalıştırmasının planlı slotu tüketmemesi sağlandı.
+- Report Generator mevcut 5 dakikalık LaunchAgent akışına eklendi.
+
+### 11/11 Ürün Entegrasyonu
+
+- Tam canlı akış 11/11 adımla tamamlandı.
+- Risk Manager ve Decision Engine cadence nedeniyle güvenli SKIPPED oldu.
+- İstanbul saati 00:51 iken Report Generator WAITING_FOR_11_00 durumunda kaldı.
+- Alarm köprüsü gönderilen=0, bekleyen=0 kaldı.
+- Diğer cadence kontrollü modüller akışı durdurmadı.
+
+### Ürün Kararı
+
+- v1.2.0 Report Generator çalışan ilk sürümü tamamlandı.
+- Ana ürün yol haritasındaki on modül tamamlandı.
+- İlk doğal 11:00 üretimi otomatik LaunchAgent ile gerçekleşecek ve operasyonel olarak gözlenecek.
+- Forward/Decision gölge doğrulamaları paralelde sürecek; küçük örneklemde üretim kapıları değiştirilmeyecek.
+- Sıradaki faz yeni mimari değil, çalışan ürünün güvenilirliği ve ölçülmüş performansıdır.
+
