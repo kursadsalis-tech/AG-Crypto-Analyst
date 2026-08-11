@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from analysis import forward_shadow_validator
 from news_intelligence import news_analyzer, news_collector
+from onchain import onchain_cycle
 from reports import forward_shadow_product_bridge
 from social_sentiment import social_sentiment_cycle
 
@@ -17,19 +18,19 @@ def stamp():
 def main():
     print("AG Crypto Analyst - Live Product Cycle")
     print(f"Başlangıç: {stamp()}")
-    print("Akış: NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> SOCIAL SENTIMENT")
+    print("Akış: NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN")
     print("=" * 80)
 
-    print("\n[1/5] Canlı haberler toplanıyor...")
+    print("\n[1/6] Canlı haberler toplanıyor...")
     news_collector.main()
 
-    print("\n[2/5] Haberler analiz ediliyor...")
+    print("\n[2/6] Haberler analiz ediliyor...")
     news_analyzer.main()
 
-    print("\n[3/5] Forward Shadow çalıştırılıyor...")
+    print("\n[3/6] Forward Shadow çalıştırılıyor...")
     forward_shadow_validator.main()
 
-    print("\n[4/5] Ürün alarm köprüsü çalıştırılıyor...")
+    print("\n[4/6] Ürün alarm köprüsü çalıştırılıyor...")
     con = sqlite3.connect(forward_shadow_product_bridge.DB_NAME)
     try:
         sent, pending = forward_shadow_product_bridge.deliver_pending_alerts(con)
@@ -37,8 +38,11 @@ def main():
     finally:
         con.close()
 
-    print("\n[5/5] Social Sentiment cadence kontrolü...")
+    print("\n[5/6] Social Sentiment cadence kontrolü...")
     social_sentiment_cycle.main()
+
+    print("\n[6/6] On-chain cadence kontrolü...")
+    onchain_cycle.main()
 
     print("\n" + "=" * 80)
     print(f"Cycle tamamlandı: {stamp()}")
