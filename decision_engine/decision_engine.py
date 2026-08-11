@@ -143,8 +143,7 @@ def load_onchain_context(con):
     return grouped
 
 
-def technical_context(symbol):
-    features = forward_shadow_validator.technical_features(symbol)
+def classify_technical_features(features):
     components = {
         "rsi_extreme": 1 if features["rsi"] <= 30 else (
             -1 if features["rsi"] >= 70 else 0
@@ -175,6 +174,11 @@ def technical_context(symbol):
         "maturity": "RESEARCH_ONLY",
         "production_usable": False,
     }
+
+
+def technical_context(symbol):
+    features = forward_shadow_validator.technical_features(symbol)
+    return classify_technical_features(features)
 
 
 def risk_guard(policy, asset, now):
