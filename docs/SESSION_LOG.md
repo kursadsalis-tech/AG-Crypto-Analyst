@@ -197,3 +197,59 @@ Son doğrulama:
 - Token transferleri, borsa giriş/çıkışları ve büyük cüzdan hareketleri ileri genişletme/Whale Tracker kapsamındadır.
 - WARMING_UP ve NO_DATA metrikleri karara dahil edilmeyecektir.
 - Sıradaki ana modül v0.8.0 Macro Agent'tır.
+
+---
+
+## Oturum 2026-08-11 - v0.8.0 Macro Agent
+
+### Macro Collector
+
+Resmî FRED CSV kaynağıyla ilk çalışan sürüm geliştirildi:
+
+- DFF: Effective Federal Funds Rate
+- DGS10: ABD 10 yıllık tahvil faizi
+- DTWEXBGS: geniş ABD doları endeksi
+- VIXCLS: VIX
+- CPIAUCSL: ABD tüketici fiyat endeksi
+- 800 günlük geçmiş ve SQLite idempotent kayıt
+
+Son collector testi 2.481 gözlem aldı, 4 yeni kayıt ekledi ve sıfır kaynak hatası verdi.
+
+### Macro Analyzer
+
+Şeffaf makro bileşenleri geliştirildi:
+
+- Fed Funds 90 günlük değişim
+- ABD 10Y 30 günlük değişim
+- geniş dolar 30 günlük değişim
+- VIX seviyesi
+- CPI yıllık eğilim değişimi
+
+Son gerçek sonuç:
+
+- Fed Funds: %3.63, 90g 0 bp
+- ABD 10Y: %4.72, 30g +16 bp
+- Geniş dolar: 30g -%1.71
+- VIX: 15.46
+- CPI YoY: %3.46, eğilim -0.70 puan
+- Bileşenler: 0, 0, -1, -1, -1
+- PROVISIONAL rejim: RISK_ON, skor=-3, kapsam=5/5
+
+Bu sonuç doğrulanmış işlem sinyali değildir.
+
+### Otomasyon ve Entegrasyon
+
+- macro_cycle eklendi.
+- Çalışma aralığı 6 saat olarak belirlendi.
+- Kaynak/analyzer hataları diğer canlı ürün modüllerinden izole edildi.
+- Ana ürün döngüsüne yedinci adım olarak bağlandı.
+- Zorunlu Macro cycle testi SUCCESS verdi.
+- Tam ürün cycle testinde 6 saat dolmadığı için Macro doğru biçimde SKIPPED verdi.
+
+### Ürün Kararı
+
+- v0.8.0 tamamlandı.
+- Macro rejimi PROVISIONAL kalacak; tarihsel/forward doğrulama olmadan alarm, işlem kararı veya Decision Engine girdisi olmayacak.
+- Forward Shadow, Social Sentiment, On-chain ve Macro paralelde veri toplamaya devam edecek.
+- Sıradaki ana modül v0.9.0 Whale Tracker'dır.
+
