@@ -8,3 +8,5 @@ crypto_data.db
 reports/daily_investment_committee_report.md
 reports/decision_engine_historical_replay.csv
 reports/decision_engine_historical_summary.csv
+reports/decision_engine_challenger_lab.csv
+reports/decision_engine_challenger_selection.csv
