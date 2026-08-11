@@ -24,8 +24,8 @@ DB_NAME = "crypto_data.db"
 # Reddit rate-limits multiple rapid RSS requests. A combined subreddit feed keeps
 # collection to one request while retaining coverage across the three communities.
 SOURCE_URLS = {
-    "Reddit Crypto (CryptoCurrency+Bitcoin+ethtrader)":
-        "https://www.reddit.com/r/CryptoCurrency+Bitcoin+ethtrader/new/.rss",
+    "Reddit Crypto (broad market feed)":
+        "https://www.reddit.com/r/CryptoCurrency+Bitcoin+ethtrader+altcoin+CryptoMarkets/new/.rss?limit=100",
 }
 POSITIVE_WORDS = {
     "adoption", "approval", "bullish", "breakout", "buy", "growth", "partnership",
