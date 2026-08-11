@@ -1,14 +1,14 @@
-# AG Crypto Analyst — Session Handoff (2026-08-11, v1.1.0)
+# AG Crypto Analyst — Session Handoff (2026-08-11, v1.2.0)
 
 ## Current product state
 
-- Product version: v1.1.0.
-- Completed: Market Data, Market Analyzer, Technical Analysis, News Intelligence, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager, Decision Engine (SHADOW mode).
-- Next main module: v1.2.0 Report Generator.
+- Product version: v1.2.0.
+- Completed: Market Data, Market Analyzer, Technical Analysis, News Intelligence, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager, Decision Engine (SHADOW mode), Report Generator.
+- Core roadmap: COMPLETE through v1.2.0. Next phase is operational validation and measured reliability work, not a new module.
 - Mac LaunchAgent com.agca.forward-shadow runs the live product cycle every 5 minutes.
-- Live cycle: NEWS -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER.
-- Full live cycle passed at 10/10 steps.
-- Social, On-chain, Risk Manager and Decision Engine use 15-minute internal cadences; Macro uses 6 hours; Whale Tracker uses 5 minutes.
+- Live cycle: NEWS -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> REPORT GENERATOR -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER.
+- Full live cycle passed at 11/11 steps.
+- Social, On-chain, Risk Manager and Decision Engine use 15-minute internal cadences; Macro uses 6 hours; Whale Tracker uses 5 minutes; Report Generator runs once daily after 11:00 Europe/Istanbul.
 
 ## Forward Shadow — keep frozen
 
@@ -146,6 +146,35 @@ Scope boundary:
 - One open prediction per symbol prevents overlapping sample inflation.
 - The engine cannot leave SHADOW mode automatically.
 
+## Report Generator v1.2.0
+
+Working components:
+
+- Fail-closed daily investment committee Markdown report.
+- Latest Decision, Risk, Forward and Decision Shadow inputs.
+- Separate shadow-research and effective product-decision columns.
+- Production opportunity requires PRODUCTION + product AL + Risk ALLOW.
+- Risk/Decision snapshots older than 30 minutes cause DATA_BLOCKED.
+- Persistent idempotent committee_report_snapshots.
+- Daily output at reports/daily_investment_committee_report.md.
+- Once-per-Istanbul-day cadence after 11:00.
+- Manual tests do not consume the scheduled daily slot.
+- Integrated into the existing five-minute LaunchAgent cycle.
+
+Latest validation:
+
+- Report state SHADOW_ONLY; 13 coins; 10 risk blocks.
+- Effective product action BEKLE; strongest opportunity YOK.
+- BIOUSDT was the riskiest asset in the current risk snapshot.
+- BTC SAT_ADAYI and WLD AL_ADAYI remained research-only.
+- At 00:51 Europe/Istanbul, the daily cycle correctly waited for 11:00.
+- Full live product cycle passed at 11/11.
+
+Pending natural observation:
+
+- Confirm the first unattended 11:00 generation and persisted daily snapshot.
+- This observation does not block the completed product roadmap.
+
 ## Notification policy
 
 - Daily investment-committee briefing: 11:00 Europe/Istanbul.
@@ -166,12 +195,13 @@ Scope boundary:
 
 ## Next session priority
 
-1. Do not rebuild completed modules from scratch.
-2. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker and Risk Manager continue automatically.
-3. Begin v1.2.0 Report Generator from the existing decision/evidence contracts.
+1. Do not rebuild completed modules from scratch; the core roadmap is complete through v1.2.0.
+2. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
+3. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
 4. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
 5. Never let scoring or reporting convert PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED or SHADOW_ONLY evidence into a strong decision.
 6. Keep Risk Manager BLOCK final and preserve both frozen shadow policies while real samples grow.
+7. Prioritize operational reliability and measured performance; do not open new architecture without evidence of need.
 
 ## Working style
 
