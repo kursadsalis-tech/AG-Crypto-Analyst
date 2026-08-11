@@ -305,3 +305,86 @@ Son canlı test:
 - UNVERIFIED olaylar alarm, işlem sinyali veya Decision Engine girdisi olmayacak.
 - Forward Shadow, Social Sentiment, On-chain, Macro ve Whale Tracker paralelde veri toplamaya devam edecek.
 - Sıradaki ana ürün modülü v1.0.0 Risk Manager'dır.
+
+---
+
+## Oturum 2026-08-11 - v1.0.0 Risk Manager
+
+### Piyasa ve Coin Risk Politikası
+
+Binance public kapalı 1h mumlarıyla BTC, ETH ve 11 öncelikli coin için şu ölçümler eklendi:
+
+- 24 saatlik getiri
+- 24 saatlik yüksek/düşük fiyat aralığı
+- son 24 saatlik saatlik getiri volatilitesi
+- 7 günlük tepeye göre düşüş
+- 24 saatlik spot quote-volume vekili
+
+Bu ölçümler coin bazlı NORMAL / ELEVATED / HIGH / EXTREME sınıfı ile azami pozisyon ve volatilite-stop referansı üretir. Global politika NORMAL / CAUTION / DEFENSIVE / LOCKDOWN / DATA_BLOCKED durumlarıyla toplam maruziyet, altcoin maruziyeti, tek pozisyon, işlem riski, günlük kayıp ve yeni pozisyon sınırları verir.
+
+### Canlı Kalibrasyon Düzeltmesi
+
+İlk gerçek test:
+
+- kapsam: 13/13
+- BTC ve ETH risk metrikleri sakindi
+- takip listesindeki düşük hacimli coinler nedeniyle global sonuç yanlış biçimde LOCKDOWN oldu
+
+Kök neden, coin bazlı yapısal likidite riskinin global dinamik piyasa stresi sayılmasıydı. İki risk ekseni ayrıldı ve ilk canlı veri regresyon fixture'ına dönüştürüldü.
+
+Düzeltilmiş sonuç:
+
+- market_state=NORMAL
+- market_stress=0/13
+- asset_blocks=10
+- liquidity_blocks=10
+- BTC cap=%10
+- ETH cap=%10
+- WLD cap=%5
+- diğer düşük hacimli 10 coin cap=%0 ve yeni pozisyon=NO
+
+QVOL yalnızca 24h spot hacim vekilidir; emir defteri derinliği değildir.
+
+### Cadence ve Canlı Ürün Entegrasyonu
+
+- risk_cycle 15 dakikalık cadence ile eklendi.
+- Kaynak hataları diğer modüllerden izole edildi.
+- Risk Manager ürün alarm köprüsünden hemen önce konumlandırıldı.
+- Risk cycle gerçek veride SUCCESS verdi.
+- Tam 9/9 canlı ürün cycle testi geçti.
+- Aynı 15 dakikalık pencere içinde Risk Manager doğru biçimde SKIPPED oldu.
+
+### Signal Risk Gate
+
+Forward ürün alarmı için fail-closed kapı geliştirildi:
+
+- asgari settled=30
+- hit rate >=%60
+- %95 Wilson alt sınırı >=%50
+- ortalama directional return >0
+- risk snapshot yaşı <=30 dakika
+- global ve coin bazlı yeni pozisyon izni
+
+Kararlar risk_gate_decisions tablosuna idempotent kaydedilir. Ürün alarm köprüsü bu kapıya bağlandı; gate BLOCK ise Telegram veya başka ürün alarmı gönderilmez.
+
+Canlı kapı sonucu:
+
+- policy snapshot=3
+- market_state=NORMAL
+- policy age=8,4 dakika
+- Forward state=SHADOW_ONLY
+- settled=5
+- hit=%20
+- Wilson lower=%3,6
+- directional return=-%0,013
+- açık/izinli alarm adayı=0
+
+Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
+
+### Ürün Kararı
+
+- v1.0.0 Risk Manager tamamlandı.
+- Risk Manager sinyal değil, zorunlu limit ve veto katmanıdır.
+- BLOCK kararı gelecek Decision Engine tarafından telafi edilemez.
+- Zayıf, PROVISIONAL, WARMING_UP, NO_DATA, UNVERIFIED veya SHADOW_ONLY kanıt güçlü karara dönüştürülemez.
+- Sıradaki ana ürün modülü v1.1.0 Decision Engine'dir.
