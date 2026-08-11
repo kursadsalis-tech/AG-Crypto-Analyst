@@ -1,4 +1,4 @@
-"""Run Bitcoin whale evidence collection at a safe live-product cadence."""
+"""Run independent cross-chain whale collectors at a safe product cadence."""
 from __future__ import annotations
 
 import sqlite3
@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from whale_tracker import (
     bitcoin_whale_collector,
+    ethereum_token_whale_collector,
     ethereum_whale_collector,
     whale_evidence_analyzer,
 )
@@ -84,7 +85,8 @@ def main(force=False):
             source_errors = {}
             collectors = (
                 ("btc", bitcoin_whale_collector.main),
-                ("eth", ethereum_whale_collector.main),
+                ("eth_native", ethereum_whale_collector.main),
+                ("eth_erc20", ethereum_token_whale_collector.main),
             )
             for source_name, collector in collectors:
                 try:
@@ -104,16 +106,24 @@ def main(force=False):
                 raise RuntimeError(f"tüm whale kaynakları başarısız: {joined}")
 
             btc = results.get("btc", {})
-            eth = results.get("eth", {})
+            eth_native = results.get("eth_native", {})
+            eth_erc20 = results.get("eth_erc20", {})
             btc_blocks = int(btc.get("blocks_scanned", 0))
-            eth_blocks = int(eth.get("blocks_scanned", 0))
-            total_blocks = btc_blocks + eth_blocks
-            total_new = int(btc.get("inserted", 0)) + int(eth.get("inserted", 0))
+            eth_native_blocks = int(eth_native.get("blocks_scanned", 0))
+            eth_erc20_blocks = int(eth_erc20.get("blocks_scanned", 0))
+            total_blocks = btc_blocks + eth_native_blocks + eth_erc20_blocks
+            total_new = (
+                int(btc.get("inserted", 0))
+                + int(eth_native.get("inserted", 0))
+                + int(eth_erc20.get("inserted", 0))
+            )
             cycle_status = "PARTIAL" if source_errors else "SUCCESS"
 
             if total_blocks <= 0:
                 message = (
-                    f"btc_blocks={btc_blocks} | eth_blocks={eth_blocks} | "
+                    f"btc_blocks={btc_blocks} | "
+                    f"eth_native_blocks={eth_native_blocks} | "
+                    f"eth_erc20_blocks={eth_erc20_blocks} | "
                     f"new=0 | source_errors={len(source_errors)} | "
                     "analysis=UNCHANGED"
                 )
@@ -123,9 +133,12 @@ def main(force=False):
 
             analysis = whale_evidence_analyzer.main()
             message = (
-                f"btc_blocks={btc_blocks} | eth_blocks={eth_blocks} | "
+                f"btc_blocks={btc_blocks} | "
+                f"eth_native_blocks={eth_native_blocks} | "
+                f"eth_erc20_blocks={eth_erc20_blocks} | "
                 f"btc_detected={int(btc.get('detected', 0))} | "
-                f"eth_detected={int(eth.get('detected', 0))} | "
+                f"eth_native_detected={int(eth_native.get('detected', 0))} | "
+                f"eth_erc20_detected={int(eth_erc20.get('detected', 0))} | "
                 f"new={total_new} | source_errors={len(source_errors)} | "
                 f"window_events={analysis['event_count']} | "
                 f"alert_eligible={analysis['alert_eligible_count']} | "
