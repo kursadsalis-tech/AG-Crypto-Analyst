@@ -178,6 +178,14 @@
 
 ## AKTİF GÖREVLER
 
+- [x] Decision Engine politikasını 13 coin ve yaklaşık 400 günlük kapalı 1h mumla point-in-time replay et
+- [x] Girişleri sonraki mum açılışına taşı ve 1h/4h/24h sonuçlara 10 bps maliyet uygula
+- [x] Replay'i kronolojik LEARN/VALIDATION/EXAM olarak ayır
+- [x] 36 sabit FOLLOW/CONTRARIAN challenger'ı 7 günlük blok güven sınırlarıyla değerlendir
+- [x] Üç ufukta NO_LEARN_EDGE sonucunda mevcut fiyat-durum kuralını üretim için reddet
+- [x] Başarısız tarihsel sonucu canlı politika/eşik değişikliğine çevirmeden SHADOW_ONLY tut
+- [ ] Tek sınırlı seyrek teknik-geçiş hipotezini 24h coin cooldown ile replay et
+- [ ] Geçiş hipotezi de LEARN edge üretmezse fiyat-teknik kural optimizasyonunu durdur
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
 - [ ] 1h süresi dolan tahminlerin otomatik settle edildiğini doğrula
 - [ ] NEWS BASE vs MULTIFACTOR gerçek forward scoreboard'u örneklem büyüdükçe değerlendir
