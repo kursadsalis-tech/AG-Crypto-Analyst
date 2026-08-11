@@ -1,5 +1,40 @@
 # AG Crypto Analyst - Changelog
 
+## v1.0.0
+
+### Risk Manager - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- BTC, ETH ve 11 öncelikli Binance Spot USDT coini için kapalı 1h mum tabanlı risk ölçümü
+- 24h getiri, 24h fiyat aralığı, saatlik volatilite, 7 günlük düşüş ve 24h spot hacim vekili
+- NORMAL / ELEVATED / HIGH / EXTREME coin risk sınıfları
+- Coin bazlı azami pozisyon ve volatilite-stop referansı
+- NORMAL / CAUTION / DEFENSIVE / LOCKDOWN / DATA_BLOCKED global politika durumları
+- Toplam ve altcoin maruziyeti, tek pozisyon, işlem başı risk, günlük kayıp ve yeni pozisyon tavanları
+- Kalıcı risk_policy_snapshots ve asset_risk_snapshots
+- 15 dakikalık cadence ve canlı döngüde alarm köprüsünden önce entegrasyon
+- Forward performansı için settled/hit/Wilson/directional-return üretim kapısı
+- Güncel olmayan politika, kapsam dışı coin ve sıfır pozisyon tavanı için fail-closed engel
+- İdempotent risk_gate_decisions
+- Forward Shadow ürün alarm köprüsünün Signal Risk Gate'e bağlanması
+
+Doğrulama:
+
+- İlk canlı testte yapısal düşük hacimli coinler global risk sayıldığı için yanlış LOCKDOWN tespit edildi.
+- Piyasa stresi ile coin bazlı işlem/likidite riski ayrıldı ve aynı canlı veri regresyon testine sabitlendi.
+- Düzeltilmiş canlı sonuç: kapsam=13/13, market_state=NORMAL, market_stress=0, asset_blocks=10, source_errors=0.
+- BTC ve ETH azami pozisyon tavanı %10; WLD %5; 24h spot hacmi 2 milyon doların altındaki 10 coin yeni pozisyona kapalı.
+- Risk cycle SUCCESS verdi; 15 dakika içindeki tam 9/9 cycle'da doğru biçimde SKIPPED oldu.
+- Signal Risk Gate canlı sonuç: SHADOW_ONLY, settled=5, hit=%20, Wilson alt=%3,6, directional return=-%0,013, izinli alarm=0.
+- Deterministik testlerde zayıf kanıt, eski risk snapshot'ı ve coin bloğu reddedildi; yeterli kanıt + güncel izinli risk için ALLOW yolu doğrulandı.
+
+Not:
+
+Risk limitleri getiri tahmini veya işlem tavsiyesi değildir. QVOL emir defteri derinliği değil, 24h spot hacim vekilidir. Frozen Forward Shadow parametreleri değiştirilmedi; kapı yalnızca ürün alarmı için kullanım izni verir.
+
+---
+
 ## v0.9.0
 
 ### Whale Tracker - İlk Çalışan Sürüm
@@ -273,9 +308,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v1.0.0
-Risk Manager
 
 ## v1.1.0
 Decision Engine
