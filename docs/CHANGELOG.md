@@ -1,5 +1,35 @@
 # AG Crypto Analyst - Changelog
 
+## Unreleased - Historical Decision Validation
+
+### Leakage-Safe Decision Replay
+
+- 13 coin için yaklaşık 400 günlük kapalı 1h mumla point-in-time replay
+- Sonraki mum açılışında giriş; 1h, 4h ve 24h sonuç
+- 10 baz puan gidiş-dönüş maliyet
+- Kronolojik LEARN / VALIDATION / EXAM
+- Gerçek Binance quote-volume saklama ve eski tablo migrasyonu
+- 13/13 veri kapsamı, 127.322 yeni mum, sıfır kaynak ve zaman boşluğu hatası
+- 9.576 karar noktasında 23.881 gölge aday
+
+### Conservative Challenger Lab
+
+- FOLLOW ve CONTRARIAN yönleri için önceden sabit 36 kural/horizon
+- Teknik güç, 24h momentum ve normal piyasa filtreleri
+- LEARN'de çoklu deneme için z=3,20; ilk üç için VALIDATION z=2,40
+- Korelasyon şişmesini azaltan 7 günlük zaman blokları
+- Yalnız dondurulan kazananın EXAM'a girebilmesi
+- 1h, 4h ve 24h için NO_LEARN_EDGE
+- Canlı Decision Engine politikasında ve ürün kapılarında değişiklik yok
+
+Karar:
+
+Mevcut sürekli fiyat-durum kural ailesi üretim için reddedildi. Aynı eşikler
+yeniden optimize edilmeyecek. Yalnız seyrek teknik geçiş/kırılım hipotezi bir
+kez sınanacak; o da başarısızsa fiyat-teknik arama durdurulacak.
+
+---
+
 ## v1.2.0
 
 ### Report Generator - İlk Çalışan Sürüm
