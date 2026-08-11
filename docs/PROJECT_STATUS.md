@@ -8,7 +8,7 @@ AG Crypto Analyst'ın nihai amacı:
 
 Sistem yalnızca sabit bir takip listesi için değil, Binance Spot USDT evreninde yeni ortaya çıkan coinleri ve yeni fırsatları da mümkün olduğunca dinamik biçimde tespit edebilmelidir.
 
-Amaç falcılık değil; fiyat, teknik yapı, haber, piyasa rejimi ve ileride eklenecek on-chain, sosyal, makro ve balina verilerini matematiksel/istatistiksel olarak birleştiren, ölçülebilir ve sürekli doğrulanan bir sistem kurmaktır.
+Amaç falcılık değil; fiyat, teknik yapı, haber, piyasa rejimi, on-chain, sosyal, makro ve ileride eklenecek balina verilerini matematiksel/istatistiksel olarak birleştiren, ölçülebilir ve sürekli doğrulanan bir sistem kurmaktır.
 
 Gereksiz mimari karmaşıklıktan kaçınılacaktır. Amaç sürekli yeni mimariler tasarlamak değil, çalışan ve giderek daha başarılı hale gelen gerçek bir ürün çıkarmaktır.
 
@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v0.7.0**
+Proje ürün sürümü: **v0.8.0**
 
 Tamamlanan ana ürün modülleri:
 
@@ -43,10 +43,11 @@ Tamamlanan ana ürün modülleri:
 - News Intelligence Agent ✅
 - Social Sentiment Agent ✅
 - On-chain Agent ✅
+- Macro Agent ✅
 
-Ana ürün yol haritasındaki sıradaki yeni modül: **v0.8.0 Macro Agent**.
+Ana ürün yol haritasındaki sıradaki yeni modül: **v0.9.0 Whale Tracker**.
 
-Forward Shadow V2, Social Sentiment ve On-chain veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
+Forward Shadow V2, Social Sentiment, On-chain ve Macro veri toplama/validasyon süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
 ---
 
@@ -105,8 +106,10 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO
 - Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
+- On-chain cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
+- Macro cadence: 6 saat; ara cycle'larda güvenli biçimde atlanır
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
 
 ---
@@ -153,6 +156,24 @@ Tamamlananlar:
 
 ---
 
+## 5C. MACRO AGENT - v0.8.0 TAMAMLANDI
+
+İlk çalışan sürüm resmî FRED verileriyle doğrulandı.
+
+Tamamlananlar:
+
+- Anahtarsız resmî FRED CSV kaynağından DFF, DGS10, DTWEXBGS, VIXCLS ve CPIAUCSL serileri
+- 800 günlük veri penceresi ve SQLite'a idempotent makro gözlem kaydı
+- Fed Funds 90g, ABD 10Y 30g, geniş dolar 30g, VIX seviyesi ve CPI YoY eğilimi ölçümleri
+- Beş şeffaf bileşenden RISK_ON / MIXED / RISK_OFF bağlam sınıflandırması
+- Sonuçların macro_regime_snapshots tablosuna kaydı
+- 6 saatlik güvenli cadence ve kaynak hata izolasyonu
+- Canlı ürün döngüsüne yedinci adım olarak entegrasyon
+
+Son gerçek doğrulamada 2.481 gözlem alındı, 4 yeni kayıt eklendi ve kaynak hatası oluşmadı. Bileşen kapsamı 5/5, geçici rejim RISK_ON ve skor -3 oldu. Bu etiket yalnızca makro bağlamdır; tarihsel ve forward doğrulama olmadan alarm, işlem sinyali veya Decision Engine girdisi değildir.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
@@ -195,7 +216,8 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 3. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
 4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
 5. On-chain 24h geçmişini ve veri kalitesini paralel izlemeye devam et; WARMING_UP/NO_DATA metriklerini karara dahil etme.
-6. Ana ürün yol haritasında **v0.8.0 Macro Agent** geliştirmesine geç.
+6. Macro rejim snapshot'larını paralel biriktir; PROVISIONAL etiketi alarm veya işlem sinyali olarak kullanma.
+7. Ana ürün yol haritasında **v0.9.0 Whale Tracker** geliştirmesine geç.
 
 ---
 
