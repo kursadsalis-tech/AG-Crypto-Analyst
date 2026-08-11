@@ -41,7 +41,7 @@ Aynı tarihsel veri başarı oranını yapay biçimde yükseltmek için sonsuza 
 
 ---
 
-## Karar 005 - Forward Champion Adayı
+## Karar 005 - Forward Champion Adayı (Karar 018 ile Tarihsel Temeli Geçersiz)
 
 Tarihsel araştırma sonunda 1h NEWS BASE güvenli benchmark olarak korunacaktır.
 
@@ -55,6 +55,12 @@ Forward model:
 - forward başladıktan sonra ağırlık/cutoff sonuçlara göre değiştirilmez.
 
 İlk V1 pre-start seed kayıtları geçersizdir ve forward performansına dahil edilmez.
+
+Karar 018 sonrası not: Bu adaylığın dayandığı GDELT geçmişinde kesin intraday
+timestamp oranı %0 bulundu. NEWS BASE %77,6, ROBUST_B ve provisional Champion
+etiketleri tarihsel edge kanıtı olarak geri çekilmiştir. Dondurulmuş V2 yalnız
+gerçek forward gözlemlerde sıfırdan ölçülen SHADOW hipotezidir; eski sonuçlardan
+üretim kredisi alamaz.
 
 ---
 
@@ -273,3 +279,31 @@ kapsamı önceden sabit kalite kapılarının tamamını geçmezse aday seçimi 
 FOLLOW/CONTRARIAN config önce LEARN, sonra en fazla ilk üçle VALIDATION ve tek
 dondurulmuş kazananla EXAM akışına girer. Tarihsel geçiş yalnız SHADOW adaydır;
 canlı Risk Manager ve fresh forward kanıt zorunluluğunu aşamaz.
+
+---
+
+## Karar 018 - GDELT Tarihsel Haber Replay'inin Veri Kalitesi Nedeniyle Kapatılması
+
+Kalite kapısı gerçek Mac veri tabanındaki 5.571 GDELT haberinde çalıştırıldı.
+Zaman alanlarının tamamı biçimsel olarak geçerli ve başlıkların %99,8'i
+kullanılabilir olsa da kesin intraday timestamp oranı %0 çıktı. Her kayıt,
+gerçek haber saati bulunamadığında collector tarafından atanan arşiv-günü
+12:00 fallback değerini taşıyor.
+
+Bu veriyle event-time replay yapmak, gün içinde haberden önce oluşan fiyat
+hareketini haber sonrası sonuç gibi sayabilir. Bir saat güvenlik gecikmesi bu
+belirsizliği çözmez. Yönlü olay, tekrar, tarih aralığı, kaynak, fiyat eşleşmesi
+ve coin kapsamındaki sıfır değerler kesin zaman kapısının aşağı akış sonucudur.
+
+Bu nedenle:
+
+- Sonuç DATA_QUALITY_BLOCKED olarak kilitlenir.
+- Aday seçimi, VALIDATION ve EXAM çalıştırılmaz.
+- Haber saatleri rastgele, gün ortası veya URL tahminiyle doldurulmaz.
+- Aynı GDELT günlük arşiviyle event-time tarihsel kural araması durdurulur.
+- Eski "güçlü NEWS BASE" sonucu üretim kanıtı değildir.
+- Eski %77,6 NEWS BASE, ROBUST_B ve provisional Champion etiketleri tarihsel
+  edge kanıtı olarak geri çekilir.
+- Haber katalizörü yalnız gerçek published/collected timestamp taşıyan forward
+  gözlemler üzerinde doğrulanır.
+- Canlı politika değişmez; ürün SHADOW_ONLY ve Risk Manager vetosu nihai kalır.
