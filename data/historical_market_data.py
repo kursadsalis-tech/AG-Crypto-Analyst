@@ -33,9 +33,18 @@ def create_market_klines_table():
             low REAL NOT NULL,
             close REAL NOT NULL,
             volume REAL NOT NULL,
+            quote_volume REAL,
             UNIQUE(symbol, interval, open_time)
         )
     """)
+    columns = {
+        row[1]
+        for row in cursor.execute("PRAGMA table_info(market_klines)")
+    }
+    if "quote_volume" not in columns:
+        cursor.execute(
+            "ALTER TABLE market_klines ADD COLUMN quote_volume REAL"
+        )
     connection.commit()
     connection.close()
 
@@ -136,18 +145,27 @@ def save_klines(symbol, klines):
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
     cursor.executemany("""
-        INSERT OR IGNORE INTO market_klines (
+        INSERT INTO market_klines (
             symbol, interval, open_time, close_time,
-            open, high, low, close, volume
+            open, high, low, close, volume, quote_volume
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+            close_time=excluded.close_time,
+            open=excluded.open,
+            high=excluded.high,
+            low=excluded.low,
+            close=excluded.close,
+            volume=excluded.volume,
+            quote_volume=excluded.quote_volume
     """, [
         (
             symbol,
             INTERVAL,
             datetime.fromtimestamp(row[0] / 1000, tz=timezone.utc).isoformat(),
             datetime.fromtimestamp(row[6] / 1000, tz=timezone.utc).isoformat(),
-            float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5])
+            float(row[1]), float(row[2]), float(row[3]), float(row[4]),
+            float(row[5]), float(row[7]),
         )
         for row in klines
     ])
