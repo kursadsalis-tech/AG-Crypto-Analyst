@@ -32,9 +32,15 @@ def load_recent(con):
     return [row for row in rows if (parse_time(row[3]) or cutoff) >= cutoff]
 
 
-def confidence_for_mentions(mentions):
-    # Conservative until social coverage grows: 10 posts = 50, 20+ = 100.
-    return min(100, mentions * 5)
+def confidence_for_signal(mentions, positive, negative):
+    """Confidence requires sample size, directional evidence and consensus."""
+    directional = positive + negative
+    if not mentions or not directional:
+        return 0
+    sample_strength = min(1.0, mentions / 20.0)
+    directional_share = directional / mentions
+    consensus = abs(positive - negative) / directional
+    return round(100 * sample_strength * directional_share * consensus)
 
 
 def signal_for_score(score):
@@ -57,15 +63,17 @@ def aggregate(rows):
     for coin, values in grouped.items():
         mentions = len(values)
         avg_score = sum(score for _, score in values) / mentions
+        positive = sum(sentiment == "positive" for sentiment, _ in values)
+        negative = sum(sentiment == "negative" for sentiment, _ in values)
         results.append({
             "coin": coin,
             "mentions": mentions,
-            "positive": sum(sentiment == "positive" for sentiment, _ in values),
-            "negative": sum(sentiment == "negative" for sentiment, _ in values),
+            "positive": positive,
+            "negative": negative,
             "neutral": sum(sentiment == "neutral" for sentiment, _ in values),
             "score": avg_score,
             "signal": signal_for_score(avg_score),
-            "confidence": confidence_for_mentions(mentions),
+            "confidence": confidence_for_signal(mentions, positive, negative),
         })
     return sorted(results, key=lambda row: (-row["mentions"], row["coin"]))
 
