@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 DB_NAME = "crypto_data.db"
 TARGET_LOOKBACK = timedelta(hours=24)
-MIN_READY_HOURS = 23.5
+MIN_READY_HOURS = 18.0
 CHANGE_THRESHOLDS = {
     "defi_tvl_usd": 1.0,
     "mempool_tx_count": 25.0,
@@ -46,20 +46,18 @@ def latest_row(con, chain, metric):
 
 def baseline_row(con, chain, metric, latest_at):
     target = latest_at - TARGET_LOOKBACK
-    baseline = con.execute("""
-        SELECT collected_at, value
-        FROM onchain_observations
-        WHERE chain=? AND metric=? AND collected_at<=?
-        ORDER BY collected_at DESC LIMIT 1
-    """, (chain, metric, target.isoformat())).fetchone()
-    if baseline:
-        return baseline
-    return con.execute("""
+    candidates = con.execute("""
         SELECT collected_at, value
         FROM onchain_observations
         WHERE chain=? AND metric=? AND collected_at<?
-        ORDER BY collected_at ASC LIMIT 1
-    """, (chain, metric, latest_at.isoformat())).fetchone()
+        ORDER BY collected_at DESC
+    """, (chain, metric, latest_at.isoformat())).fetchall()
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda row: abs((parse_time(row[0]) - target).total_seconds()),
+    )
 
 
 def classify(metric, change_pct, ready):
@@ -94,7 +92,14 @@ def analyze(con):
                 ((latest_value / baseline_value) - 1.0) * 100.0
                 if baseline_value != 0 else None
             )
-        ready = span_hours >= MIN_READY_HOURS
+        valid_values = (
+            baseline_value is not None
+            and baseline_value > 0
+            and latest_value > 0
+            and change_pct is not None
+        )
+        ready = valid_values and MIN_READY_HOURS <= span_hours <= 30.0
+        status = "NO_DATA" if not valid_values else classify(metric, change_pct, ready)
         results.append({
             "chain": chain,
             "metric": metric,
@@ -103,7 +108,7 @@ def analyze(con):
             "baseline": baseline_value,
             "change_pct": change_pct,
             "span_hours": span_hours,
-            "status": classify(metric, change_pct, ready),
+            "status": status,
             "ready": ready,
         })
     return results
@@ -122,7 +127,7 @@ def main():
     finally:
         con.close()
 
-    print("AG Crypto Analyst - On-chain Analyzer | hedef pencere: 24 saat")
+    print("AG Crypto Analyst - On-chain Analyzer | hedef: ~24 saat (18-30h kabul)")
     if not results:
         print("Analiz edilecek on-chain gözlem yok.")
         return []
@@ -137,7 +142,7 @@ def main():
     ready_count = sum(row["ready"] for row in results)
     print(f"24h hazır metrik: {ready_count}/{len(results)}")
     if ready_count < len(results):
-        print("Not: 24 saat dolmayan metrikler karar/alarm sinyali değildir.")
+        print("Not: 18-30h karşılaştırma aralığına ulaşmayan metrikler karar/alarm sinyali değildir.")
     return results
 
 
