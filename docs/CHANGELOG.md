@@ -22,11 +22,36 @@
 - 1h, 4h ve 24h için NO_LEARN_EDGE
 - Canlı Decision Engine politikasında ve ürün kapılarında değişiklik yok
 
+### Sparse Transition Replay Lab
+
+- Sürekli fiyat durumundan farklı, seyrek skor/MACD/EMA geçişleri ve 24h kırılımlar
+- Hacim ve NORMAL-piyasa korumalarıyla 36 sabit config/horizon
+- Coin başına 24h cooldown, 10 bps maliyet ve point-in-time Risk Manager
+- 9.576 karar noktası, 68.616 risk-izinli bağlam, 55.872 risk vetosu ve sıfır zaman boşluğu
+- Config başına 146-2.107 olay
+- 1h, 4h ve 24h için NO_LEARN_EDGE
+- Nihai araştırma kararı: STOP_PRICE_TECHNICAL_RULE_SEARCH
+
+### News Catalyst Replay Lab
+
+- Fiyat/teknik aramadan bağımsız, GDELT başlıklarına dayalı tek sınırlı katalizör hipotezi
+- Precision-first coin aliasları; belirsiz kısa kelime/ticker yanlış eşleşmelerine koruma
+- Canonical URL ve 72h aynı-başlık tekilleştirmesi
+- Yaklaşık gün-noon zamanlarının dışlanması; 60m güvenlik gecikmesi ve sonraki 1h açılış
+- Coin başına 24h cooldown ve 10 bps gidiş-dönüş maliyet
+- Teknik yön filtresi olmadan 16 sabit FOLLOW/CONTRARIAN kural/horizon
+- Ham veri ve fiyat eşleşmesini kapsayan fail-closed veri kalite kapısı
+- 7 günlük bloklarla LEARN -> VALIDATION -> mekanik olarak kapalı EXAM
+- Sentetik next-open, maliyet, cooldown ve EXAM-körlüğü testleri başarılı
+- Gerçek veri sonucu bekleniyor; canlı politika değiştirilmedi
+
 Karar:
 
-Mevcut sürekli fiyat-durum kural ailesi üretim için reddedildi. Aynı eşikler
-yeniden optimize edilmeyecek. Yalnız seyrek teknik geçiş/kırılım hipotezi bir
-kez sınanacak; o da başarısızsa fiyat-teknik arama durdurulacak.
+Mevcut sürekli fiyat-durum kural ailesi ve son seyrek geçiş/kırılım hipotezi
+üretim için reddedildi. Aynı fiyat/teknik verisinde yeni eşik veya indikatör
+kombinasyonu aranmayacak. Araştırma yalnız kalite kapılı bağımsız haber
+katalizörüyle bir kez devam edecek; sonuç ne olursa olsun canlı politika fresh
+forward kanıt olmadan açılmayacak.
 
 ---
 
