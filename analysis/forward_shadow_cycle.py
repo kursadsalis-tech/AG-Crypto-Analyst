@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from analysis import forward_shadow_validator
+from macro import macro_cycle
 from news_intelligence import news_analyzer, news_collector
 from onchain import onchain_cycle
 from reports import forward_shadow_product_bridge
@@ -18,19 +19,22 @@ def stamp():
 def main():
     print("AG Crypto Analyst - Live Product Cycle")
     print(f"Başlangıç: {stamp()}")
-    print("Akış: NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN")
+    print(
+        "Akış: NEWS -> FORWARD SHADOW -> ALERT BRIDGE -> "
+        "SOCIAL SENTIMENT -> ON-CHAIN -> MACRO"
+    )
     print("=" * 80)
 
-    print("\n[1/6] Canlı haberler toplanıyor...")
+    print("\n[1/7] Canlı haberler toplanıyor...")
     news_collector.main()
 
-    print("\n[2/6] Haberler analiz ediliyor...")
+    print("\n[2/7] Haberler analiz ediliyor...")
     news_analyzer.main()
 
-    print("\n[3/6] Forward Shadow çalıştırılıyor...")
+    print("\n[3/7] Forward Shadow çalıştırılıyor...")
     forward_shadow_validator.main()
 
-    print("\n[4/6] Ürün alarm köprüsü çalıştırılıyor...")
+    print("\n[4/7] Ürün alarm köprüsü çalıştırılıyor...")
     con = sqlite3.connect(forward_shadow_product_bridge.DB_NAME)
     try:
         sent, pending = forward_shadow_product_bridge.deliver_pending_alerts(con)
@@ -38,11 +42,14 @@ def main():
     finally:
         con.close()
 
-    print("\n[5/6] Social Sentiment cadence kontrolü...")
+    print("\n[5/7] Social Sentiment cadence kontrolü...")
     social_sentiment_cycle.main()
 
-    print("\n[6/6] On-chain cadence kontrolü...")
+    print("\n[6/7] On-chain cadence kontrolü...")
     onchain_cycle.main()
+
+    print("\n[7/7] Macro cadence kontrolü...")
+    macro_cycle.main()
 
     print("\n" + "=" * 80)
     print(f"Cycle tamamlandı: {stamp()}")
