@@ -251,7 +251,9 @@ def main():
             recent = read_con.execute("""
                 SELECT txid, amount_native, usd_estimate, block_height
                 FROM whale_events
-                WHERE chain=? AND block_height BETWEEN ? AND ?
+                WHERE chain=?
+                  AND event_type='LARGE_NATIVE_TRANSFER'
+                  AND block_height BETWEEN ? AND ?
                 ORDER BY usd_estimate DESC
                 LIMIT 10
             """, (CHAIN, heights[0], heights[-1])).fetchall()
@@ -266,7 +268,10 @@ def main():
                 )
         else:
             print("Taranan güvenli bloklarda eşik üstü native ETH transferi bulunmadı.")
-    print("Not: Internal ve ERC-20 transferleri bu ilk kapsamda taranmaz; doğrulanmamış olay alarm üretmez.")
+    print(
+        "Not: Bu modül internal transferleri taramaz; ERC-20 hareketleri ayrı "
+        "doğrulanmış-kontrat collectoründe izlenir. Doğrulanmamış olay alarm üretmez."
+    )
     return {
         "safe_height": safe_height,
         "blocks_scanned": scanned,
