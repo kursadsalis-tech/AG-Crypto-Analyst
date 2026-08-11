@@ -16,7 +16,7 @@ import requests
 DB_NAME = "crypto_data.db"
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 USER_AGENT = "AG-Crypto-Analyst/0.8.0"
-LOOKBACK_DAYS = 400
+LOOKBACK_DAYS = 800
 SERIES = {
     "DFF": {
         "name": "Effective Federal Funds Rate",
