@@ -188,14 +188,17 @@
 - [x] Üç ufukta NO_LEARN_EDGE sonrası fiyat-teknik kural optimizasyonunu durdur
 - [x] Bağımsız haber-katalizör replay'ini veri-kalitesi kapıları, strict coin eşleştirme, dedup, 60m gecikme, 24h cooldown ve 10 bps maliyetle hazırla
 - [x] Haber-katalizör laboratuvarında sentetik leakage, next-open, maliyet, cooldown ve EXAM-körlüğü testlerini geçir
-- [ ] Haber-katalizör replay'ini gerçek Mac veri tabanında bir kez çalıştır ve kalite/LEARN/VALIDATION/EXAM sonucunu kaydet
-- [ ] Haber verisi kalite kapısını geçmezse seçimi zorlamadan DATA_QUALITY_BLOCKED olarak kapat
+- [x] Haber-katalizör replay'ini gerçek Mac veri tabanında bir kez çalıştır ve kalite sonucunu kaydet
+- [x] %0 kesin intraday timestamp nedeniyle seçimi ve EXAM'ı çalıştırmadan DATA_QUALITY_BLOCKED olarak kapat
+- [x] Tarihsel haber saatlerini uydurmama ve GDELT günlük arşivle event-time replay'i durdurma kararını kilitle
+- [ ] Haber katalizörü için yalnız kesin published/collected timestamp taşıyan forward örnekleri biriktir
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
 - [ ] 1h süresi dolan tahminlerin otomatik settle edildiğini doğrula
 - [ ] NEWS BASE vs MULTIFACTOR gerçek forward scoreboard'u örneklem büyüdükçe değerlendir
 - [ ] Kritik alarm sisteminin gereksiz bildirim üretmediğini, kritik olayda ise uyardığını takip et
 - [ ] Günlük yatırım komitesi raporunda Forward Shadow performansını kullan
-- [ ] Yeterli forward kanıt oluşunca provisional multifactor Champion için üretim kararı ver
+- [x] %0 kesin tarihsel timestamp nedeniyle provisional multifactor Champion ve ROBUST_B tarihsel kredi etiketlerini geri çek
+- [ ] Yalnız değişmemiş forward kapıları gerçek veride geçilirse modeli sıfırdan ürün adayı olarak yeniden değerlendir
 - [ ] Forward Signal Risk Gate koşullarını kanıt biriktikçe değiştirmeden izle
 - [ ] SHADOW_ONLY sinyallerin ürün alarmı üretemediğini izlemeye devam et
 - [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine gölge doğrulamasıyla birlikte biriktir
