@@ -185,48 +185,48 @@ def threshold_score(value, thresholds):
 
 def classify_asset_risk(metrics):
     reasons = []
-    score = 0
+    market_score = 0
+    execution_score = 0
 
     abs_return = abs(float(metrics["return_24h_pct"]))
     points = threshold_score(abs_return, ((15.0, 3), (8.0, 2), (4.0, 1)))
     if points:
-        score += points
+        market_score += points
         reasons.append(f"ABS_RETURN_24H_{points}")
 
     range_24h = float(metrics["range_24h_pct"])
     points = threshold_score(range_24h, ((25.0, 3), (15.0, 2), (8.0, 1)))
     if points:
-        score += points
+        market_score += points
         reasons.append(f"RANGE_24H_{points}")
 
     volatility = float(metrics["hourly_volatility_pct"])
     points = threshold_score(volatility, ((5.0, 3), (3.0, 2), (1.5, 1)))
     if points:
-        score += points
+        market_score += points
         reasons.append(f"HOURLY_VOL_24H_{points}")
 
     drawdown = -float(metrics["drawdown_7d_pct"])
     points = threshold_score(drawdown, ((35.0, 3), (25.0, 2), (15.0, 1)))
     if points:
-        score += points
+        market_score += points
         reasons.append(f"DRAWDOWN_7D_{points}")
 
     quote_volume = float(metrics["quote_volume_24h"])
     if quote_volume < 2_000_000:
-        score += 3
+        execution_score += 3
         reasons.append("LIQUIDITY_UNDER_2M")
     elif quote_volume < 10_000_000:
-        score += 2
+        execution_score += 2
         reasons.append("LIQUIDITY_UNDER_10M")
     elif quote_volume < 50_000_000:
-        score += 1
+        execution_score += 1
         reasons.append("LIQUIDITY_UNDER_50M")
 
-    hard_block = (
-        quote_volume < 2_000_000
-        or range_24h >= 30.0
-        or volatility >= 7.0
-    )
+    liquidity_hard_block = quote_volume < 2_000_000
+    market_hard_block = range_24h >= 30.0 or volatility >= 7.0
+    hard_block = liquidity_hard_block or market_hard_block
+    score = market_score + execution_score
     if hard_block:
         tier = "EXTREME"
         reasons.append("HARD_BLOCK")
@@ -247,7 +247,12 @@ def classify_asset_risk(metrics):
     result = dict(metrics)
     result.update({
         "risk_score": score,
+        "market_risk_score": market_score,
+        "execution_risk_score": execution_score,
         "risk_tier": tier,
+        "hard_block": hard_block,
+        "liquidity_hard_block": liquidity_hard_block,
+        "market_hard_block": market_hard_block,
         "base_position_cap_pct": base_cap,
         "pre_global_max_position_pct": round(max_position, 2),
         "max_position_pct": round(max_position, 2),
@@ -258,12 +263,36 @@ def classify_asset_risk(metrics):
     return result
 
 
+def reference_stress_level(asset):
+    ret = float(asset["return_24h_pct"])
+    price_range = float(asset["range_24h_pct"])
+    drawdown = float(asset["drawdown_7d_pct"])
+    if ret <= -12.0 or price_range >= 20.0 or drawdown <= -25.0:
+        return "TAIL"
+    if ret <= -6.0 or abs(ret) >= 10.0 or price_range >= 12.0 or drawdown <= -15.0:
+        return "STRESS"
+    if abs(ret) >= 4.0 or price_range >= 8.0 or drawdown <= -8.0:
+        return "CAUTION"
+    return "NORMAL"
+
+
 def build_global_policy(assets, source_errors, created_at=None):
     created_at = created_at or iso(utcnow())
     by_symbol = {asset["symbol"]: asset for asset in assets}
     coverage_count = len(by_symbol)
     coverage_total = len(SYMBOLS)
     coverage_ratio = coverage_count / coverage_total
+    market_stress_count = sum(
+        asset["market_risk_score"] >= 4 or asset["market_hard_block"]
+        for asset in assets
+    )
+    market_stress_ratio = (
+        market_stress_count / coverage_count if coverage_count else 0.0
+    )
+    asset_block_count = sum(asset["hard_block"] for asset in assets)
+    liquidity_block_count = sum(
+        asset["liquidity_hard_block"] for asset in assets
+    )
     reasons = []
 
     if "BTCUSDT" not in by_symbol:
@@ -274,37 +303,27 @@ def build_global_policy(assets, source_errors, created_at=None):
         reasons.append("COVERAGE_BELOW_80_PERCENT")
     else:
         btc = by_symbol["BTCUSDT"]
-        risky_count = sum(
-            asset["risk_tier"] in {"HIGH", "EXTREME"}
-            for asset in assets
-        )
-        risky_ratio = risky_count / coverage_count
-        btc_return = float(btc["return_24h_pct"])
-        btc_range = float(btc["range_24h_pct"])
-        btc_drawdown = float(btc["drawdown_7d_pct"])
+        eth = by_symbol.get("ETHUSDT")
+        btc_level = reference_stress_level(btc)
+        eth_level = reference_stress_level(eth) if eth else "MISSING"
 
         if (
-            btc_return <= -12.0
-            or btc_range >= 20.0
-            or btc_drawdown <= -25.0
-            or risky_ratio >= 0.75
+            btc_level == "TAIL"
+            or market_stress_ratio >= 0.75
         ):
             state = "LOCKDOWN"
             reasons.append("MARKET_TAIL_RISK")
         elif (
-            btc_return <= -6.0
-            or abs(btc_return) >= 10.0
-            or btc_range >= 12.0
-            or btc_drawdown <= -15.0
-            or risky_ratio >= 0.50
+            btc_level == "STRESS"
+            or eth_level == "TAIL"
+            or market_stress_ratio >= 0.50
         ):
             state = "DEFENSIVE"
             reasons.append("MARKET_STRESS")
         elif (
-            abs(btc_return) >= 4.0
-            or btc_range >= 8.0
-            or btc_drawdown <= -8.0
-            or risky_ratio >= 0.25
+            btc_level == "CAUTION"
+            or eth_level in {"STRESS", "CAUTION"}
+            or market_stress_ratio >= 0.25
             or source_errors
         ):
             state = "CAUTION"
@@ -315,6 +334,8 @@ def build_global_policy(assets, source_errors, created_at=None):
 
     if source_errors:
         reasons.append("PARTIAL_SOURCE_ERRORS")
+    if asset_block_count:
+        reasons.append(f"ASSET_BLOCKS_{asset_block_count}")
 
     limits = dict(GLOBAL_LIMITS[state])
     new_positions_allowed = state not in {"LOCKDOWN", "DATA_BLOCKED"}
@@ -336,6 +357,10 @@ def build_global_policy(assets, source_errors, created_at=None):
         "coverage_count": coverage_count,
         "coverage_total": coverage_total,
         "coverage_ratio": coverage_ratio,
+        "market_stress_count": market_stress_count,
+        "market_stress_ratio": market_stress_ratio,
+        "asset_block_count": asset_block_count,
+        "liquidity_block_count": liquidity_block_count,
         "new_positions_allowed": new_positions_allowed,
         "policy_reasons": reasons,
         **limits,
@@ -458,6 +483,12 @@ def render_result(policy, assets, source_errors, snapshot_id):
     print(
         f"Policy: {policy['policy_version']} | durum: {policy['market_state']} | "
         f"kapsam: {policy['coverage_count']}/{policy['coverage_total']}"
+    )
+    print(
+        f"Dinamik piyasa stresi: {policy['market_stress_count']}/"
+        f"{policy['coverage_count']} | coin bazlı blok: "
+        f"{policy['asset_block_count']} | düşük hacim bloğu: "
+        f"{policy['liquidity_block_count']}"
     )
     print(
         f"Limitler: toplam=%{policy['max_total_exposure_pct']:.1f} | "
