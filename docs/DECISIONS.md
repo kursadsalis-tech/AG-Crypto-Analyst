@@ -139,3 +139,25 @@ Whale Tracker v0.9.0 canlı ürün döngüsünde 5 dakikalık cadence ile çalı
 Ham zincir olayı yalnızca kanıttır. Brüt çıktı/transfer net akış değildir; change, self-transfer, mint, burn veya sözleşme içi hareket olabilir. Cüzdan sahipliği, borsa adresi ve akış yönü doğrulanmadıkça direction=UNKNOWN, exchange_flow=UNVERIFIED ve sonuç MONITOR_ONLY kalacaktır.
 
 UNVERIFIED whale olayı alarm, işlem sinyali veya Decision Engine girdisi olamaz. Yalnızca güvenilir adres kaynağıyla doğrulanmış borsa giriş/çıkış yönü ileride alarm adayı olabilir. Kapsanmayan zincir veya token destekleniyor gibi gösterilmeyecektir.
+
+---
+
+## Karar 012 - Risk Manager Veto Yetkisi ve Forward Üretim Kapısı
+
+Risk Manager v1.0.0 canlı ürün döngüsünde 15 dakikalık cadence ile, ürün alarm köprüsünden önce çalışacaktır.
+
+Risk Manager sinyal üretmez. Toplam/altcoin maruziyeti, tek pozisyon, işlem başı risk, günlük kayıp, yeni pozisyon ve coin bazlı risk tavanlarını tanımlar. Eksik BTC verisi veya <%80 kapsam DATA_BLOCKED olur; eksik veri hiçbir koşulda daha gevşek limite yol açmaz.
+
+Yapısal düşük hacim coin bazlı işlem riskidir ve yalnızca ilgili coini kapatır. Global piyasa stresi BTC/ETH referansları ile dinamik getiri, aralık, volatilite ve düşüş kanıtından hesaplanır. Düşük hacimli coin sayısı tek başına global LOCKDOWN üretemez. QVOL emir defteri derinliği değil, 24 saatlik spot hacim vekilidir.
+
+Forward multifactor ürün alarmının izin kazanması için birlikte şu asgari koşullar gerekir:
+
+- en az 30 sonuçlanmış gerçek forward multifactor tahmini,
+- hit rate en az %60,
+- %95 Wilson alt sınırı en az %50,
+- ortalama directional return pozitif,
+- risk policy snapshot yaşı en fazla 30 dakika,
+- global yeni pozisyon izni,
+- coin için pozitif azami pozisyon tavanı.
+
+Koşullardan biri eksikse Signal Risk Gate kararı BLOCK'tur. Risk Manager BLOCK kararı gelecek Decision Engine için nihai vetodur; diğer puanlar bu vetoyu telafi edemez. Gate eşikleri frozen model ağırlıklarını veya cutoff'u değiştirmez.
