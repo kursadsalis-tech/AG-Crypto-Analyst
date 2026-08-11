@@ -199,10 +199,28 @@ Decision:
 - Current price-state rule family is rejected for production.
 - Live thresholds and policies remain unchanged; product stays SHADOW_ONLY.
 - Do not continue searching combinations of the same persistent-state rule.
-- Test one pre-registered sparse transition/breakout hypothesis with a 24h
-  per-symbol cooldown.
-- If it also has no LEARN edge, stop price/technical optimization and move
-  research to independently sourced catalyst evidence.
+- The final pre-registered sparse transition/breakout lab also returned
+  NO_LEARN_EDGE at 1h, 4h and 24h.
+- Transition data: 9,576 decision points, 68,616 risk-allowed contexts,
+  55,872 risk blocks, zero point-in-time gaps and 146..2,107 events/config.
+- STOP_PRICE_TECHNICAL_RULE_SEARCH is now final. Technical data may remain
+  risk/context evidence, not a validated directional signal.
+
+## News catalyst replay contract
+
+- One independent, quality-gated GDELT news catalyst lab was added.
+- It uses strict title-level coin evidence, canonical URL plus 72h title dedup,
+  excludes approximate day-noon timestamps, delays availability by 60 minutes,
+  enters at the next hourly open, applies 24h symbol cooldown and 10 bps cost.
+- Sixteen fixed FOLLOW/CONTRARIAN configs are evaluated with seven-day block
+  bounds through LEARN -> VALIDATION -> sealed EXAM.
+- Technical direction is not a selection filter. Live Risk Manager remains
+  final for any future product candidate.
+- A fail-closed data-quality gate blocks candidate selection and EXAM if any
+  timestamp, title, duplicate, source, span, price-match, sample or coin
+  coverage requirement fails.
+- Synthetic next-open, cost, cooldown and EXAM-blindness tests passed.
+- The real Mac database run is pending; no historical result is claimed yet.
 
 ## Notification policy
 
@@ -225,13 +243,14 @@ Decision:
 ## Next session priority
 
 1. Do not rebuild completed modules from scratch; the core roadmap is complete through v1.2.0.
-2. Run the single pre-registered sparse transition/breakout historical lab.
-3. Stop price/technical rule search if that lab also has no LEARN edge.
-4. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
-5. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
-6. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
-7. Never let scoring or reporting upgrade immature evidence into a strong decision.
-8. Keep Risk Manager BLOCK final and preserve frozen live policies while real samples grow.
+2. Run the single quality-gated news catalyst replay on the real Mac database.
+3. If data quality is blocked, do not force a simulation; if it passes, record only the sealed LEARN/VALIDATION/EXAM result.
+4. Never reopen price/technical threshold or indicator search on the same data.
+5. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
+6. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
+7. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
+8. Never let scoring or reporting upgrade immature evidence into a strong decision.
+9. Keep Risk Manager BLOCK final and preserve frozen live policies while real samples grow.
 
 ## Working style
 
