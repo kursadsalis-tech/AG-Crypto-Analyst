@@ -11,7 +11,7 @@
 - [x] Market Data Agent
 - [x] Technical Analysis Agent
 - [x] News Intelligence Agent
-- [ ] Social Sentiment Agent
+- [x] Social Sentiment Agent
 - [ ] On-chain Agent
 - [ ] Macro Agent
 - [ ] Whale Tracker
@@ -28,6 +28,7 @@
 - [x] v0.3.0 - Market Analyzer Agent
 - [x] v0.4.0 - Technical Analysis Agent
 - [x] v0.5.0 - News Intelligence Agent
+- [x] v0.6.0 - Social Sentiment Agent
 
 ---
 
@@ -59,6 +60,20 @@
 
 ---
 
+## v0.6.0 SOCIAL SENTIMENT - TAMAMLANAN
+
+- [x] Geniş Reddit kripto topluluk akışından tek istekle 100 paylaşım topla
+- [x] Sosyal gözlemleri SQLite'a tekilleştirerek kaydet
+- [x] Başlık ve gönderi içeriğini birlikte analiz et
+- [x] Coin/ticker yanlış eşleşmelerini azalt
+- [x] 24 saatlik coin sentiment özeti üret
+- [x] Güveni örneklem + yönlü kanıt + fikir birliğine bağla
+- [x] 15 dakikalık güvenli çalışma aralığı ekle
+- [x] Social Sentiment'i 5 dakikalık canlı ürün döngüsüne hata izolasyonuyla bağla
+- [x] Gerçek verili collector, analyzer, cadence ve tam cycle testlerini geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -67,20 +82,22 @@
 - [ ] Kritik alarm sisteminin gereksiz bildirim üretmediğini, kritik olayda ise uyardığını takip et
 - [ ] Günlük yatırım komitesi raporunda Forward Shadow performansını kullan
 - [ ] Yeterli forward kanıt oluşunca provisional multifactor Champion için üretim kararı ver
+- [ ] Social Sentiment örneklemini özellikle takip listesi coinlerinde büyüt
+- [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
 
 ---
 
 ## SONRAKİ ANA MODÜL
 
-### v0.6.0 - Social Sentiment Agent
+### v0.7.0 - On-chain Agent
 
 Amaç:
 
-Sosyal medya ve topluluk verilerinden piyasa duyarlılığı ve coin bazlı sentiment sinyalleri üretmek.
+Blokzincir üzerindeki transfer, borsa giriş/çıkış, aktif adres ve büyük cüzdan hareketlerinden ölçülebilir coin bazlı sinyaller üretmek.
 
 Geçiş koşulu:
 
-Forward Shadow validasyonu ürünü gereksiz yere bloke etmeyecek. Yeterli ilk operasyonel doğrulama alındığında ürün yol haritası v0.6.0 ile devam edecek; forward test paralelde veri toplamayı sürdürecek.
+Forward Shadow ve Social Sentiment validasyonları paralelde veri toplamaya devam edecek; ana ürün yol haritası bu süreçler tarafından bloke edilmeyecek.
 
 ---
 
