@@ -15,7 +15,7 @@
 - [x] On-chain Agent
 - [x] Macro Agent
 - [x] Whale Tracker
-- [ ] Risk Manager
+- [x] Risk Manager
 - [ ] Decision Engine
 - [ ] Report Generator
 
@@ -32,6 +32,7 @@
 - [x] v0.7.0 - On-chain Agent
 - [x] v0.8.0 - Macro Agent
 - [x] v0.9.0 - Whale Tracker
+- [x] v1.0.0 - Risk Manager
 
 ---
 
@@ -121,6 +122,25 @@
 
 ---
 
+## v1.0.0 RISK MANAGER - TAMAMLANAN
+
+- [x] 13 coin için kapalı 1h mumlardan piyasa ve coin risk metrikleri üret
+- [x] 24h getiri/aralık, saatlik volatilite, 7g düşüş ve 24h spot hacim vekilini hesapla
+- [x] Coin bazlı risk sınıfı ve maksimum pozisyon tavanı belirle
+- [x] Global maruziyet, altcoin maruziyeti, işlem riski, günlük kayıp ve yeni pozisyon limitlerini tanımla
+- [x] Eksik kritik veride DATA_BLOCKED; piyasa kuyruğu riskinde LOCKDOWN uygula
+- [x] Düşük hacimli coin bloklarını global piyasa stresinden ayır
+- [x] Risk policy ve asset snapshot'larını SQLite'a kalıcı kaydet
+- [x] 15 dakikalık Risk Manager cycle ve hata izolasyonu ekle
+- [x] Risk Manager'ı canlı ürün akışında alarm köprüsünden önce çalıştır
+- [x] Forward kanıtına örneklem, hit rate, Wilson alt sınırı ve directional return kapısı uygula
+- [x] Eski/eksik risk verisini ve izin verilmeyen coini fail-closed engelle
+- [x] Risk gate kararlarını idempotent kaydet
+- [x] Ürün alarm köprüsünü Signal Risk Gate'e bağla
+- [x] Gerçek veri, cadence, 9/9 entegrasyon ve alarm blok/izin yollarını doğrula
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -129,6 +149,9 @@
 - [ ] Kritik alarm sisteminin gereksiz bildirim üretmediğini, kritik olayda ise uyardığını takip et
 - [ ] Günlük yatırım komitesi raporunda Forward Shadow performansını kullan
 - [ ] Yeterli forward kanıt oluşunca provisional multifactor Champion için üretim kararı ver
+- [ ] Forward Signal Risk Gate koşullarını kanıt biriktikçe değiştirmeden izle
+- [ ] SHADOW_ONLY sinyallerin ürün alarmı üretemediğini izlemeye devam et
+- [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine girdisi için biriktir
 - [ ] Social Sentiment örneklemini özellikle takip listesi coinlerinde büyüt
 - [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
@@ -143,15 +166,15 @@
 
 ## SONRAKİ ANA MODÜL
 
-### v1.0.0 - Risk Manager
+### v1.1.0 - Decision Engine
 
 Amaç:
 
-Fiyat, teknik, haber ve olgunlaşan yardımcı sinyaller için ortak risk sınırları; pozisyon büyüklüğü, zarar sınırı, maksimum maruziyet ve sinyal reddetme kuralları üretmek.
+Fiyat, teknik, haber ve yalnızca kullanım izni kazanmış yardımcı kanıtları tek bir açıklanabilir karar kaydında birleştirmek; Risk Manager sınırlarını hiçbir koşulda aşmadan AL / SAT / BEKLE benzeri ürün kararları üretmek.
 
 Geçiş koşulu:
 
-Risk Manager hiçbir zayıf veya doğrulanmamış girdiyi güçlü sinyale dönüştürmeyecek. Forward Shadow, Social Sentiment, On-chain, Macro ve Whale Tracker veri toplama süreçleri paralelde devam edecek; yalnızca kullanım politikası açık ve yeterli kanıtı olan girdiler risk kararına girebilecek.
+Decision Engine puan toplayarak zayıf, PROVISIONAL, WARMING_UP, NO_DATA, UNVERIFIED veya SHADOW_ONLY girdileri güçlü sinyale dönüştüremez. Her girdinin olgunluk durumu görünür kalmalı; Risk Manager BLOCK kararı nihai veto olmalıdır.
 
 ---
 
