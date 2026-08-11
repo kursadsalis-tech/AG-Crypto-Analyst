@@ -277,7 +277,7 @@ Ardından 11/11 ana ürün döngüsü başarıyla tamamlandı. İstanbul saati 0
 
 ---
 
-## 5H. DECISION ENGINE TARİHSEL REPLAY - FİYAT-DURUM KURALI REDDEDİLDİ
+## 5H. DECISION ENGINE TARİHSEL REPLAY - FİYAT/TEKNİK ARAMA DURDURULDU
 
 Decision Engine'in mevcut fiyat/teknik/risk gölge kuralı 13 coin ve yaklaşık
 400 günlük kapalı 1h mum üzerinde point-in-time olarak yeniden oynatıldı.
@@ -307,11 +307,48 @@ hesaplandı. Hiçbir challenger LEARN aşamasında pozitif alt güven sınırı
 - 4h: NO_LEARN_EDGE
 - 24h: NO_LEARN_EDGE
 
-Karar: mevcut fiyat-durum kural ailesinin eşikleri kurcalanmayacak, canlı
-politika açılmayacak ve sonuç SHADOW_ONLY kalacaktır. Bir sonraki ve son
-fiyat-teknik hipotezi, sürekli durumlar yerine seyrek skor/kırılım/geçiş
-olaylarını coin başına 24h cooldown ile test etmektir. Bu da LEARN edge
-üretmezse fiyat-teknik optimizasyonu durdurulacaktır.
+Son ve önceden kayıtlı fiyat-teknik hipotezi de tamamlandı. Seyrek skor,
+MACD/EMA sıfır geçişi ve kapalı-fiyat 24h kırılım olayları; hacim ve NORMAL
+piyasa korumalarının sabit varyantlarıyla 36 config/horizon olarak test edildi.
+Coin başına 24h cooldown ve 10 baz puan maliyet uygulandı. 9.576 karar noktası,
+68.616 risk-izinli bağlam, 55.872 risk vetosu ve sıfır point-in-time boşlukla
+her config için 146-2.107 olay oluştu. Sonuç üç ufukta da aynıydı:
+
+- 1h: NO_LEARN_EDGE
+- 4h: NO_LEARN_EDGE
+- 24h: NO_LEARN_EDGE
+
+Karar: `STOP_PRICE_TECHNICAL_RULE_SEARCH`. Teknik göstergeler risk ve açıklama
+bağlamı olarak kalabilir; doğrulanmış yön tahmini gibi kullanılamaz. Aynı fiyat
+verisinde yeni eşik, indikatör veya kombinasyon araması yapılmayacak. Canlı
+politika açılmadı ve ürün SHADOW_ONLY kaldı.
+
+---
+
+## 5I. BAĞIMSIZ HABER KATALİZÖR REPLAY - KALİTE KAPILI
+
+Fiyat/teknik arama kapatıldıktan sonra yalnız bir bağımsız katalizör hipotezi
+için `analysis.news_catalyst_replay_lab` hazırlandı. Bu laboratuvar eski
+"güçlü NEWS BASE" sonucunu kanıt kabul etmez; GDELT arşivini baştan denetler.
+
+Sözleşme:
+
+- Başlıkta açık ve precision-first coin adı/ticker doğrulaması
+- LINK/BIO/ADA/SOL/SUI/UMA gibi belirsiz kısa kelimeler için yalnız açık proje
+  adı veya büyük harfli ticker kabulü
+- Canonical URL ve 72 saatlik aynı-başlık tekilleştirmesi
+- Gün-noon fallback zaman damgalarının replay dışında bırakılması
+- Olay zamanından sonra 60 dakika güvenlik gecikmesi ve sonraki 1h mum açılışı
+- Coin başına 24h cooldown ve 10 baz puan gidiş-dönüş maliyet
+- Teknik yön filtresi olmadan 16 sabit FOLLOW/CONTRARIAN haber kuralı
+- 7 günlük blok güven sınırlarıyla LEARN -> VALIDATION -> kapalı EXAM
+- Ham veri, zaman, başlık, tekrar, kaynak, fiyat eşleşmesi, örneklem ve coin
+  kapsamı için önceden sabit kalite kapıları
+
+Kod ve sentetik leakage/cost/cooldown testleri başarılıdır. Gerçek Mac veri
+tabanı sonucu henüz çalıştırılmadı; kalite kapılarından biri geçmezse aday
+seçimi ve EXAM otomatik olarak çalışmayacak. Tarihsel geçiş olsa bile canlı
+politika değişmeyecek ve fresh forward kanıt gerekecektir.
 
 ---
 
@@ -356,17 +393,18 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Önceden kayıtlı tek seyrek teknik-geçiş hipotezini point-in-time replay ile sınayarak sürekli durum sinyali sorununu ölç.
-2. Bu hipotez de LEARN edge üretmezse fiyat-teknik kural aramasını durdur; aynı tarihsel veriyi yeniden kurcalama.
-3. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
-4. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
-5. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
-6. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
-7. On-chain 24h geçmişini ve veri kalitesini paralel izle; WARMING_UP/NO_DATA metriklerini karara dahil etme.
-8. Macro, Whale ve Risk snapshot'larını kendi olgunluk sınırlarıyla biriktirmeye devam et.
-9. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
-10. İlk doğal 11:00 Report Generator çalışmasını gözle; günlük dosya ve SQLite snapshot'ın üretildiğini doğrula.
-11. Ana yol haritası tamamlandığı için yeni mimari açmadan ürün güvenilirliği, veri kalitesi ve ölçülmüş performans üzerinde ilerle.
+1. Kalite kapılı bağımsız haber-katalizör replay'ini gerçek Mac veri tabanında bir kez çalıştır.
+2. Veri kalitesi geçmezse simülasyonu zorlamadan durdur; geçerse yalnız mekanik LEARN/VALIDATION/EXAM sonucunu kaydet.
+3. Fiyat-teknik kural aramasını yeniden açma; teknik veriyi risk/açıklama bağlamıyla sınırla.
+4. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+5. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
+6. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
+7. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
+8. On-chain 24h geçmişini ve veri kalitesini paralel izle; WARMING_UP/NO_DATA metriklerini karara dahil etme.
+9. Macro, Whale ve Risk snapshot'larını kendi olgunluk sınırlarıyla biriktirmeye devam et.
+10. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
+11. İlk doğal 11:00 Report Generator çalışmasını gözle; günlük dosya ve SQLite snapshot'ın üretildiğini doğrula.
+12. Ana yol haritası tamamlandığı için yeni mimari açmadan ürün güvenilirliği, veri kalitesi ve ölçülmüş performans üzerinde ilerle.
 
 ---
 
