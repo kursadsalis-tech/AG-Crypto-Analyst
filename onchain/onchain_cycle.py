@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from onchain import onchain_collector
+from onchain import onchain_analyzer, onchain_collector
 
 
 DB_NAME = "crypto_data.db"
@@ -79,8 +79,10 @@ def main(force=False):
             result = onchain_collector.main()
             if not result or result["collected"] <= 0:
                 raise RuntimeError("hiçbir on-chain metriği alınamadı")
+            analysis = onchain_analyzer.main()
             message = (
-                f"metrics={result['collected']} | source_errors={len(result['errors'])}"
+                f"metrics={result['collected']} | analyzed={len(analysis)} | "
+                f"source_errors={len(result['errors'])}"
             )
             save_state(con, "SUCCESS", message, now)
             print(f"On-chain cycle: SUCCESS | {message}")
