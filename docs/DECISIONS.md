@@ -92,3 +92,15 @@ Sosyal sinyal güveni yalnızca paylaşım sayısına göre hesaplanamaz. Güven
 - pozitif/negatif fikir birliği.
 
 Nötr veya çelişkili yüksek hacim yüksek güven sayılmaz. Düşük güvenli sosyal sonuçlar alarm, işlem sinyali veya Decision Engine girdisi olarak kullanılmayacaktır. Veri birikimi ve forward doğrulama ana ürün yol haritasını bloke etmeden paralelde sürdürülecektir.
+
+---
+
+## Karar 009 - On-chain Veri Olgunluğu ve Kullanım Sınırı
+
+On-chain Agent v0.7.0 canlı ürün döngüsünde 15 dakikalık cadence ile çalışacaktır.
+
+Yaklaşık 24 saatlik değişim için kabul edilen karşılaştırma aralığı 18-30 saattir. Bu aralığa ulaşmayan metrik WARMING_UP; sıfır veya karşılaştırılamayan veri NO_DATA sayılır.
+
+WARMING_UP ve NO_DATA metrikleri alarm, işlem önerisi veya Decision Engine girdisi olamaz. RISING/FALLING/STABLE sınıfları da forward doğrulama olmadan tek başına alım-satım kararı değildir.
+
+v0.7.0 ilk kapsamı zincir seviyesi TVL ve Bitcoin ağ/mempool sağlığıdır. Token bazlı transfer, borsa giriş/çıkış ve büyük cüzdan hareketleri ileri on-chain genişletmesi ile Whale Tracker modülünde ele alınacaktır.
