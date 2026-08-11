@@ -12,7 +12,7 @@
 - [x] Technical Analysis Agent
 - [x] News Intelligence Agent
 - [x] Social Sentiment Agent
-- [ ] On-chain Agent
+- [x] On-chain Agent
 - [ ] Macro Agent
 - [ ] Whale Tracker
 - [ ] Risk Manager
@@ -29,6 +29,7 @@
 - [x] v0.4.0 - Technical Analysis Agent
 - [x] v0.5.0 - News Intelligence Agent
 - [x] v0.6.0 - Social Sentiment Agent
+- [x] v0.7.0 - On-chain Agent
 
 ---
 
@@ -74,6 +75,20 @@
 
 ---
 
+## v0.7.0 ON-CHAIN - TAMAMLANAN
+
+- [x] Bitcoin mempool ve ücret metriklerini anahtarsız resmî kaynaktan topla
+- [x] Yedi büyük zincirin güncel DeFi TVL verisini topla
+- [x] On-chain gözlemleri SQLite'a idempotent biçimde kaydet
+- [x] 15 dakikalık güvenli çalışma aralığı ekle
+- [x] On-chain collector'ı canlı ürün döngüsüne hata izolasyonuyla bağla
+- [x] Sekiz zincir için 7 günlük tarihsel TVL bootstrap yap
+- [x] Yaklaşık 24 saatlik değişim analyzer'ı ekle
+- [x] WARMING_UP ve NO_DATA güvenlik durumlarını uygula
+- [x] Collector + analyzer otomatik cycle testini gerçek veride geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -84,20 +99,23 @@
 - [ ] Yeterli forward kanıt oluşunca provisional multifactor Champion için üretim kararı ver
 - [ ] Social Sentiment örneklemini özellikle takip listesi coinlerinde büyüt
 - [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
+- [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
+- [ ] WARMING_UP ve NO_DATA on-chain metriklerini alarm/karar girdisi yapma
+- [ ] Token bazlı on-chain kapsamı sonraki genişletme/Whale Tracker ile büyüt
 
 ---
 
 ## SONRAKİ ANA MODÜL
 
-### v0.7.0 - On-chain Agent
+### v0.8.0 - Macro Agent
 
 Amaç:
 
-Blokzincir üzerindeki transfer, borsa giriş/çıkış, aktif adres ve büyük cüzdan hareketlerinden ölçülebilir coin bazlı sinyaller üretmek.
+Faiz, enflasyon, dolar likiditesi, risk iştahı ve kripto piyasasını etkileyen makro göstergelerden ölçülebilir piyasa rejimi sinyalleri üretmek.
 
 Geçiş koşulu:
 
-Forward Shadow ve Social Sentiment validasyonları paralelde veri toplamaya devam edecek; ana ürün yol haritası bu süreçler tarafından bloke edilmeyecek.
+Forward Shadow, Social Sentiment ve On-chain veri toplama süreçleri paralelde devam edecek; ana ürün yol haritası bu validasyonlar tarafından bloke edilmeyecek.
 
 ---
 
