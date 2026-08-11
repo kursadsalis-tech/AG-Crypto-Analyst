@@ -277,6 +277,44 @@ Ardından 11/11 ana ürün döngüsü başarıyla tamamlandı. İstanbul saati 0
 
 ---
 
+## 5H. DECISION ENGINE TARİHSEL REPLAY - FİYAT-DURUM KURALI REDDEDİLDİ
+
+Decision Engine'in mevcut fiyat/teknik/risk gölge kuralı 13 coin ve yaklaşık
+400 günlük kapalı 1h mum üzerinde point-in-time olarak yeniden oynatıldı.
+
+Doğrulanan veri ve simülasyon disiplini:
+
+- 13/13 hazır sembol, 127.322 yeni tarihsel mum, kaynak hatası 0
+- Gelecek mumların geçmiş karara sızmadığını doğrulayan deterministik testler
+- Karardan sonraki ilk mum açılışında giriş
+- 1h, 4h ve 24h sonuçları
+- 10 baz puan gidiş-dönüş maliyet
+- Kronolojik %60 LEARN / %20 VALIDATION / %20 EXAM
+- Binance gerçek quote-volume verisi
+- Risk Manager'ın o andaki verilerle yeniden uygulanması
+
+Mevcut kural 9.576 karar saatinde 23.881 aday üretti. EXAM sonuçları maliyet
+sonrası 1h -%0,142, 4h -%0,193 ve 24h -%0,160 oldu. Bu yoğunluk erken alarm
+yerine sürekli piyasa durumunun tekrar tekrar sinyal sayıldığını gösterdi.
+
+Ardından FOLLOW/CONTRARIAN, teknik güç, 24h momentum ve normal piyasa
+filtrelerinden oluşan önceden sabit 36 challenger her ufukta denendi. Güven
+sınırları korelasyon şişmesini azaltmak için 7 günlük zaman bloklarıyla
+hesaplandı. Hiçbir challenger LEARN aşamasında pozitif alt güven sınırı
+üretemedi:
+
+- 1h: NO_LEARN_EDGE
+- 4h: NO_LEARN_EDGE
+- 24h: NO_LEARN_EDGE
+
+Karar: mevcut fiyat-durum kural ailesinin eşikleri kurcalanmayacak, canlı
+politika açılmayacak ve sonuç SHADOW_ONLY kalacaktır. Bir sonraki ve son
+fiyat-teknik hipotezi, sürekli durumlar yerine seyrek skor/kırılım/geçiş
+olaylarını coin başına 24h cooldown ile test etmektir. Bu da LEARN edge
+üretmezse fiyat-teknik optimizasyonu durdurulacaktır.
+
+---
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
@@ -318,15 +356,15 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
-2. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
-3. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
-4. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
-5. On-chain 24h geçmişini ve veri kalitesini paralel izlemeye devam et; WARMING_UP/NO_DATA metriklerini karara dahil etme.
-6. Macro rejim snapshot'larını paralel biriktir; PROVISIONAL etiketi alarm veya işlem sinyali olarak kullanma.
-7. Whale Tracker kanıtlarını paralel biriktir; UNVERIFIED hareketleri alarm veya işlem sinyali sayma.
-8. Risk Manager snapshot ve kapı kararlarını paralel biriktir; limitleri sinyal gücü gibi yorumlama.
-9. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; küçük örneklemde üretim onayı verme.
+1. Önceden kayıtlı tek seyrek teknik-geçiş hipotezini point-in-time replay ile sınayarak sürekli durum sinyali sorununu ölç.
+2. Bu hipotez de LEARN edge üretmezse fiyat-teknik kural aramasını durdur; aynı tarihsel veriyi yeniden kurcalama.
+3. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+4. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
+5. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
+6. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
+7. On-chain 24h geçmişini ve veri kalitesini paralel izle; WARMING_UP/NO_DATA metriklerini karara dahil etme.
+8. Macro, Whale ve Risk snapshot'larını kendi olgunluk sınırlarıyla biriktirmeye devam et.
+9. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
 10. İlk doğal 11:00 Report Generator çalışmasını gözle; günlük dosya ve SQLite snapshot'ın üretildiğini doğrula.
 11. Ana yol haritası tamamlandığı için yeni mimari açmadan ürün güvenilirliği, veri kalitesi ve ölçülmüş performans üzerinde ilerle.
 
