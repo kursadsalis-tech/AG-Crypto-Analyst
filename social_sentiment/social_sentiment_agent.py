@@ -21,10 +21,11 @@ from news_intelligence.news_analyzer import (
 
 
 DB_NAME = "crypto_data.db"
+# Reddit rate-limits multiple rapid RSS requests. A combined subreddit feed keeps
+# collection to one request while retaining coverage across the three communities.
 SOURCE_URLS = {
-    "r/CryptoCurrency": "https://www.reddit.com/r/CryptoCurrency/new/.rss",
-    "r/Bitcoin": "https://www.reddit.com/r/Bitcoin/new/.rss",
-    "r/ethtrader": "https://www.reddit.com/r/ethtrader/new/.rss",
+    "Reddit Crypto (CryptoCurrency+Bitcoin+ethtrader)":
+        "https://www.reddit.com/r/CryptoCurrency+Bitcoin+ethtrader/new/.rss",
 }
 POSITIVE_WORDS = {
     "adoption", "approval", "bullish", "breakout", "buy", "growth", "partnership",
