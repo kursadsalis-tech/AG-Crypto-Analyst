@@ -1,5 +1,64 @@
 # AG Crypto Analyst - Changelog
 
+## Unreleased - v0.5.x Research / Validation Layer
+
+### News Intelligence doğrulama ve ürünleştirme
+
+Eklendi:
+
+- GDELT tarihsel haber backfill ile yaklaşık 360 günlük veri seti
+- Historical News Analyzer
+- Historical Market Data eşleştirme
+- Leakage-safe Walk-Forward Backtest
+- Locked Out-of-Sample Validation
+- Rolling Research Laboratory
+- Policy Robustness Analyzer
+- Frozen Policy Monthly Stress Test
+- Market Regime Analyzer
+- Regime-Aware Rolling Validation
+- High-Confidence Signal Calibration
+- News + Technical Confluence Lab
+- Weighted Multi-Factor Champion/Challenger Lab
+- Multifactor Robustness & Weight Stability Analyzer
+- Adaptive Dual-Champion Lab
+
+Araştırma sonucu:
+
+- 1h NEWS BASE policy güçlü benchmark olarak belirlendi.
+- Weighted REGIME_AWARE multifactor provisional Champion adayı oldu.
+- Multifactor robustness statüsü ROBUST_B.
+- Adaptive selector reddedildi.
+- Overfitting riskini azaltmak için aynı tarihsel veri üzerindeki optimizasyon durduruldu ve model forward doğrulamaya geçirildi.
+
+### Forward Shadow Validation
+
+Eklendi:
+
+- REGIME_AWARE_FORWARD_V2
+- 1h horizon
+- Frozen cutoff 0.249
+- Gerçek forward-only tahmin kaydı
+- 1h sonra Binance minute data ile otomatik settle
+- NEWS BASE vs MULTIFACTOR scoreboard
+- V1 pre-start seed hatası düzeltmesi; 16 eski kayıt geçersiz sayıldı
+- Tek komutluk live cycle: collect -> analyze -> settle/record
+- macOS LaunchAgent ile 5 dakikada bir otomatik çalışma
+
+### Coin kapsamı
+
+- Takip listesi coin aliasları eklendi: ARKM, FIDA, WLD, TIA, ETHFI, BIO, LQTY, ILV, SLP, UMA, IO
+- Binance Spot USDT ticker keşfi dinamik hale getirildi
+- Yeni coin/fırsatların sabit liste dışında da tespit edilebilmesi hedeflendi
+
+### Bildirim / rapor
+
+- ChatGPT Günlük Kripto Brifingi yeniden aktif edildi: 11:00
+- ChatGPT Kritik Gelişme Takibi yeniden aktif edildi: saatlik condition watch
+- Kritik olay yoksa bildirim göndermeme prensibi korundu
+- Telegram notifier yardımcı/opsiyonel altyapı olarak eklendi; ana kullanıcı bildirim kanalı değildir
+
+---
+
 ## v0.5.0
 
 ### News Intelligence Agent - İlk Çalışan Sürüm
@@ -8,6 +67,7 @@ Tamamlandı:
 
 - CoinDesk RSS haber toplama
 - Cointelegraph RSS haber toplama
+- The Block RSS haber toplama
 - SQLite kalıcı haber kayıt sistemi
 - Haber tekrarlarının link bazında engellenmesi
 - Haber analiz kayıt tablosu
@@ -18,17 +78,9 @@ Tamamlandı:
 - Güven skoru
 - Analiz sonuçlarının SQLite'a kaydedilmesi
 
-Başarılı testler:
-
-- 55 haber başarıyla toplandı.
-- 55 haber SQLite'a kaydedildi.
-- Collector ikinci kez çalıştırıldığında haber sayısı 55 olarak kaldı; duplicate kayıt oluşmadı.
-- 55 haberin tamamı analiz edildi.
-- 55 analiz sonucu SQLite'a kaydedildi.
-
 Not:
 
-Bu sürüm kural tabanlı ilk News Intelligence katmanıdır. Nihai tahmin başarısı iddiasında bulunmaz. Bir sonraki geliştirme aşamasında haber sinyallerinin gerçek fiyat hareketleriyle ölçülmesi ve sınıflandırma doğruluğunun geliştirilmesi hedeflenmektedir.
+Bu sürüm kural tabanlı ilk News Intelligence katmanıdır. Nihai tahmin başarısı iddiasında bulunmaz. Tahmin değeri tarihsel ve forward validasyon katmanlarıyla ölçülmektedir.
 
 ---
 
@@ -48,8 +100,6 @@ Eklenen özellikler:
 - RSI + MACD + EMA birleşik teknik skor
 - Teknik sinyal oluşturma
 - Teknik analiz raporu oluşturma
-
-13 coin üzerinde başarıyla test edildi.
 
 ---
 
