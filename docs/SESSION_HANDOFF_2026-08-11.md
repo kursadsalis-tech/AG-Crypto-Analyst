@@ -1,14 +1,14 @@
-# AG Crypto Analyst — Session Handoff (2026-08-11, v1.0.0)
+# AG Crypto Analyst — Session Handoff (2026-08-11, v1.1.0)
 
 ## Current product state
 
-- Product version: v1.0.0.
-- Completed: Market Data, Market Analyzer, Technical Analysis, News Intelligence, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager.
-- Next main module: v1.1.0 Decision Engine.
+- Product version: v1.1.0.
+- Completed: Market Data, Market Analyzer, Technical Analysis, News Intelligence, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager, Decision Engine (SHADOW mode).
+- Next main module: v1.2.0 Report Generator.
 - Mac LaunchAgent com.agca.forward-shadow runs the live product cycle every 5 minutes.
-- Live cycle: NEWS -> FORWARD SHADOW -> RISK MANAGER -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER.
-- Full live cycle passed at 9/9 steps.
-- Social, On-chain and Risk Manager use 15-minute internal cadences; Macro uses 6 hours; Whale Tracker uses 5 minutes.
+- Live cycle: NEWS -> FORWARD SHADOW -> RISK MANAGER -> DECISION ENGINE -> ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN -> MACRO -> WHALE TRACKER.
+- Full live cycle passed at 10/10 steps.
+- Social, On-chain, Risk Manager and Decision Engine use 15-minute internal cadences; Macro uses 6 hours; Whale Tracker uses 5 minutes.
 
 ## Forward Shadow — keep frozen
 
@@ -117,6 +117,35 @@ Scope boundary:
 - QVOL is a 24h spot-turnover proxy, not order-book depth.
 - Risk BLOCK is a final veto and cannot be offset by other scores.
 
+## Decision Engine v1.1.0
+
+Working components:
+
+- DECISION_POLICY_V1_SHADOW with explicit evidence maturity.
+- Closed-1h technical and market research context for 13 risk-covered assets.
+- Separate shadow_action and product_decision fields.
+- Risk Manager BLOCK as a final veto.
+- Persistent decision_engine_snapshots.
+- Non-overlapping one-hour decision_shadow_predictions.
+- AL/SAT directional-return settlement without automatic policy promotion.
+- Fifteen-minute isolated cycle after Risk Manager and before the alert bridge.
+
+Latest validation:
+
+- Risk snapshot 4 was NORMAL and fresh.
+- BTC produced SAT_ADAYI; WLD produced AL_ADAYI.
+- Ten low-turnover assets were risk-blocked.
+- All 13 product decisions remained BEKLE.
+- Two one-hour shadow predictions opened with zero source errors.
+- Full live cycle passed at 10/10; immediate rerun correctly skipped Decision Engine inside cadence.
+
+Scope boundary:
+
+- Shadow candidates are not alerts, trades or production decisions.
+- PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED and SHADOW_ONLY evidence is never upgraded by score aggregation.
+- One open prediction per symbol prevents overlapping sample inflation.
+- The engine cannot leave SHADOW mode automatically.
+
 ## Notification policy
 
 - Daily investment-committee briefing: 11:00 Europe/Istanbul.
@@ -131,16 +160,18 @@ Scope boundary:
 - Do not chase small-n hit rates.
 - Frozen Forward Shadow parameters stay unchanged during forward evaluation.
 - Low-confidence Social, immature On-chain, provisional Macro, UNVERIFIED Whale or SHADOW_ONLY Forward data must not drive alerts or trades.
-- Risk Manager BLOCK is final; the future Decision Engine cannot outvote it.
+- Risk Manager BLOCK is final; Decision Engine cannot outvote it.
+- Decision Engine shadow candidates must remain separate from product decisions until independent forward evidence is sufficient.
 - Parallel validation must not stall the main product roadmap.
 
 ## Next session priority
 
 1. Do not rebuild completed modules from scratch.
-2. Let Forward Shadow, Social Sentiment, On-chain, Macro, Whale Tracker and Risk Manager continue automatically.
-3. Begin v1.1.0 Decision Engine with explicit evidence maturity and veto handling.
-4. Never let scoring convert PROVISIONAL, WARMING_UP, NO_DATA, UNVERIFIED or SHADOW_ONLY evidence into a strong decision.
-5. Keep Risk Manager BLOCK final and preserve the frozen Forward Shadow policy while its real sample grows.
+2. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker and Risk Manager continue automatically.
+3. Begin v1.2.0 Report Generator from the existing decision/evidence contracts.
+4. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
+5. Never let scoring or reporting convert PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED or SHADOW_ONLY evidence into a strong decision.
+6. Keep Risk Manager BLOCK final and preserve both frozen shadow policies while real samples grow.
 
 ## Working style
 
