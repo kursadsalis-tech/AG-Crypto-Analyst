@@ -105,7 +105,7 @@ Mac LaunchAgent:
 
 - Label: com.agca.forward-shadow
 - Çalışma aralığı: 5 dakika
-- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT
+- Akış: NEWS COLLECT -> NEWS ANALYZE -> FORWARD SHADOW -> PRODUCT ALERT BRIDGE -> SOCIAL SENTIMENT -> ON-CHAIN
 - Social Sentiment cadence: 15 dakika; diğer 5 dakikalık cycle'larda güvenli biçimde atlanır
 - Son doğrulamada launchd çalışması başarılıydı; last exit code = 0.
 
