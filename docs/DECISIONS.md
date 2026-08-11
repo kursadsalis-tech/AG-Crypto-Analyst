@@ -176,3 +176,17 @@ Gölge performansı bir saatlik forward pencerede ölçülür. Aynı coin için 
 
 Decision Engine 15 dakikalık cadence ile Risk Manager sonrasında ve ürün alarm köprüsünden önce çalışır. Gölge adayları alarm köprüsüne iletilmez.
 
+---
+
+## Karar 014 - Günlük Komite Raporu Fail-Closed Politikası
+
+Report Generator v1.2.0 yeni sinyal üretmez; kalıcı Decision Engine, Risk Manager, Forward Shadow ve Decision Shadow sözleşmelerini raporlar. Gölge araştırma adayı ile product_decision farklı sütunlarda tutulur.
+
+Raporun en güçlü fırsat seçebilmesi için Decision Engine modu PRODUCTION, product_decision AL, Risk kararı ALLOW ve pozisyon tavanı pozitif olmalıdır. SHADOW veya DATA_BLOCKED raporda etkili ürün kararı BEKLE'dir. Veritabanında tutarsız biçimde SHADOW + product AL bulunsa bile rapor AL göstermez.
+
+Risk BLOCK bulunan coin fırsat olarak sunulamaz. Risk policy veya Decision snapshot 30 dakikadan eski/eksikse rapor DATA_BLOCKED olur. PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY kanıtlar olgunluk durumlarıyla görünür kalır; birleşik puanla yükseltilmez.
+
+Planlı rapor Europe/Istanbul saat diliminde 11:00'den sonra günde bir kez üretilir. Makine 11:00'de çalışmıyorsa aynı gün sonraki canlı cycle raporu üretir. Manuel modül testi planlı günlük slotu tüketmez. Başarısız üretim son başarılı zamanı ilerletmez ve sonraki cycle yeniden dener.
+
+Ana ürün yol haritasının on modülü v1.2.0 ile tamamlanmıştır. Bundan sonraki geliştirmeler ölçülmüş ihtiyaç, operasyonel güvenilirlik ve gerçek forward kanıt tarafından yönlendirilecektir; sırf yeni mimari eklemek için yeni modül açılmayacaktır.
+
