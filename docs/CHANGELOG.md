@@ -274,9 +274,6 @@ Tamamlandı.
 
 # Gelecek Sürümler
 
-## v0.9.0
-Whale Tracker
-
 ## v1.0.0
 Risk Manager
 
