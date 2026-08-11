@@ -5,6 +5,7 @@ scores simple transparent sentiment, and stores deduplicated observations.
 """
 from __future__ import annotations
 
+import html
 import re
 import sqlite3
 import xml.etree.ElementTree as ET
@@ -57,6 +58,9 @@ def ensure_table(con):
             UNIQUE(source, external_id)
         )
     """)
+    columns = {row[1] for row in con.execute("PRAGMA table_info(social_sentiment_observations)")}
+    if "content_text" not in columns:
+        con.execute("ALTER TABLE social_sentiment_observations ADD COLUMN content_text TEXT")
     # Early v0.6.0 tests used changing source labels, so the same Reddit entry
     # could be stored twice. Preserve the earliest row and make external IDs
     # globally idempotent from now on.
@@ -84,12 +88,18 @@ def fetch_feed(source, url):
     rows = []
     for entry in root.findall("atom:entry", ATOM):
         link_node = entry.find("atom:link", ATOM)
+        raw_content = (
+            entry.findtext("atom:content", default="", namespaces=ATOM)
+            or entry.findtext("atom:summary", default="", namespaces=ATOM)
+        )
+        content_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(raw_content))).strip()
         rows.append({
             "source": source,
             "external_id": entry.findtext("atom:id", default="", namespaces=ATOM),
             "title": entry.findtext("atom:title", default="", namespaces=ATOM),
             "link": link_node.get("href", "") if link_node is not None else "",
             "published_at": entry.findtext("atom:updated", default="", namespaces=ATOM),
+            "content_text": content_text,
         })
     return rows
 
@@ -118,20 +128,42 @@ def score_title(title):
 def save_rows(con, rows, dynamic_assets):
     saved = 0
     collected_at = datetime.now(timezone.utc).isoformat()
+    known_ids = {
+        row[0] for row in con.execute(
+            "SELECT external_id FROM social_sentiment_observations"
+        ).fetchall()
+    }
     for row in rows:
-        coins = explicit_coin_matches(row["title"], dynamic_assets)
-        sentiment, score, positive, negative = score_title(row["title"])
-        cursor = con.execute("""
+        external_id = row["external_id"] or row["link"]
+        analysis_text = f"{row['title']} {row.get('content_text', '')}"
+        coins = explicit_coin_matches(analysis_text, dynamic_assets)
+        sentiment, score, positive, negative = score_title(analysis_text)
+        con.execute("""
             INSERT OR IGNORE INTO social_sentiment_observations (
                 source, external_id, title, link, published_at, collected_at,
-                coins, sentiment, sentiment_score, positive_hits, negative_hits
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                coins, sentiment, sentiment_score, positive_hits, negative_hits,
+                content_text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(external_id) DO UPDATE SET
+                source=excluded.source,
+                title=excluded.title,
+                link=excluded.link,
+                published_at=excluded.published_at,
+                collected_at=excluded.collected_at,
+                coins=excluded.coins,
+                sentiment=excluded.sentiment,
+                sentiment_score=excluded.sentiment_score,
+                positive_hits=excluded.positive_hits,
+                negative_hits=excluded.negative_hits,
+                content_text=excluded.content_text
         """, (
-            row["source"], row["external_id"] or row["link"], row["title"], row["link"],
+            row["source"], external_id, row["title"], row["link"],
             row["published_at"], collected_at, ",".join(coins) if coins else "MARKET",
-            sentiment, score, ",".join(positive), ",".join(negative),
+            sentiment, score, ",".join(positive), ",".join(negative), row.get("content_text", ""),
         ))
-        saved += cursor.rowcount
+        if external_id not in known_ids:
+            saved += 1
+            known_ids.add(external_id)
     con.commit()
     return saved
 
