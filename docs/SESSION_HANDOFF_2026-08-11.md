@@ -220,7 +220,19 @@ Decision:
   timestamp, title, duplicate, source, span, price-match, sample or coin
   coverage requirement fails.
 - Synthetic next-open, cost, cooldown and EXAM-blindness tests passed.
-- The real Mac database run is pending; no historical result is claimed yet.
+- The real Mac quality gate ran on 5,571 raw articles: valid timestamp format
+  100%, usable titles 99.8%, but exact intraday timestamps 0%.
+- Every record carries the archive-day 12:00 fallback rather than a known event
+  time. All downstream zero counts are consequences of this root time gate.
+- Result: DATA_QUALITY_BLOCKED. Candidate selection, VALIDATION and EXAM did
+  not run.
+- Do not impute historical news times or reopen this GDELT daily-archive event
+  replay. News catalysts must accumulate exact published/collected timestamps
+  in forward operation.
+- Prior 77.6% NEWS BASE, ROBUST_B and provisional Champion labels came from the
+  same day-only archive and are withdrawn as historical edge/product evidence.
+- REGIME_AWARE_FORWARD_V2 remains only a frozen SHADOW hypothesis with zero
+  historical credit; it can earn status only from exact-timestamp forward data.
 
 ## Notification policy
 
@@ -243,14 +255,13 @@ Decision:
 ## Next session priority
 
 1. Do not rebuild completed modules from scratch; the core roadmap is complete through v1.2.0.
-2. Run the single quality-gated news catalyst replay on the real Mac database.
-3. If data quality is blocked, do not force a simulation; if it passes, record only the sealed LEARN/VALIDATION/EXAM result.
-4. Never reopen price/technical threshold or indicator search on the same data.
-5. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
-6. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
-7. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
-8. Never let scoring or reporting upgrade immature evidence into a strong decision.
-9. Keep Risk Manager BLOCK final and preserve frozen live policies while real samples grow.
+2. Do not reopen price/technical search or the day-only GDELT historical event replay.
+3. Accumulate news-catalyst evidence only from exact published/collected forward timestamps.
+4. Let Forward Shadow, Decision Engine validation, Social Sentiment, On-chain, Macro, Whale Tracker, Risk Manager and Report Generator continue automatically.
+5. Observe the first unattended 11:00 Europe/Istanbul report and verify its daily snapshot.
+6. Keep Decision Engine shadow candidates clearly separate from product decisions in every report.
+7. Never let scoring or reporting upgrade immature evidence into a strong decision.
+8. Keep Risk Manager BLOCK final and preserve frozen live policies while real samples grow.
 
 ## Working style
 
