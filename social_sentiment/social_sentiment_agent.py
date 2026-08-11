@@ -37,7 +37,15 @@ NEGATIVE_WORDS = {
     "fraud", "hack", "lawsuit", "loss", "risk", "scam", "sell",
 }
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
-DYNAMIC_TICKER_BLACKLIST = {"GMT"}
+DYNAMIC_TICKER_BLACKLIST = {"GMT", "ALT"}
+SOCIAL_ALIAS_OVERRIDES = {
+    # These tickers are also common words/abbreviations in social posts.
+    "LINK": ["chainlink"],
+    "BIO": ["bio protocol"],
+    "TIA": ["celestia"],
+    "UMA": ["uma protocol"],
+    "IO": ["io.net", "ionet", "io token"],
+}
 
 
 def ensure_table(con):
@@ -104,12 +112,25 @@ def fetch_feed(source, url):
     return rows
 
 
-def explicit_coin_matches(title, dynamic_assets):
-    lowered = normalize(title)
-    coins = {
-        coin for coin, aliases in COIN_KEYWORDS.items()
-        if any(re.search(r"\b" + re.escape(alias) + r"\b", lowered) for alias in aliases)
-    }
+def explicit_coin_matches(title, content_text, dynamic_assets):
+    raw_text = f"{title} {content_text}"
+    lowered = normalize(raw_text)
+    coins = set()
+    for coin, default_aliases in COIN_KEYWORDS.items():
+        aliases = SOCIAL_ALIAS_OVERRIDES.get(coin, default_aliases)
+        alias_found = any(
+            re.search(r"\b" + re.escape(alias) + r"\b", lowered)
+            for alias in aliases
+        )
+        explicit_ticker = re.search(
+            rf"(?<![A-Za-z0-9])\$?{re.escape(coin)}(?![A-Za-z0-9])",
+            raw_text,
+        )
+        if alias_found or explicit_ticker:
+            coins.add(coin)
+
+    # Dynamic discovery is intentionally title-only. Body text contains many
+    # unrelated uppercase abbreviations that would otherwise look like coins.
     dynamic = find_dynamic_tickers(title, dynamic_assets)
     coins.update(coin for coin in dynamic if coin not in DYNAMIC_TICKER_BLACKLIST)
     return sorted(coins)
@@ -136,7 +157,9 @@ def save_rows(con, rows, dynamic_assets):
     for row in rows:
         external_id = row["external_id"] or row["link"]
         analysis_text = f"{row['title']} {row.get('content_text', '')}"
-        coins = explicit_coin_matches(analysis_text, dynamic_assets)
+        coins = explicit_coin_matches(
+            row["title"], row.get("content_text", ""), dynamic_assets
+        )
         sentiment, score, positive, negative = score_title(analysis_text)
         con.execute("""
             INSERT OR IGNORE INTO social_sentiment_observations (
