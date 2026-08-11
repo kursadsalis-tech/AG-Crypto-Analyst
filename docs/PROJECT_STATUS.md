@@ -76,14 +76,19 @@ Geliştirilen ölçüm/araştırma katmanları:
 - multifactor robustness analyzer
 - adaptive dual-champion lab
 
-Önemli sonuçlar:
+Eski araştırma kayıtları ve güncel hüküm:
 
-- Güçlü 1h NEWS BASE policy: negative direction + confidence >= 70.
-- Tarihsel frozen EXAM temel başarı seviyesi yaklaşık %77.6 hit rate.
-- Weighted REGIME_AWARE multifactor aday model bazı frozen karşılaştırmalarda base'i geçti.
-- Multifactor robustness statüsü: ROBUST_B.
-- Aynı tarihsel veriyi daha fazla optimize ederek yapay başarı üretmemek için model donduruldu.
-- Adaptive dual-champion seçici şu haliyle reddedildi; sabit multifactor daha güçlü kaldı.
+- Eski laboratuvarlar negative direction + confidence >= 70 NEWS BASE için
+  yaklaşık %77,6 frozen EXAM hit rate raporladı.
+- Weighted REGIME_AWARE model bazı eski frozen karşılaştırmalarda base'i geçti
+  ve ROBUST_B etiketi aldı.
+- Ancak bu çalışmaların dayandığı GDELT arşivinde kesin intraday timestamp
+  oranının %0 olduğu son kalite denetiminde kanıtlandı.
+- Bu nedenle %77,6, ROBUST_B ve provisional Champion etiketleri ürün veya
+  tarihsel edge kanıtı olarak geri çekildi; yalnız geçmiş araştırma kaydıdır.
+- REGIME_AWARE_FORWARD_V2 canlı politikaya açılmaz. Sıfır tarihsel krediyle,
+  dondurulmuş bir hipotez olarak yalnız gerçek forward veride ölçülür.
+- Adaptive dual-champion seçici reddedilmiş olarak kalır.
 
 ---
 
@@ -346,9 +351,24 @@ Sözleşme:
   kapsamı için önceden sabit kalite kapıları
 
 Kod ve sentetik leakage/cost/cooldown testleri başarılıdır. Gerçek Mac veri
-tabanı sonucu henüz çalıştırılmadı; kalite kapılarından biri geçmezse aday
-seçimi ve EXAM otomatik olarak çalışmayacak. Tarihsel geçiş olsa bile canlı
-politika değişmeyecek ve fresh forward kanıt gerekecektir.
+tabanında kalite kapısı çalıştırıldı ve simülasyonu doğru biçimde durdurdu:
+
+- Ham haber: 5.571
+- Geçerli zaman formatı: %100
+- Kesin intraday zaman: %0
+- Kullanılabilir başlık: %99,8
+- Sonuç: DATA_QUALITY_BLOCKED
+
+5.571 kaydın tamamı gerçek haber saati yerine arşiv gününün 12:00 fallback
+zamanını taşıyor. Bu nedenle olay sırası bilinemez; haber öncesi hareketi haber
+sonrası gibi sayma riski giderilemez. Yönlü makale, tekrar, span, kaynak ve
+fiyat-eşleşme kapılarındaki sıfırlar bu kök engelin aşağı akış sonucudur; ayrı
+veri kayıpları gibi yorumlanmaz.
+
+Karar: Tarihsel haber saatleri uydurulmayacak, EXAM çalıştırılmayacak ve bu
+arşivle event-time replay kapatılacaktır. Haber katalizörü yalnız gerçek
+toplama/yayın zamanını taşıyan forward gözlemlerle doğrulanacaktır. Canlı
+politika değişmedi ve ürün SHADOW_ONLY kaldı.
 
 ---
 
@@ -393,10 +413,10 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Kalite kapılı bağımsız haber-katalizör replay'ini gerçek Mac veri tabanında bir kez çalıştır.
-2. Veri kalitesi geçmezse simülasyonu zorlamadan durdur; geçerse yalnız mekanik LEARN/VALIDATION/EXAM sonucunu kaydet.
-3. Fiyat-teknik kural aramasını yeniden açma; teknik veriyi risk/açıklama bağlamıyla sınırla.
-4. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+1. Fiyat-teknik kural aramasını ve gün-saat belirsiz tarihsel haber replay'ini yeniden açma.
+2. Haber katalizörünü yalnız kesin published/collected timestamp taşıyan gerçek forward örneklerle doğrula.
+3. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+4. Teknik veriyi yön tahmini yerine risk/açıklama bağlamıyla sınırla.
 5. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
 6. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
 7. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
