@@ -10,3 +10,5 @@ reports/decision_engine_historical_replay.csv
 reports/decision_engine_historical_summary.csv
 reports/decision_engine_challenger_lab.csv
 reports/decision_engine_challenger_selection.csv
+reports/decision_engine_transition_lab.csv
+reports/decision_engine_transition_selection.csv
