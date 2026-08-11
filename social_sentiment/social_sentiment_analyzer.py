@@ -124,13 +124,14 @@ def main():
     print(f"AG Crypto Analyst - Social Sentiment Analyzer | son {WINDOW_HOURS} saat")
     if not results:
         print("Analize uygun coin bazlı sosyal gözlem yok.")
-        return
+        return []
     print("COIN     MENTION  POS NEG NEU   SCORE  SIGNAL    CONF")
     for row in results:
         print(
             f"{row['coin']:<8} {row['mentions']:>7}  {row['positive']:>3} {row['negative']:>3} "
             f"{row['neutral']:>3}  {row['score']:>+6.3f}  {row['signal']:<8} {row['confidence']:>3}/100"
         )
+    return results
 
 
 if __name__ == "__main__":
