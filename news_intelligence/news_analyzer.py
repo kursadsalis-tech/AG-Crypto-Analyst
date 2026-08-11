@@ -1,5 +1,7 @@
 import re
 
+import requests
+
 from news_intelligence.news_repository import (
     create_news_analysis_table,
     get_all_news,
@@ -7,6 +9,11 @@ from news_intelligence.news_repository import (
 )
 
 
+BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
+
+# Project-name aliases stay explicit for precision. The user's tracked universe is
+# included here, while a separate dynamic ticker detector below lets newly listed
+# Binance spot assets be discovered when their ticker appears explicitly in news.
 COIN_KEYWORDS = {
     "BTC": ["bitcoin", "btc"],
     "ETH": ["ethereum", "ether", "eth"],
@@ -22,7 +29,24 @@ COIN_KEYWORDS = {
     "LINK": ["chainlink", "link"],
     "AVAX": ["avalanche", "avax"],
     "SUI": ["sui"],
-    "HYPE": ["hyperliquid", "hype"],
+    "ARKM": ["arkham", "arkm"],
+    "FIDA": ["bonfida", "fida"],
+    "WLD": ["worldcoin", "world coin", "wld"],
+    "TIA": ["celestia", "tia"],
+    "ETHFI": ["ether.fi", "etherfi", "ethfi"],
+    "BIO": ["bio protocol", "bio"],
+    "LQTY": ["liquity", "lqty"],
+    "ILV": ["illuvium", "ilv"],
+    "SLP": ["smooth love potion", "slp"],
+    "UMA": ["uma protocol", "uma"],
+    "IO": ["io.net", "ionet", "io token"],
+}
+
+# Common all-caps words that can look like crypto tickers in headlines.
+DYNAMIC_TICKER_BLACKLIST = {
+    "A", "I", "AI", "CEO", "CFO", "SEC", "ETF", "FED", "GDP", "IPO", "API",
+    "USD", "USDT", "USDC", "EUR", "UK", "US", "EU", "TV", "ATH", "ATL", "NFT",
+    "DEX", "CEX", "DAO", "KYC", "AML", "FBI", "DOJ", "IRS", "CPI", "PPI", "FOMC",
 }
 
 EVENT_KEYWORDS = {
@@ -65,10 +89,53 @@ def find_matches(text, mapping):
     return matches
 
 
-def classify_news(article):
-    text = normalize(f"{article.get('title', '')} {article.get('description', '')}")
+def get_dynamic_binance_spot_assets():
+    """Return Binance spot-USDT base assets; fail safely if Binance is unavailable."""
+    try:
+        response = requests.get(BINANCE_EXCHANGE_INFO, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            item.get("baseAsset", "").upper()
+            for item in data.get("symbols", [])
+            if item.get("status") == "TRADING"
+            and item.get("isSpotTradingAllowed", True)
+            and item.get("quoteAsset") == "USDT"
+            and item.get("baseAsset")
+        }
+    except Exception:
+        return set()
+
+
+def find_dynamic_tickers(raw_text, available_assets):
+    """Detect explicit ticker mentions such as WLD, ARKM or a future new ticker.
+
+    Only uppercase ticker-like tokens are accepted and they must already be a
+    live Binance spot-USDT base asset. This intentionally avoids treating normal
+    lowercase words as coins.
+    """
+    if not available_assets:
+        return {}
+    tokens = set(re.findall(r"(?<![A-Za-z0-9])\$?([A-Z][A-Z0-9]{1,9})(?![A-Za-z0-9])", raw_text or ""))
+    found = {}
+    for token in tokens:
+        token = token.upper()
+        if token in DYNAMIC_TICKER_BLACKLIST:
+            continue
+        if token in available_assets:
+            found[token] = [token.lower()]
+    return found
+
+
+def classify_news(article, dynamic_assets=None):
+    raw_text = f"{article.get('title', '')} {article.get('description', '')}"
+    text = normalize(raw_text)
 
     coin_matches = find_matches(text, COIN_KEYWORDS)
+    dynamic_matches = find_dynamic_tickers(raw_text, dynamic_assets or set())
+    for coin, keywords in dynamic_matches.items():
+        coin_matches.setdefault(coin, []).extend(keywords)
+
     event_matches = find_matches(text, EVENT_KEYWORDS)
 
     positive_hits = [keyword for keyword in POSITIVE_KEYWORDS if re.search(r"\b" + re.escape(keyword) + r"\b", text)]
@@ -107,7 +174,8 @@ def classify_news(article):
 def analyze_all_news():
     create_news_analysis_table()
     articles = get_all_news()
-    analyses = [classify_news(article) for article in articles]
+    dynamic_assets = get_dynamic_binance_spot_assets()
+    analyses = [classify_news(article, dynamic_assets) for article in articles]
 
     if analyses:
         save_news_analysis_batch(analyses)
@@ -120,6 +188,7 @@ def main():
 
     print("AG Crypto Analyst - News Intelligence Analyzer")
     print(f"Analiz edilen haber : {len(analyses)}")
+    print("Coin tanıma: takip listesi aliasları + dinamik Binance spot-USDT ticker keşfi")
 
     for analysis in analyses[:20]:
         print(
