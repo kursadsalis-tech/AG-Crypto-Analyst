@@ -17,7 +17,7 @@
 - [x] Whale Tracker
 - [x] Risk Manager
 - [x] Decision Engine
-- [ ] Report Generator
+- [x] Report Generator
 
 ---
 
@@ -34,6 +34,7 @@
 - [x] v0.9.0 - Whale Tracker
 - [x] v1.0.0 - Risk Manager
 - [x] v1.1.0 - Decision Engine (SHADOW politika; ürün kararı BEKLE)
+- [x] v1.2.0 - Report Generator
 
 ---
 
@@ -158,6 +159,23 @@
 
 ---
 
+## v1.2.0 REPORT GENERATOR - TAMAMLANAN
+
+- [x] Son Decision, Risk, Forward ve Decision Shadow kayıtlarından günlük komite raporu üret
+- [x] Gölge araştırma adayını ürün kararından ayrı göster
+- [x] SHADOW modunda tüm etkili ürün kararlarını BEKLE'ye kapat
+- [x] Risk BLOCK bulunan coini fırsat olarak göstermeyi engelle
+- [x] En güçlü fırsatı yalnız PRODUCTION + product AL + Risk ALLOW birleşiminden seç
+- [x] Risk ve Decision snapshot eskiliğinde DATA_BLOCKED uygula
+- [x] Kanıt olgunluklarını ayrı rapor tablosunda görünür tut
+- [x] Günlük raporu Markdown dosyasına ve SQLite snapshot'a idempotent kaydet
+- [x] Europe/Istanbul 11:00 sonrası günlük tek-çalışma cadence'i ekle
+- [x] Manuel testin planlı 11:00 slotunu tüketmesini engelle
+- [x] Report Generator'ı canlı ürün döngüsüne hata izolasyonuyla bağla
+- [x] 26 fail-closed, 9 zamanlama ve 11/11 gerçek entegrasyon testini geçir
+
+---
+
 ## AKTİF GÖREVLER
 
 - [ ] Forward Shadow V2'de ilk gerçek uygun sinyallerin oluşmasını izle
@@ -171,6 +189,8 @@
 - [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine gölge doğrulamasıyla birlikte biriktir
 - [ ] Decision Engine 1h gölge AL/SAT sonuçlarını örneklem büyüdükçe izle
 - [ ] Gölge politika için küçük örneklemde eşik değiştirme veya üretim onayı verme
+- [ ] İlk doğal 11:00 Report Generator çalışmasını gözle ve günlük rapor snapshot'ını doğrula
+- [ ] Günlük raporun SHADOW veriyi fırsat diye sunmadığını operasyonel olarak izlemeye devam et
 - [ ] Social Sentiment örneklemini özellikle takip listesi coinlerinde büyüt
 - [ ] Sosyal sinyali yeterli güven ve forward kanıt olmadan alarm/işlem kararına dahil etme
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
@@ -183,17 +203,19 @@
 
 ---
 
-## SONRAKİ ANA MODÜL
+## ANA ÜRÜN YOL HARİTASI TAMAMLANDI
 
-### v1.2.0 - Report Generator
+v0.1.0 ile v1.2.0 arasındaki on ana ürün modülünün çalışan ilk sürümleri tamamlandı.
 
-Amaç:
+Sıradaki faz:
 
-Her gün 11:00 yatırım komitesi brifingini aynı doğrulanmış veri sözleşmelerinden otomatik ve tutarlı biçimde üretmek; fiyat, teknik bağlam, risk limitleri, forward performansı ve kanıt olgunluğunu açıkça ayırmak.
+- doğal zamanlanmış çalışmaların operasyonel doğrulaması,
+- gerçek forward örneklemlerin büyütülmesi,
+- günlük rapor ve kritik alarm sürekliliğinin izlenmesi,
+- ölçülmüş sonuçlara göre kontrollü iyileştirme,
+- gereksiz yeni mimari açmadan ürün güvenilirliğinin artırılması.
 
-Geçiş koşulu:
-
-Rapor yalnızca gerçek ürün kararlarını karar olarak sunar. Decision Engine gölge adayları araştırma olarak açıkça etiketlenir; PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED veya SHADOW_ONLY veriler güçlü fırsat gibi gösterilmez. Risk BLOCK bulunan coin için alım önerisi üretilemez.
+Decision Engine SHADOW politikasından veya Forward üretim kapısından yalnız önceden kayıtlı kanıt koşulları sağlandığında ve ayrı bir üretim kararıyla çıkılabilir.
 
 ---
 
