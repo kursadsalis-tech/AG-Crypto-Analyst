@@ -861,7 +861,16 @@ def build_audit(load_result, dedup_result, observation_result):
     rows = [
         audit_row("raw_articles", raw, f">={MIN_RAW_ARTICLES}", raw >= MIN_RAW_ARTICLES),
         audit_row("valid_timestamp_ratio", valid_ratio, f">={MIN_VALID_TIME_RATIO:.2f}", valid_ratio >= MIN_VALID_TIME_RATIO),
-        audit_row("exact_timestamp_ratio", exact_ratio, f">={MIN_EXACT_TIME_RATIO:.2f}", exact_ratio >= MIN_EXACT_TIME_RATIO, "day-noon fallback timestamps are excluded"),
+        audit_row(
+            "exact_timestamp_ratio",
+            exact_ratio,
+            f">={MIN_EXACT_TIME_RATIO:.2f}",
+            exact_ratio >= MIN_EXACT_TIME_RATIO,
+            (
+                f"exact={exact}; day-noon_fallback="
+                f"{load_result['approximate_time']} (excluded)"
+            ),
+        ),
         audit_row("usable_title_ratio", title_ratio, f">={MIN_TITLE_QUALITY_RATIO:.2f}", title_ratio >= MIN_TITLE_QUALITY_RATIO),
         audit_row("directional_strict_articles", eligible, f">={MIN_EVALUATED_EVENTS}", eligible >= MIN_EVALUATED_EVENTS, "strict coin + directional title before deduplication"),
         audit_row("unique_story_ratio", unique_ratio, f">={MIN_UNIQUE_STORY_RATIO:.2f}", unique_ratio >= MIN_UNIQUE_STORY_RATIO, f"url_duplicates={dedup_result['duplicate_urls']}; title_duplicates={dedup_result['duplicate_titles']}"),
@@ -935,6 +944,8 @@ def render_audit(audit):
             f"{state:<5} | {row['check']:<28} | "
             f"value={value} | {row['threshold']}"
         )
+        if row["detail"]:
+            print(f"        detail: {row['detail']}")
 
 
 def render_results(results, events_by_config):
@@ -1096,6 +1107,19 @@ def main():
         blockers = [row for row in audit if not row["passed"]]
         if blockers:
             print()
+            exact_check = next(
+                row for row in audit
+                if row["check"] == "exact_timestamp_ratio"
+            )
+            if float(exact_check["value"]) == 0.0:
+                print(
+                    "ROOT_CAUSE: ARCHIVE_DAY_ONLY_TIMESTAMPS | "
+                    "intraday event order is unknowable"
+                )
+                print(
+                    "NEXT_RESEARCH_DECISION: "
+                    "STOP_HISTORICAL_NEWS_EVENT_REPLAY"
+                )
             print(
                 "CONCLUSION: DATA_QUALITY_BLOCKED | product_state=SHADOW_ONLY"
             )
