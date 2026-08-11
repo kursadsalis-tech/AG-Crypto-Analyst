@@ -36,6 +36,7 @@ NEGATIVE_WORDS = {
     "fraud", "hack", "lawsuit", "loss", "risk", "scam", "sell",
 }
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
+DYNAMIC_TICKER_BLACKLIST = {"GMT"}
 
 
 def ensure_table(con):
@@ -55,6 +56,19 @@ def ensure_table(con):
             negative_hits TEXT,
             UNIQUE(source, external_id)
         )
+    """)
+    # Early v0.6.0 tests used changing source labels, so the same Reddit entry
+    # could be stored twice. Preserve the earliest row and make external IDs
+    # globally idempotent from now on.
+    con.execute("""
+        DELETE FROM social_sentiment_observations
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM social_sentiment_observations GROUP BY external_id
+        )
+    """)
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_social_sentiment_external_id
+        ON social_sentiment_observations(external_id)
     """)
     con.commit()
 
@@ -86,7 +100,8 @@ def explicit_coin_matches(title, dynamic_assets):
         coin for coin, aliases in COIN_KEYWORDS.items()
         if any(re.search(r"\b" + re.escape(alias) + r"\b", lowered) for alias in aliases)
     }
-    coins.update(find_dynamic_tickers(title, dynamic_assets))
+    dynamic = find_dynamic_tickers(title, dynamic_assets)
+    coins.update(coin for coin in dynamic if coin not in DYNAMIC_TICKER_BLACKLIST)
     return sorted(coins)
 
 
