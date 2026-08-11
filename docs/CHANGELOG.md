@@ -1,5 +1,38 @@
 # AG Crypto Analyst - Changelog
 
+## v1.1.0
+
+### Decision Engine - İlk Çalışan Gölge Sürüm
+
+Tamamlandı:
+
+- 13 coin için açıklanabilir market, teknik ve kanıt olgunluğu kaydı
+- Risk Manager BLOCK kararının nihai veto olarak uygulanması
+- Gölge AL/SAT adayı ile ürün kararının ayrılması
+- SHADOW politikada 13/13 ürün kararının BEKLE tutulması
+- PROVISIONAL, WARMING_UP, NO_DATA, MONITOR_ONLY, UNVERIFIED ve SHADOW_ONLY kanıtların güçlü karara yükseltilmemesi
+- decision_engine_snapshots kalıcı kayıtları
+- Aynı coin için tek açık tahmin kuralına sahip 1h decision_shadow_predictions doğrulaması
+- AL/SAT yönüne göre otomatik directional return ve hit puanlama
+- 15 dakikalık Decision Engine cycle ve hata izolasyonu
+- Risk Manager sonrasında, alarm köprüsünden önce 10 adımlı canlı ürün entegrasyonu
+
+Canlı doğrulama:
+
+- Risk snapshot 4, NORMAL, yaş 5,5 dakika
+- BTC SAT_ADAYI ve WLD AL_ADAYI
+- Risk tarafından engellenen 10 coin
+- 13/13 ürün kararı BEKLE
+- 2 açık, çakışmasız 1h gölge tahmin
+- Kaynak hatası 0
+- Tam ürün döngüsü 10/10 başarı
+
+Not:
+
+Gölge adaylar alarm veya işlem kararı değildir. Decision Engine politikası SHADOW_ONLY'dır ve gerçek forward kanıt oluşmadan otomatik olarak üretime geçemez.
+
+---
+
 ## v1.0.0
 
 ### Risk Manager - İlk Çalışan Sürüm
@@ -308,9 +341,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v1.1.0
-Decision Engine
 
 ## v1.2.0
 Report Generator
