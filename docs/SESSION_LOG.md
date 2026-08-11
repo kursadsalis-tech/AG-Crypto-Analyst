@@ -145,3 +145,55 @@ v0.6.0 ilk çalışan sürüm geliştirildi:
 - Düşük güvenli sosyal sonuçlar alarm veya işlem sinyali değildir.
 - Social Sentiment ve Forward Shadow paralelde veri toplamaya devam edecektir.
 - Sıradaki ana ürün modülü v0.7.0 On-chain Agent'tır.
+
+---
+
+## Oturum 2026-08-11 - v0.7.0 On-chain Agent
+
+### On-chain Collector
+
+Anahtarsız ve resmî kaynaklarla ilk çalışan sürüm geliştirildi:
+
+- mempool.space: Bitcoin mempool transaction count, vsize, total fee ve dört fee seviyesi
+- DefiLlama: Ethereum, Solana, BSC, Arbitrum, Base, Avalanche ve Sui TVL
+- SQLite onchain_observations tablosu
+- source + chain + metric + collected_at tabanlı idempotent kayıt
+
+İlk gerçek test: 14 metrik, kaynak hatası=0.
+
+### Otomasyon
+
+- onchain_cycle eklendi.
+- Çalışma aralığı 15 dakika.
+- Hatalar diğer canlı ürün modüllerinden izole edildi.
+- Mevcut 5 dakikalık live cycle'a altıncı adım olarak eklendi.
+- Cadence testi 15 dakika dolmadan SKIPPED verdi.
+
+### Tarihsel Bootstrap ve Analyzer
+
+DefiLlama tarihsel chain TVL endpoint'i ile sekiz zincirde 64 gözlemden oluşan son 7 günlük bootstrap tamamlandı; hata=0.
+
+Yaklaşık 24 saatlik değişim analyzer'ı geliştirildi:
+
+- kabul penceresi: 18-30 saat
+- yeterli geçmiş yoksa WARMING_UP
+- sıfır/geçersiz değer varsa NO_DATA
+- hazır değişimler RISING/FALLING/STABLE olarak operasyonel sınıflandırılır
+- bu sınıflar doğrulanmadan işlem/alarm sinyali sayılmaz
+
+İlk analyzer 43.87 saatlik geçmişi yanlış biçimde 24h karşılaştırması olarak kullanıyordu. En yakın hedef baseline seçimiyle düzeltildi. Celestia sıfır TVL verisinin hazır sayılması engellendi.
+
+Son doğrulama:
+
+- Yedi zincir TVL: STABLE
+- Bitcoin ağ metrikleri: WARMING_UP
+- Celestia: NO_DATA
+- On-chain cycle: SUCCESS | metrics=14 | analyzed=15 | source_errors=0
+
+### Ürün Kararı
+
+- v0.7.0 ilk çalışan sürüm tamamlandı.
+- İlk kapsam zincir likiditesi ve Bitcoin ağ sağlığıdır.
+- Token transferleri, borsa giriş/çıkışları ve büyük cüzdan hareketleri ileri genişletme/Whale Tracker kapsamındadır.
+- WARMING_UP ve NO_DATA metrikleri karara dahil edilmeyecektir.
+- Sıradaki ana modül v0.8.0 Macro Agent'tır.
