@@ -1,5 +1,36 @@
 # AG Crypto Analyst - Changelog
 
+## v0.8.0
+
+### Macro Agent - İlk Çalışan Sürüm
+
+Tamamlandı:
+
+- Resmî FRED CSV üzerinden DFF, DGS10, DTWEXBGS, VIXCLS ve CPIAUCSL toplama
+- 800 günlük geçmiş ve SQLite idempotent makro gözlemleri
+- Fed Funds 90 günlük baz puan değişimi
+- ABD 10 yıllık tahvil faizi 30 günlük baz puan değişimi
+- Geniş dolar endeksi ve VIX 30 günlük değişimleri
+- CPI aylık, yıllık ve yıllık eğilim değişimi
+- Beş şeffaf bileşenden PROVISIONAL RISK_ON / MIXED / RISK_OFF sınıflandırması
+- Makro rejim snapshot kaydı
+- 6 saatlik güvenli cadence ve hata izolasyonu
+- Canlı ürün döngüsüne yedinci adım olarak entegrasyon
+
+Doğrulama:
+
+- Genişletilmiş collector testinde 2.481 gözlem, 4 yeni kayıt ve sıfır seri hatası.
+- Analyzer kapsamı 5/5.
+- Son geçici rejim RISK_ON, skor=-3.
+- Entegrasyon testinde Macro adımı 6 saat dolmadan doğru biçimde SKIPPED verdi.
+- Tam canlı ürün cycle'ı 7/7 adımla başarıyla tamamlandı.
+
+Not:
+
+Makro rejim yalnızca bağlam göstergesidir. Tarihsel ve forward doğrulama olmadan alarm, işlem sinyali veya Decision Engine girdisi değildir.
+
+---
+
 ## v0.7.0
 
 ### On-chain Agent - İlk Çalışan Sürüm
@@ -211,9 +242,6 @@ Tamamlandı.
 ---
 
 # Gelecek Sürümler
-
-## v0.8.0
-Macro Agent
 
 ## v0.9.0
 Whale Tracker
