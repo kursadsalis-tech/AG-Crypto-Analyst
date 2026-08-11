@@ -43,7 +43,15 @@
 - Ham veri ve fiyat eşleşmesini kapsayan fail-closed veri kalite kapısı
 - 7 günlük bloklarla LEARN -> VALIDATION -> mekanik olarak kapalı EXAM
 - Sentetik next-open, maliyet, cooldown ve EXAM-körlüğü testleri başarılı
-- Gerçek veri sonucu bekleniyor; canlı politika değiştirilmedi
+- Gerçek Mac kalite sonucu: 5.571 ham haber, %100 geçerli format, %99,8 kullanılabilir başlık
+- Kesin intraday timestamp oranı %0; tüm kayıtlar arşiv-günü 12:00 fallback
+- Kök zaman engeli nedeniyle yönlü olay, dedup, span, kaynak ve fiyat eşleşme aşamaları çalıştırılmadı
+- Sonuç DATA_QUALITY_BLOCKED; aday seçimi ve EXAM bilinçli olarak çalışmadı
+- Tarihsel saat uydurulmadı; GDELT günlük arşivle event-time replay durduruldu
+- Aynı arşive dayanan eski %77,6 NEWS BASE, ROBUST_B ve provisional Champion
+  etiketleri tarihsel edge/ürün kanıtı olmaktan çıkarıldı
+- Haber katalizörü doğrulaması kesin timestamp taşıyan forward örneklerle sürecek
+- Canlı politika değiştirilmedi; ürün SHADOW_ONLY kaldı
 
 Karar:
 
