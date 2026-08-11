@@ -271,6 +271,8 @@ def evidence_bundle(
         "market": {
             "state": "CONTEXT_ONLY" if asset else "MISSING",
             "production_usable": False,
+            "as_of": asset.get("as_of") if asset else None,
+            "price": asset.get("price") if asset else None,
             "return_24h_pct": asset.get("return_24h_pct") if asset else None,
             "range_24h_pct": asset.get("range_24h_pct") if asset else None,
         },
