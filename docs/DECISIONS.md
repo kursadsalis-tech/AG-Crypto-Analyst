@@ -307,3 +307,53 @@ Bu nedenle:
 - Haber katalizörü yalnız gerçek published/collected timestamp taşıyan forward
   gözlemler üzerinde doğrulanır.
 - Canlı politika değişmez; ürün SHADOW_ONLY ve Risk Manager vetosu nihai kalır.
+
+---
+
+## Karar 019 - Tek Forecast Core ve Mimari Değişiklik Sınırı
+
+Ürünün asıl hedefi yalnız kötü sinyali susturmak değil; 1h, 4h ve 24h için
+ölçülebilir derecede başarılı fiyat tahmini üretmektir. Mevcut Decision Engine
+bu sözleşmeyi karşılamaz: teknik AL/SAT yön adayı üretir, ancak kalibre edilmiş
+olasılık, hedef fiyat veya tahmin aralığı üretmez.
+
+Bu nedenle yalnız bir kontrollü mimari değişiklik açılır:
+
+- Tek merkezi Forecast Core; runtime ajan oylaması veya yeni ajan ağı yoktur.
+- Veri ajanları feature/kalite üreticisi olarak kalır; verdikleri confidence
+  değeri fiyat olasılığı sayılmaz.
+- Forecast çıktısı medyan hedef fiyat, %80 tahmin aralığı, maliyet + minimum
+  anlamlı hareket üstü UP/DOWN/NEUTRAL olasılıkları, beklenen net getiri ve
+  AL/SAT/BEKLE içerir.
+- Risk Manager BLOCK nihai vetodur.
+- İlk ve tek fiyat-only challenger, sabit özellikli pooled ridge dağılım
+  modelidir. RSI/MACD/EMA eşik grid'i veya yeni kural kombinasyonu aranmaz.
+- Gerçek veri sonucu görülmeden yapılan red-team incelemesinde ridge objective
+  örneklem büyüklüğünden bağımsız `mean loss + alpha*L2` olarak netleştirildi;
+  alpha=0,05 ve model sürümü
+  `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` olarak donduruldu. Sonuca
+  bakılarak tekrar değiştirilemez.
+- FIT, CALIBRATION, VALIDATION ve EXAM kronolojik ayrılır; hedefi segment
+  sınırını aşan kayıt dışlanır. Ölçekleyici/model yalnız FIT, olasılık ve
+  aralık kalibrasyonu yalnız CALIBRATION verisinden öğrenir.
+- Bir horizon VALIDATION kapılarının tamamını geçmezse EXAM açılmaz.
+- Olasılık kalibrasyonu UP/DOWN ve aksiyon seçkisi için ayrı ölçülür; güven
+  oranının tanımladığı olay ile raporlanan hit aynı olaydır.
+- Cross-coin ve zaman korelasyonu haftalık kümeli bootstrap ile hesaba katılır;
+  Wilson yalnız yardımcı göstergedir.
+- Seçilmiş %70+ aksiyonlarda hit alt sınırı ve tahmin-gerçekleşme kalibrasyon
+  farkı da haftalık blok bootstrap ile geçmek zorundadır.
+- SAT, Spot yatırımcı için satış/azaltma/kaçınma önerisidir; short portföy kârı
+  veya otomatik işlem gibi raporlanmaz.
+- Forecast örneklemi Risk ile önceden seçilmez; Risk yalnız son eylemi veto eder.
+- Aynı tarihsel EXAM dönemi önceki çalışmalarda görüldüğü için olası geçiş
+  yalnız DEVELOPMENT_ONLY sayılır; ürün kanıtı değildir.
+- Canlı Decision Engine, rapor veya alarm akışı bu laboratuvar sonucu
+  doğrulanmadan değiştirilmez.
+- Tek challenger başarısızsa fiyat-only model araması durur. Sonraki araştırma
+  yeni indikatör değil, kesin availability timestamp taşıyan dışsal veri veya
+  gerçek forward örnek olur.
+
+Ürün ekranındaki “güven %X”, bir kural/ajan puanı değil, ayrı kalibrasyon
+verisinde ölçülmüş maliyet-üstü hareket olasılığıdır. Tek nokta fiyat için
+kesinlik iddia edilmez; medyan hedef ve tahmin aralığı birlikte gösterilir.
