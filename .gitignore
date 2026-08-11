@@ -12,3 +12,6 @@ reports/decision_engine_challenger_lab.csv
 reports/decision_engine_challenger_selection.csv
 reports/decision_engine_transition_lab.csv
 reports/decision_engine_transition_selection.csv
+reports/news_catalyst_replay_lab.csv
+reports/news_catalyst_selection.csv
+reports/news_catalyst_data_audit.csv
