@@ -651,13 +651,14 @@ def write_csv(path, rows):
         } for row in rows)
 
 
-def display_metric(row):
+def display_metric(row, display_group=None):
+    display_group = display_group or row["split"]
     return (
-        f"{row['split']:<10} | {row['horizon']:<3} | "
+        f"{display_group:<10} | {row['horizon']:<3} | "
         f"n={row['events']:<5} | hit={row['hit_rate_pct']:>5.1f}% | "
         f"wilson={row['wilson_lower_pct']:>5.1f}% | "
         f"net={row['average_net_return_pct']:+.3f}% | "
-        f"maxDD={row['max_drawdown_pct_points']:+.2f}pp"
+        f"seqDD={row['max_drawdown_pct_points']:+.2f}pp"
     )
 
 
@@ -722,10 +723,14 @@ def render(result, coverage, summary, fetch_result, boundaries):
                 and item["action"] == action
                 and item["horizon"] == horizon
             )
-            print(display_metric(row))
+            print(display_metric(row, action))
     print(
         "\nStatus: SHADOW_ONLY. No threshold was tuned and the live policy "
         "was not changed."
+    )
+    print(
+        "seqDD is additive signal-sequence drawdown, not portfolio "
+        "drawdown."
     )
     print(f"Events: {REPORT_PATH}")
     print(f"Summary: {SUMMARY_PATH}")
