@@ -42,3 +42,21 @@ def send_message(text: str) -> bool:
     except Exception as exc:
         print(f"Telegram HATA: {exc}")
         return False
+
+
+def main() -> None:
+    print("AG Crypto Analyst - Telegram Notifier Self-Test")
+    if not is_configured():
+        print("Durum: YAPILANDIRILMAMIŞ")
+        print(f"Eksik ortam değişkenleri: {BOT_TOKEN_ENV} ve/veya {CHAT_ID_ENV}")
+        print("Not: hiçbir gizli değer ekrana yazdırılmadı.")
+        return
+
+    print("Durum: YAPILANDIRILMIŞ")
+    print("Test mesajı gönderiliyor...")
+    ok = send_message("✅ AG Crypto Analyst Telegram bağlantısı aktif. Forward Shadow alarm kanalı hazır.")
+    print("Gönderim:", "BAŞARILI" if ok else "BAŞARISIZ")
+
+
+if __name__ == "__main__":
+    main()
