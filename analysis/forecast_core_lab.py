@@ -37,7 +37,7 @@ from decision_engine.forecast_contract import (
 
 
 DB_NAME = "crypto_data.db"
-LAB_VERSION = "FORECAST_CORE_LAB_V1_1"
+LAB_VERSION = "FORECAST_CORE_LAB_V1_2_VALIDATOR_DIAGNOSTICS"
 MODEL_VERSION = "POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED"
 SYMBOLS = (
     "BTCUSDT", "ETHUSDT", "ARKMUSDT", "FIDAUSDT", "WLDUSDT",
@@ -571,6 +571,16 @@ def fit_model(fit_rows, calibration_rows, horizon):
         name: (classes[name] + 1.0) / (total + 3.0)
         for name in ("UP", "DOWN", "NEUTRAL")
     }
+    cost_pct = ROUND_TRIP_COST_BPS / 100.0
+    calibration_long_utility = statistics.fmean(
+        row["trade_return_pct"] - cost_pct for row in calibration_selected
+    )
+    calibration_sell_utility = statistics.fmean(
+        -row["trade_return_pct"] - cost_pct for row in calibration_selected
+    )
+    constant_baseline_direction = (
+        "AL" if calibration_long_utility >= calibration_sell_utility else "SAT"
+    )
     return {
         "horizon": horizon,
         "standardizer": standardizer,
@@ -588,6 +598,8 @@ def fit_model(fit_rows, calibration_rows, horizon):
             0.80,
         ),
         "base_probabilities": base_probabilities,
+        # Frozen on CALIBRATION; VALIDATION outcomes never choose the baseline.
+        "constant_baseline_direction": constant_baseline_direction,
         "fit_rows": len(fit_selected),
         "calibration_rows": len(calibration_selected),
     }
@@ -680,14 +692,30 @@ def binary_ece(pairs, bins=10):
     pairs = list(pairs)
     if not pairs:
         return 1.0
-    predictions = sorted((float(probability), int(outcome))
-                         for probability, outcome in pairs)
+    # Sort only by probability. Sorting the whole tuple also sorts equal
+    # probabilities by outcome, manufacturing calibration error for discrete
+    # models that legitimately emit many identical probabilities.
+    predictions = [
+        (float(probability), int(outcome)) for probability, outcome in pairs
+    ]
+    predictions.sort(key=lambda item: item[0])
     error = 0.0
-    for start in range(0, len(predictions), max(1, math.ceil(len(predictions) / bins))):
-        group = predictions[start:start + max(1, math.ceil(len(predictions) / bins))]
+    target_size = max(1, math.ceil(len(predictions) / bins))
+    start = 0
+    while start < len(predictions):
+        end = min(len(predictions), start + target_size)
+        # Equal predictions are one calibration claim and must never be split
+        # into outcome-ordered pseudo-bins.
+        while (
+            end < len(predictions)
+            and predictions[end][0] == predictions[end - 1][0]
+        ):
+            end += 1
+        group = predictions[start:end]
         confidence = statistics.fmean(item[0] for item in group)
         accuracy = statistics.fmean(item[1] for item in group)
         error += len(group) / len(predictions) * abs(confidence - accuracy)
+        start = end
     return error
 
 
@@ -731,19 +759,22 @@ def week_key(timestamp):
     return monday.isoformat()
 
 
-def weekly_block_bootstrap_interval(rows, value_getter, seed, repetitions=2000):
-    """Paired timestamp-cluster 95% interval using whole UTC weeks."""
+def weekly_block_bootstrap_interval(
+    rows, value_getter, seed, repetitions=2000, minimum_blocks=8
+):
+    """Event-weighted paired 95% interval by resampling whole UTC weeks."""
     weekly = defaultdict(list)
     for row in rows:
         weekly[week_key(row["as_of"])].append(float(value_getter(row)))
-    block_means = [statistics.fmean(weekly[key]) for key in sorted(weekly)]
-    if len(block_means) < 2:
+    blocks = [weekly[key] for key in sorted(weekly)]
+    if len(blocks) < int(minimum_blocks):
         return float("-inf"), float("inf")
     rng = random.Random(int(seed))
     bootstrapped = []
     for _ in range(int(repetitions)):
-        sample = [block_means[rng.randrange(len(block_means))]
-                  for _ in block_means]
+        sample = []
+        for _block in blocks:
+            sample.extend(blocks[rng.randrange(len(blocks))])
         bootstrapped.append(statistics.fmean(sample))
     bootstrapped.sort()
     lower_index = max(0, math.floor(0.025 * (len(bootstrapped) - 1)))
@@ -774,8 +805,8 @@ def directional_utility(row, direction=None, cost_multiplier=1.0):
     return None
 
 
-def claimed_event_hit(row):
-    direction = row["risk_adjusted_action"]
+def claimed_event_hit(row, direction=None):
+    direction = direction or row["risk_adjusted_action"]
     return bool(
         (direction == "AL" and row["actual_class"] == "UP")
         or (direction == "SAT" and row["actual_class"] == "DOWN")
@@ -794,7 +825,7 @@ def concentration(rows, key):
     }
 
 
-def slice_support(rows, key, minimum_events):
+def slice_support(rows, key, minimum_events, action_field="risk_adjusted_action"):
     grouped = defaultdict(list)
     for row in rows:
         grouped[row[key]].append(row)
@@ -806,14 +837,16 @@ def slice_support(rows, key, minimum_events):
             continue
         evaluated.append(name)
         probabilities = [
-            row["p_up"] if row["risk_adjusted_action"] == "AL" else row["p_down"]
+            row["p_up"] if row[action_field] == "AL" else row["p_down"]
             for row in group
         ]
-        outcomes = [int(claimed_event_hit(row)) for row in group]
+        outcomes = [int(claimed_event_hit(row, row[action_field])) for row in group]
         calibration_gap = abs(
             statistics.fmean(probabilities) - statistics.fmean(outcomes)
         )
-        utility = statistics.fmean(directional_utility(row) for row in group)
+        utility = statistics.fmean(
+            directional_utility(row, row[action_field]) for row in group
+        )
         if utility > 0.0 and calibration_gap <= 0.10:
             supported.append(name)
         else:
@@ -825,7 +858,7 @@ def slice_support(rows, key, minimum_events):
     }
 
 
-def subwindow_positive_count(rows):
+def subwindow_positive_count(rows, action_field="risk_adjusted_action"):
     if not rows:
         return 0
     ordered = sorted(rows, key=lambda row: row["as_of"])
@@ -835,12 +868,14 @@ def subwindow_positive_count(rows):
     while len(groups) < 3:
         groups.append([])
     return sum(
-        bool(group) and statistics.fmean(directional_utility(row) for row in group) > 0
+        bool(group) and statistics.fmean(
+            directional_utility(row, row[action_field]) for row in group
+        ) > 0
         for group in groups
     )
 
 
-def evaluate(model, rows, z):
+def evaluate(model, rows):
     forecasts = [forecast_row(model, row) for row in rows]
     base = model["base_probabilities"]
     model_probs = lambda row: {
@@ -912,22 +947,31 @@ def evaluate(model, rows, z):
             naive_distribution[-1] - model_distribution[-1]
         )
 
-    actions = [
+    raw_actions = [
+        row for row in forecasts
+        if row["action"] in {"AL", "SAT"}
+    ]
+    post_risk_actions = [
         row for row in forecasts
         if row["risk_adjusted_action"] in {"AL", "SAT"}
     ]
-    action_utilities = [directional_utility(row) for row in actions]
-    double_cost_utilities = [
-        directional_utility(row, cost_multiplier=2.0) for row in actions
+    risk_vetoed_actions = [
+        row for row in raw_actions if row["risk_adjusted_action"] == "BEKLE"
     ]
-    claimed_hits = sum(claimed_event_hit(row) for row in actions)
+    actions = raw_actions
+    action_utilities = [directional_utility(row, row["action"]) for row in actions]
+    double_cost_utilities = [
+        directional_utility(row, row["action"], cost_multiplier=2.0)
+        for row in actions
+    ]
+    claimed_hits = sum(claimed_event_hit(row, row["action"]) for row in actions)
     economic_hits = sum(value > 0 for value in action_utilities)
     positives = sum(value for value in action_utilities if value > 0)
     negatives = abs(sum(value for value in action_utilities if value < 0))
     action_pairs = [
         (
-            row["p_up"] if row["risk_adjusted_action"] == "AL" else row["p_down"],
-            int(claimed_event_hit(row)),
+            row["p_up"] if row["action"] == "AL" else row["p_down"],
+            int(claimed_event_hit(row, row["action"])),
         )
         for row in actions
     ]
@@ -939,25 +983,24 @@ def evaluate(model, rows, z):
     action_predicted = statistics.fmean(item[0] for item in action_pairs) if action_pairs else 0.0
     action_observed = statistics.fmean(item[1] for item in action_pairs) if action_pairs else 0.0
 
-    long_average = statistics.fmean(
-        directional_utility(row, "AL") for row in actions
-    ) if actions else 0.0
-    sell_average = statistics.fmean(
-        directional_utility(row, "SAT") for row in actions
-    ) if actions else 0.0
-    constant_direction = "AL" if long_average >= sell_average else "SAT"
+    constant_direction = model["constant_baseline_direction"]
     for row in actions:
         row["_constant_baseline_utility"] = directional_utility(
             row, constant_direction
         )
         row["_action_advantage"] = (
-            directional_utility(row) - row["_constant_baseline_utility"]
+            directional_utility(row, row["action"])
+            - row["_constant_baseline_utility"]
         )
 
     up_ece = binary_ece((row["p_up"], row["actual_class"] == "UP")
                         for row in forecasts)
     down_ece = binary_ece((row["p_down"], row["actual_class"] == "DOWN")
                           for row in forecasts)
+    neutral_ece = binary_ece(
+        (row["p_neutral"], row["actual_class"] == "NEUTRAL")
+        for row in forecasts
+    )
     coin_skill_positive = 0
     coin_skill_evaluated = 0
     for symbol in SYMBOLS:
@@ -971,9 +1014,14 @@ def evaluate(model, rows, z):
             coin_skill_positive += 1
     coin = concentration(actions, "symbol")
     regime = concentration(actions, "regime")
-    coin_slices = slice_support(actions, "symbol", minimum_events=20)
-    regime_slices = slice_support(actions, "regime", minimum_events=30)
-    weekly_blocks = len({week_key(row["as_of"]) for row in actions})
+    coin_slices = slice_support(
+        actions, "symbol", minimum_events=20, action_field="action"
+    )
+    regime_slices = slice_support(
+        actions, "regime", minimum_events=30, action_field="action"
+    )
+    forecast_weekly_blocks = len({week_key(row["as_of"]) for row in forecasts})
+    action_weekly_blocks = len({week_key(row["as_of"]) for row in actions})
     claimed_hit_interval = weekly_block_bootstrap_interval(
         actions, lambda row: row["_claimed_hit"], 1700 + model["horizon"]
     )
@@ -990,7 +1038,11 @@ def evaluate(model, rows, z):
         "log_loss_improvement": 1.0 - model_log / benchmark_log if benchmark_log else -1.0,
         "up_ece": up_ece,
         "down_ece": down_ece,
-        "classwise_ece_max": max(up_ece, down_ece),
+        "neutral_ece": neutral_ece,
+        "classwise_ece_max": max(up_ece, down_ece, neutral_ece),
+        "actual_up_rate": sum(row["actual_class"] == "UP" for row in forecasts) / len(forecasts) if forecasts else 0.0,
+        "actual_down_rate": sum(row["actual_class"] == "DOWN" for row in forecasts) / len(forecasts) if forecasts else 0.0,
+        "actual_neutral_rate": sum(row["actual_class"] == "NEUTRAL" for row in forecasts) / len(forecasts) if forecasts else 0.0,
         "brier_advantage_block_lb": weekly_block_bootstrap_lower(
             forecasts, lambda row: row["_brier_advantage"], 1100 + model["horizon"]
         ),
@@ -1017,6 +1069,10 @@ def evaluate(model, rows, z):
         "naive_interval_width_scaled": statistics.fmean(naive_widths) if naive_widths else 0.0,
         "action_events": len(actions),
         "action_coverage": len(actions) / len(forecasts) if forecasts else 0.0,
+        "post_risk_action_events": len(post_risk_actions),
+        "post_risk_action_coverage": len(post_risk_actions) / len(forecasts) if forecasts else 0.0,
+        "risk_vetoed_action_events": len(risk_vetoed_actions),
+        "risk_veto_rate": len(risk_vetoed_actions) / len(actions) if actions else 0.0,
         "action_claimed_event_hit_rate": claimed_hits / len(actions) if actions else 0.0,
         "action_claimed_hit_block_lb": claimed_hit_interval[0],
         "action_claimed_hit_block_ub": claimed_hit_interval[1],
@@ -1035,15 +1091,19 @@ def evaluate(model, rows, z):
         "double_cost_directional_utility_pct": statistics.fmean(double_cost_utilities)
         if double_cost_utilities else 0.0,
         "constant_baseline_direction": constant_direction,
-        "constant_baseline_utility_pct": max(long_average, sell_average),
+        "constant_baseline_utility_pct": statistics.fmean(
+            directional_utility(row, constant_direction) for row in actions
+        ) if actions else 0.0,
         "action_utility_block_lb": weekly_block_bootstrap_lower(
-            actions, lambda row: directional_utility(row), 1500 + model["horizon"]
+            actions, lambda row: directional_utility(row, row["action"]),
+            1500 + model["horizon"]
         ),
         "action_vs_constant_block_lb": weekly_block_bootstrap_lower(
             actions, lambda row: row["_action_advantage"], 1600 + model["horizon"]
         ),
         "profit_factor": positives / negatives if negatives else (float("inf") if positives else 0.0),
-        "weekly_blocks": weekly_blocks,
+        "forecast_weekly_blocks": forecast_weekly_blocks,
+        "action_weekly_blocks": action_weekly_blocks,
         "coin_skill_evaluated": coin_skill_evaluated,
         "coin_skill_positive": coin_skill_positive,
         "supported_coin_slices": len(coin_slices["supported"]),
@@ -1057,7 +1117,9 @@ def evaluate(model, rows, z):
         "top3_coin_share": coin["top3"],
         "regime_count": regime["unique"],
         "largest_regime_share": regime["largest"],
-        "positive_subwindows": subwindow_positive_count(actions),
+        "positive_subwindows": subwindow_positive_count(
+            actions, action_field="action"
+        ),
     }
     return forecasts, metrics
 
@@ -1065,7 +1127,8 @@ def evaluate(model, rows, z):
 def validation_gate(metrics):
     checks = {
         "events_gte_1000": metrics["events"] >= 1000,
-        "weekly_blocks_gte_8": metrics["weekly_blocks"] >= 8,
+        "forecast_weekly_blocks_gte_8": metrics["forecast_weekly_blocks"] >= 8,
+        "action_weekly_blocks_gte_8": metrics["action_weekly_blocks"] >= 8,
         "brier_skill_gte_5pct": metrics["brier_skill"] >= 0.05,
         "log_loss_improvement_gte_2pct": metrics["log_loss_improvement"] >= 0.02,
         "classwise_ece_lte_8pct": metrics["classwise_ece_max"] <= 0.08,
@@ -1215,8 +1278,8 @@ def model_artifact(models, boundaries, passed_horizons):
                 "standardizer", "coefficients", "price_residuals",
                 "trade_residuals", "price_residual_mean",
                 "trade_residual_mean", "price_q10", "price_q50",
-                "price_q90", "naive_abs_q80", "base_probabilities", "fit_rows",
-                "calibration_rows",
+                "price_q90", "naive_abs_q80", "base_probabilities",
+                "constant_baseline_direction", "fit_rows", "calibration_rows",
             )
         }
     return payload
@@ -1272,7 +1335,7 @@ def run_lab(now=None):
                 if row["segment"] == "VALIDATION" and row["horizon"] == horizon
             ]
             validation_forecasts, validation_metrics = evaluate(
-                model, validation_rows, z=2.40
+                model, validation_rows
             )
             checks, passed = validation_gate(validation_metrics)
             checks["point_in_time_gaps_zero"] = built["source_gaps"] == 0
@@ -1303,7 +1366,7 @@ def run_lab(now=None):
                 row for row in selected
                 if row["segment"] == "EXAM" and row["horizon"] == horizon
             ]
-            exam_forecasts, exam_metrics = evaluate(model, exam_rows, z=1.96)
+            exam_forecasts, exam_metrics = evaluate(model, exam_rows)
             detail.extend(compact_forecast(row) for row in exam_forecasts)
             selection.append({
                 "lab_version": LAB_VERSION,
@@ -1371,7 +1434,8 @@ def run_lab(now=None):
 
 
 def percent(value):
-    return f"{100.0 * float(value):.1f}%"
+    value = float(value)
+    return "N/A" if not math.isfinite(value) else f"{100.0 * value:.1f}%"
 
 
 def render(result):
@@ -1380,7 +1444,7 @@ def render(result):
     fetch_errors = sum(item.get("status") == "ERROR" for item in fetch_result.values())
     ready = sum(item.get("status") in {"READY", "FETCHED_READY"}
                 for item in fetch_result.values())
-    print("AG Crypto Analyst - Probabilistic Forecast Core Lab v1.0.0")
+    print("AG Crypto Analyst - Probabilistic Forecast Core Lab v1.0.1")
     print(
         f"Contract: {CONTRACT_VERSION} | model={MODEL_VERSION} | "
         f"horizons=1h,4h,24h | cost={ROUND_TRIP_COST_BPS:.1f}bps | "
@@ -1419,12 +1483,21 @@ def render(result):
             f"classECE={percent(row['classwise_ece_max'])} | "
             f"interval={percent(row['interval_coverage'])}"
         )
+        block_lb = (
+            f"{row['action_utility_block_lb']:+.3f}%"
+            if math.isfinite(float(row["action_utility_block_lb"]))
+            else "N/A"
+        )
         print(
-            f"actions={row['action_events']} ({percent(row['action_coverage'])}) | "
+            f"raw_actions={row['action_events']} ({percent(row['action_coverage'])}) | "
+            f"risk_veto={row['risk_vetoed_action_events']} | "
+            f"post_risk={row['post_risk_action_events']} | "
+            f"forecast_weeks={row['forecast_weekly_blocks']} | "
+            f"action_weeks={row['action_weekly_blocks']} | "
             f"claimed_hit={percent(row['action_claimed_event_hit_rate'])} | "
             f"weekly_hit_LB={percent(row['action_claimed_hit_block_lb'])} | "
             f"utility={row['average_directional_utility_pct']:+.3f}% | "
-            f"block_bootstrap_LB={row['action_utility_block_lb']:+.3f}%"
+            f"block_bootstrap_LB={block_lb}"
         )
         if row["failed_gates"]:
             print(f"failed: {row['failed_gates']}")
@@ -1572,6 +1645,16 @@ def self_test():
     }
     assert directional_utility(threshold_semantics) > 0.0
     assert not claimed_event_hit(threshold_semantics)
+    vetoed_raw_action = {
+        "action": "AL", "risk_adjusted_action": "BEKLE",
+        "trade_return_pct": 0.50,
+    }
+    assert directional_utility(vetoed_raw_action) is None
+    assert directional_utility(
+        vetoed_raw_action, vetoed_raw_action["action"]
+    ) is not None
+    perfectly_calibrated_ties = [(0.75, index < 75) for index in range(100)]
+    assert binary_ece(perfectly_calibrated_ties) < 1e-12
 
     candles = []
     for index in range(200):
@@ -1606,6 +1689,10 @@ def self_test():
         block_rows, lambda row: row["value"], seed=42, repetitions=200
     )
     assert 0.69 <= block_interval[0] <= block_interval[1] <= 0.71
+    too_few_blocks = weekly_block_bootstrap_interval(
+        block_rows[:7], lambda row: row["value"], seed=42, repetitions=50
+    )
+    assert too_few_blocks == (float("-inf"), float("inf"))
 
     print("Forecast Core self-test: PASS")
 

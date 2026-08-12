@@ -20,7 +20,47 @@
 - Contract gerçek araştırma satırlarında çalışır; NaN/inf, horizon, fiyat aralığı,
   feature-mutation, next-open ve artifact hash self-testleri başarılı
 - Canlı Decision Engine, rapor, cycle ve alarm politikası değiştirilmedi
-- Gerçek Mac sonucu bekleniyor; tarihsel geçiş olsa bile DEVELOPMENT_ONLY
+- Gerçek Mac VALIDATION sonucu: 1h/4h/24h REJECT; OBSERVED_DIAGNOSTIC açılmadı
+- 1h/4h fiyat tahmini baseline'a yakın veya kötü ve aksiyonsuz; 24h 17 tail
+  aksiyonla ilginç fakat yetersiz, genel Brier/MAE ve kalibrasyon başarısız
+- Fiyat-only pooled-ridge ailesi kapatıldı; eşik/indikatör taraması açılmadı
+- Validator tanısı: raw model/Risk-sonrası aksiyon ayrımı, forecast/action hafta
+  sayıları, minimum sekiz blok, event-weighted whole-week bootstrap,
+  CAL-dondurulmuş direction baseline ve UP/DOWN/NEUTRAL ECE
+- Sonraki tek kampanya `DERIVATIVES_STATE_V2`: funding, OI/positioning,
+  premium/basis ve futures taker flow; 4h PRIMARY, 24h SECONDARY, 1h EXPLORATORY
+- Dürüst ölçüm ürün hedefi değil değişmez kısıttır; BEKLE nihai başarı sayılmaz
+
+### Derivatives State V2 - Önceden Dondurulmuş Araştırma Paketi
+
+- Binance USD-M kapalı 1h futures/premium mumları, Vision positioning arşivi
+  ve funding olayları için checksum doğrulamalı, idempotent tarihsel collector
+- 400 günlük deney penceresi; feature warmup ve funding öncülüyle varsayılan
+  430 günlük toplama aralığı
+- Son 30 günlük arşivleri yeniden checksum doğrulama; aynı timestamp'te farklı
+  cross-archive payload için deterministik saklama ve fail-closed kalite hatası
+- Belirsiz headerless funding arşivini sessizce yanlış yorumlamak yerine reddetme
+- Funding oranını geçmiş olay aralığından point-in-time türetilen 8 saat eşdeğerine
+  normalize etme; eksik funding periyodunda feature satırını dışlama
+- Resmî availability anlamı belgelenmeyen Vision taker oranı modelden çıkarıldı;
+  taker akışı yalnız kapanmış futures mumunun quote/taker-buy quote hacminden üretildi
+- Exact futures/spot basis, premium, OI 1h/4h/24h değişimi, positioning oranları,
+  funding ve taker imbalance içeren 26 sabit türev özelliği
+- En az 10 coin ve BTC/ETH zorunlu ortak pencere; eksik bağlamda imputasyon yok,
+  global/coin bazında en fazla %2 ve hafta bazında en fazla %10 açık kalite sınırı
+- Tek sabit pure-stdlib histogram additive-stump V2 challenger; model grid'i yok
+- CALIBRATION kronolojik CAL-A model kalibrasyonu ve CAL-B dağılım kalibrasyonu
+  olarak ayrıldı
+- 4h PRIMARY geçmeden 24h SECONDARY observed diagnostic açılmaz; 1h EXPLORATORY
+  hiçbir koşulda candidate artifact'e girmez
+- 24h validation örneklem kapısı 400 günlük pencereyle matematiksel olarak
+  ulaşılabilir 750 olaya sabitlendi; diğer ufuklar 1.000 olay
+- Artifact JSON round-trip hash, horizon gate fizibilitesi, Risk-veto yönü,
+  collector şeması ve CAL-A/CAL-B ayrımı self-testleri
+- Derleme, V1/V2/collector self-testleri, 26-feature point-in-time smoke ve
+  400 günlük 10-coin readiness integration smoke başarılı
+- Gerçek Mac backfill ve tek V2 lab koşusu sonraki oturuma bırakıldı; canlı ürün
+  politikası değiştirilmedi
 
 ### Leakage-Safe Decision Replay
 

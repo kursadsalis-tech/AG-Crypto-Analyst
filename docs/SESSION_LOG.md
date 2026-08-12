@@ -602,3 +602,62 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
   ölçülen dondurulmuş SHADOW hipotezi olarak bırakıldı.
 - Haber doğrulamasının yalnız kesin timestamp taşıyan forward örneklerle devam
   etmesine karar verildi; hiçbir canlı politika değiştirilmedi.
+
+## Oturum 2026-08-12 - Forecast Core V1 Gerçek Sonuç ve V2 Kararı
+
+- `analysis.forecast_core_lab` gerçek Mac `crypto_data.db` üzerinde çalıştı.
+- 13/13 sembol hazır, yeni mum ve fetch hatası yok, point-in-time boşluk sıfır.
+- 1h VALIDATION: n=24.947, Brier skill +%1,2, MAE skill -%0,5, aksiyon 0.
+- 4h VALIDATION: n=6.227, Brier skill +%0,1, MAE skill -%0,7, aksiyon 0.
+- 24h VALIDATION: n=1.027, Brier skill -%1,2, MAE skill -%2,5, ECE %10,7;
+  17 aksiyon, %64,7 hit ve pozitif tail utility.
+- Üç ufuk da REJECT oldu; OBSERVED_DIAGNOSTIC açılmadı ve canlı politika
+  değiştirilmedi.
+- 24h tail sonucu küçük örneklem, %1,7 coverage, yetersiz hafta/coin/rejim ve
+  baseline başarısızlığı nedeniyle başarı sayılmadı.
+- Fiyat-only pooled-ridge ailesi kapatıldı; threshold veya indikatör araması
+  başlatılmadı.
+- Bağımsız red-team, reddi değiştirmeyen fakat teşhisi etkileyen validator
+  eksiklerini buldu: ham model/Risk sonrası ayrım, action-week isimlendirmesi,
+  sekizden az blokta CI, event-weighted bootstrap, validation'dan seçilen
+  constant baseline ve eksik NEUTRAL ECE.
+- Validator bu ayrımları fail-closed biçimde düzeltecek şekilde güncellendi.
+- Sonraki tek kampanya `DERIVATIVES_STATE_V2` olarak donduruldu: funding,
+  OI/positioning, perpetual premium/basis ve futures taker akışı.
+- Hedef sırası 4h PRIMARY, 24h SECONDARY, 1h EXPLORATORY olarak belirlendi.
+- Order-book, liquidation ve yaklaşık zamanlı tarihsel haber bu kampanyaya
+  eklenmeyecek; canlı ürün ve Risk Manager vetosu korunacak.
+- Orkestrasyon sorumluluğu asistanda kalacak; ajanlar yalnız sınırlı paralel
+  veri/model/red-team görevlerinde kullanılacak, tahmin oylaması yapmayacak.
+- Başarı hedefi yeniden kaydedildi: dürüst ölçüm kısıttır; yararlı sıklıkta,
+  kalibre, maliyet/baseline üstü ve fresh forward'da tekrarlanan tahmin nihai
+  hedeftir. “Kanıt yok/BEKLE” nihai ürün başarısı değildir.
+
+## Oturum 2026-08-12 - Derivatives State V2 Uygulama ve Kapanış
+
+- `data.derivatives_market_data` ile Binance USD-M futures/premium 1h mumları,
+  Vision positioning arşivleri ve funding olayları için checksum doğrulamalı,
+  idempotent tarihsel veri katmanı eklendi.
+- Deney penceresi 400 gün, warmup/funding dahil collector varsayılanı 430 gün
+  olarak donduruldu.
+- Son 30 günlük arşiv revalidation, aynı timestamp cross-archive conflict için
+  deterministik fail-closed davranış ve belirsiz headerless funding reddi eklendi.
+- Funding oranı yalnız geçmiş event aralıklarından point-in-time türetilen 8h
+  eşdeğerine normalize edildi. Belgelenmemiş Vision taker timestamp varsayımı
+  modelden çıkarıldı; aggressive flow kapanmış futures kline hacminden alındı.
+- `analysis.forecast_core_v2_lab` tek sabit 26-türev-özellikli pure-stdlib
+  histogram additive-stump challenger olarak eklendi; model/threshold grid'i yok.
+- CALIBRATION kronolojik CAL-A/CAL-B olarak ayrıldı. 4h PRIMARY; 24h ancak 4h
+  geçerse açılan SECONDARY; 1h artifact dışı EXPLORATORY olarak kilitlendi.
+- Eksik context imputasyonla doldurulmadı. Global/coin gap <=%2 ve haftalık
+  gap <=%10 fail-closed kalite sınırı getirildi.
+- Red-team blocker'ları kapatıldı: JSON round-trip artifact hash, ulaşılmaz 24h
+  event gate, supported cohort/runtime gap çelişkisi, funding interval semantiği,
+  raw aksiyon/Risk veto ayrımı ve az blokta yanıltıcı CI.
+- `py_compile`, kapsamlı `compileall`, Forecast Core V1 self-test, derivatives
+  collector self-test ve Forecast Core V2 self-test geçti.
+- 26 özellikli point-in-time feature smoke ve sentetik 400 günlük/10 coin
+  readiness integration smoke geçti.
+- Canlı Decision Engine, Risk Manager, rapor, cycle ve alarm politikası
+  değiştirilmedi. Gerçek Mac backfill ve tek V2 lab sonucu sonraki oturuma
+  bırakıldı; bugün kullanıcıdan ek komut veya test istenmedi.

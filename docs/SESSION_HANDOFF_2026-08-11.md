@@ -1,13 +1,12 @@
 # AG Crypto Analyst — Session Handoff (2026-08-11, v1.2.0)
 
-## 2026-08-12 controlled Forecast Core addition
+## 2026-08-12 Forecast Core V1 result and frozen V2 handoff
 
 - Product goal is calibrated, successful 1h/4h/24h price forecasting; merely
   suppressing weak signals is not counted as product success.
 - One bounded architecture change was approved: a single Forecast Core, not a
   runtime network or vote of agents.
-- Added `decision_engine/forecast_contract.py` and
-  `analysis/forecast_core_lab.py`.
+- Added `decision_engine/forecast_contract.py` and `analysis/forecast_core_lab.py`.
 - The only pre-registered price-only challenger is
   `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` with a mean-loss + alpha*L2
   objective frozen before any real run; no indicator/threshold grid is permitted.
@@ -23,15 +22,34 @@
   including high-confidence claimed-hit and calibration bias.
 - Forecast quality is measured before Risk; Risk only changes the adjusted
   action to BEKLE.
-- Compilation, contract and deterministic mutation/hash tests passed. A
-  synthetic end-to-end model/evaluation run also passed.
+- The real Mac V1 run rejected all three horizons. 1h/4h were near or below
+  baseline with no actions; 24h had only 17 tail actions and failed the global
+  probability, price, calibration, coverage and breadth gates. No observed
+  diagnostic was opened and the price-only V1 family is closed.
+- The only next campaign is now implemented and frozen as `DERIVATIVES_STATE_V2`:
+  exact Binance USD-M funding, OI/positioning, premium/basis and closed-kline
+  taker flow. There is no new indicator or threshold search.
+- Added `data/derivatives_market_data.py` and
+  `analysis/forecast_core_v2_lab.py`.
+- Data contract: 400-day experiment, 430-day collection including warmup,
+  at least 10 supported coins plus BTC/ETH, normalized 8h-equivalent funding,
+  no undocumented Vision taker-ratio feature, no imputation, and bounded
+  global/symbol/week context-gap gates.
+- Endpoint hierarchy: 4h PRIMARY, 24h SECONDARY only after 4h clears, and 1h
+  EXPLORATORY with no artifact eligibility.
+- CALIBRATION is split chronologically into CAL-A and CAL-B. The artifact is
+  hash-stable through a JSON round trip and remains DEVELOPMENT_ONLY.
+- Validator/data red-team blockers were fixed before any real V2 result.
+- Compilation, V1/collector/V2 self-tests, a 26-feature point-in-time smoke and
+  a 400-day/10-coin readiness integration smoke passed.
 - Live Decision Engine, report, alert and cycle integrations are unchanged.
 
-Immediate next action: run `python3 -m analysis.forecast_core_lab` once on the
-real Mac database. If validation rejects a horizon, its observed diagnostic is
-not opened. If all horizons reject, stop price-only model search. Any historical
-pass remains DEVELOPMENT_ONLY and requires a newly sealed future period plus
-fresh forward calibration before user-facing confidence.
+Immediate next action in the next session: run the resumable checksum-verified
+USD-M derivatives backfill on the real Mac. Only after readiness passes, run
+`analysis.forecast_core_v2_lab` exactly once. Do not tune the model, thresholds,
+feature pack or endpoint hierarchy after seeing the result. A rejection closes
+this V2 family; a pass remains DEVELOPMENT_ONLY and still requires a newly
+sealed future period plus fresh forward calibration before user-facing confidence.
 
 ## Current product state
 

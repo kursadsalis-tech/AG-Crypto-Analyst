@@ -18,3 +18,6 @@ reports/news_catalyst_data_audit.csv
 reports/forecast_core_lab.csv
 reports/forecast_core_selection.csv
 reports/forecast_core_candidate.json
+reports/forecast_core_v2_lab.csv
+reports/forecast_core_v2_selection.csv
+reports/forecast_core_v2_candidate.json

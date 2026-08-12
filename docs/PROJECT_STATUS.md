@@ -401,14 +401,69 @@ Bu hedef için tek ve sınırlı mimari değişiklik uygulanmıştır:
 
 Kod derleme, sözleşme, NaN/sonsuz değer, horizon süresi, fiyat aralığı,
 future-feature mutation, next-open ayrımı ve artifact hash testlerinden geçti.
-Gerçek Mac veri tabanı sonucu henüz alınmamıştır. Sonuç alınana kadar canlı
-Decision Engine, cycle, rapor ve alarm akışı değişmemiştir.
+Gerçek Mac veri tabanı VALIDATION sonucu üç ufukta da REJECT oldu:
+
+- 1h: n=24.947, Brier skill +%1,2, MAE skill -%0,5, aksiyon 0.
+- 4h: n=6.227, Brier skill +%0,1, MAE skill -%0,7, aksiyon 0.
+- 24h: n=1.027, Brier skill -%1,2, MAE skill -%2,5, class ECE %10,7;
+  17 aksiyon, %64,7 hit ve pozitif utility; fakat yetersiz kapsam/hafta/coin/
+  rejim desteği ve baseline başarısızlığı.
+
+OBSERVED_DIAGNOSTIC hiçbir ufukta açılmadı. Canlı Decision Engine, cycle,
+rapor ve alarm akışı değişmedi. 24h tail sonucu yalnız yeni bağımsız veriyle
+sınanacak bir hipotezdir; başarı kanıtı değildir.
 
 Bu laboratuvarın aynı tarihsel dönemi daha önce görülmüştür. Bu nedenle tüm
 kapılar geçse bile sonuç yalnız DEVELOPMENT_ONLY'dır; kullanıcıya güven oranı
 ve ürün önerisi çıkarmak için yeni sealed future dönem ve gerçek forward
 kalibrasyon zorunludur. Tek challenger VALIDATION'da kalırsa yeni
 fiyat/indikatör araması açılmaz.
+
+---
+
+## 5K. DERIVATIVES STATE V2 - TEK KONTROLLÜ SONRAKİ KAMPANYA
+
+Fiyat-only V1 reddedildi ve bu model ailesi kapatıldı. Forecast Contract ve
+canlı ürün mimarisi korunarak spot fiyattan bağımsız vadeli piyasa konumlanma
+kanıtı için V2 araştırma paketi kodlandı:
+
+- Binance USD-M futures OHLCV + taker-buy hacmi
+- gerçekleşmiş funding
+- open-interest ve positioning metrikleri
+- perpetual premium/basis
+
+İlk kampanya yalnız bu dondurulmuş veri paketini kullanır. Tarihsel order-book,
+liquidation veya yaklaşık zamanlı haber sonradan karıştırılmaz. Hedef ufuk
+sırası 4h PRIMARY, 24h SECONDARY ve 1h EXPLORATORY'dir. Ham model edge'i Risk
+Manager'dan önce; ürün uygulanabilirliği Risk vetosundan sonra ayrı ölçülür.
+
+Hazır uygulama:
+
+- Checksum doğrulamalı Binance USD-M tarihsel collector ve SQLite şeması
+- 400 günlük deney + 430 günlük warmup/funding toplama sözleşmesi
+- Funding'i geçmiş interval ile 8h eşdeğerine normalize eden point-in-time feature
+- Kapanmış futures mumundan türetilen taker imbalance; belirsiz Vision taker
+  timestamp alanı model dışında
+- 26 dondurulmuş türev özelliği ve tek sabit histogram additive-stump model
+- En az 10 coin + BTC/ETH, %98 complete-row readiness ve imputasyonsuz sınırlı
+  context-gap politikası
+- CAL-A/CAL-B kronolojik kalibrasyon ayrımı
+- 4h geçmeden 24h observed diagnostic açmayan hiyerarşik endpoint politikası
+- JSON round-trip doğrulanabilir sealed artifact ve horizon-feasibility testleri
+
+Derleme, collector/V1/V2 self-testleri, 26-feature point-in-time testi ve 400
+günlük 10-coin readiness integration testi geçti. Henüz gerçek Mac V2 sonucu
+yoktur; başarılı veya başarısız olduğuna dair iddia oluşturulmamıştır.
+
+V1 reddi sonrası validator tanısı da sıkılaştırılmıştır: forecast haftaları ve
+aksiyon haftaları ayrı, sekiz bloktan az güven aralığı N/A, bootstrap event-
+weighted whole-week, constant-direction baseline CALIBRATION'da dondurulmuş ve
+UP/DOWN/NEUTRAL ECE birlikte ölçülür.
+
+Amaç yalnız başarısızlığı doğru ölçmek değildir. Dürüst ölçüm değişmez güvenlik
+kısıtıdır; ürün başarısı baselineları ve maliyetleri geçen, yararlı sıklıkta,
+kalibre, çoklu coin/rejim desteği olan ve fresh forward dönemde tekrarlanan
+tahminlerle tanımlanır. “Kanıt yok/BEKLE” nihai başarı sayılmaz.
 
 ## 6. COIN KAPSAMI
 
@@ -451,18 +506,19 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Forecast Core laboratuvarını gerçek Mac veri tabanında bir kez çalıştır; geçmeyen horizon için EXAM/OBSERVED_DIAGNOSTIC açılmadığını doğrula.
-2. Sonuç başarısızsa fiyat-only model aramasını kapat; başarılıysa yalnız DEVELOPMENT_ONLY artifact dondur ve fresh forward fazını ayrıca tasarla.
-3. Fiyat-teknik eşik aramasını ve gün-saat belirsiz tarihsel haber replay'ini yeniden açma.
-4. Haber katalizörünü yalnız kesin published/collected timestamp taşıyan gerçek forward örneklerle doğrula.
-5. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
-6. Teknik veriyi yön tahmini yerine risk/açıklama bağlamıyla sınırla.
-7. Social Sentiment veri kapsamını paralel izle; düşük güvenli sonucu alarm/işlem sinyali sayma.
-8. Günlük 11:00 raporunda yalnız yeterli kanıta sahip doğrulanmış sinyalleri kullan.
-9. Kritik alarm sisteminin yalnız anlamlı olaylarda bildirim verdiğini izle.
-10. On-chain, Macro, Whale ve Risk verilerini kendi olgunluk sınırlarıyla biriktir.
-11. Decision Engine gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
-12. İlk doğal 11:00 Report Generator çalışmasını doğrula.
+1. Checksum doğrulamalı `data.derivatives_market_data` ile Mac'te tarihsel
+   USD-M backfill'i tamamla; yarıda kesilirse manifest üzerinden idempotent sürdür.
+2. Readiness en az 10 coin ve BTC/ETH için geçerse
+   `analysis.forecast_core_v2_lab` gerçek Mac verisinde yalnız bir kez çalıştır.
+3. 4h PRIMARY hiyerarşisini koru; 24h SECONDARY ve 1h EXPLORATORY sonuçlarını
+   bağımsız başarı gibi sunma. Sonuca göre threshold/model/paket değiştirme.
+4. Geçiş varsa yalnız DEVELOPMENT_ONLY artifact dondur ve fresh forward fazını
+   ayrıca tasarla; reddedilirse V2 model ailesini kapat.
+5. Fiyat-teknik eşik aramasını ve gün-saat belirsiz tarihsel haber replay'ini yeniden açma.
+6. Haber katalizörünü yalnız kesin published/collected timestamp taşıyan gerçek forward örneklerle doğrula.
+7. Forward Shadow V2 örneklemi büyüdükçe gerçek performansı izle; mevcut küçük örneklemde Champion onayı verme.
+8. Social, On-chain, Macro, Whale, Risk ve Decision gölge verilerini kendi olgunluk sınırlarıyla biriktir.
+9. İlk doğal 11:00 Report Generator çalışmasını doğrula ve yalnız yeterli kanıtı raporla.
 
 ---
 

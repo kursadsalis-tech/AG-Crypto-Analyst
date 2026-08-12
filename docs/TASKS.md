@@ -184,10 +184,20 @@
 - [x] Kalibre UP/DOWN/NEUTRAL olasılığı, medyan hedef ve %80 fiyat aralığı üret
 - [x] Brier/log-loss/ECE, normalize MAE, dağılım kaybı, interval ve ekonomik kapıları sabitle
 - [x] Forecast Contract ve laboratuvar deterministik self-testlerini geçir
-- [ ] Forecast Core laboratuvarını gerçek Mac veri tabanında bir kez çalıştır
-- [ ] Başarısız horizon için EXAM'ın açılmadığını ve canlı politikanın değişmediğini doğrula
+- [x] Forecast Core laboratuvarını gerçek Mac veri tabanında bir kez çalıştır
+- [x] Üç başarısız horizon için OBSERVED_DIAGNOSTIC'in açılmadığını ve canlı politikanın değişmediğini doğrula
+- [x] 1h/4h/24h REJECT sonrası fiyat-only pooled-ridge ailesini kapat
+- [x] Ham model aksiyonu/Risk vetosu ayrımını ve whole-week bootstrap tanısını düzelt
+- [x] Sekizden az action haftasında CI'ı N/A yap; NEUTRAL ECE ve CAL-dondurulmuş baseline ekle
+- [x] `DERIVATIVES_STATE_V2` tarihsel veri collector/readiness katmanını tamamla
+- [x] Funding, OI/positioning, premium/basis ve taker-flow feature sözleşmesini dondur
+- [x] 4h PRIMARY, 24h SECONDARY, 1h EXPLORATORY sabit V2 challenger'ı sentetik testlerden geçir
+- [x] Funding interval normalizasyonu, sınırlı context-gap ve checksum revalidation politikalarını kilitle
+- [x] V2 artifact JSON round-trip hash ve horizon örneklem fizibilitesi blocker'larını kapat
+- [x] Collector/V1/V2 self-test, compileall, 26-feature ve 400g/10-coin readiness testlerini geçir
+- [ ] Derivatives V2'yi gerçek Mac verisinde yalnız bir kez çalıştır
 - [ ] Geçen horizon varsa yalnız DEVELOPMENT_ONLY artifact olarak dondur; ürün alarmına bağlama
-- [ ] Tek challenger başarısızsa yeni fiyat/indikatör modeli aramayı durdur
+- [ ] V2 de başarısızsa eşik/lag tarama; aileyi kapat ve sonraki bağımsız veri kampanyasına geç
 
 - [x] Decision Engine politikasını 13 coin ve yaklaşık 400 günlük kapalı 1h mumla point-in-time replay et
 - [x] Girişleri sonraki mum açılışına taşı ve 1h/4h/24h sonuçlara 10 bps maliyet uygula

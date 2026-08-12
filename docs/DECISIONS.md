@@ -360,3 +360,88 @@ Bu nedenle yalnız bir kontrollü mimari değişiklik açılır:
 Ürün ekranındaki “güven %X”, bir kural/ajan puanı değil, ayrı kalibrasyon
 verisinde ölçülmüş maliyet-üstü hareket olasılığıdır. Tek nokta fiyat için
 kesinlik iddia edilmez; medyan hedef ve tahmin aralığı birlikte gösterilir.
+
+---
+
+## Karar 020 - Forecast Core V1 Reddi ve Sonuç-Odaklı V2 Geçişi
+
+`POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` gerçek Mac veri tabanında
+önceden sabit 1h, 4h ve 24h VALIDATION kapılarının tamamında reddedildi.
+OBSERVED_DIAGNOSTIC hiçbir ufuk için açılmadı ve canlı Decision Engine, alarm
+ve rapor politikası değiştirilmedi.
+
+Ölçülen ana sonuçlar:
+
+- 1h: Brier skill +%1,2; MAE skill -%0,5; risk-sonrası aksiyon 0.
+- 4h: Brier skill +%0,1; MAE skill -%0,7; risk-sonrası aksiyon 0.
+- 24h: Brier skill -%1,2; MAE skill -%2,5; class ECE %10,7; 17 aksiyonda
+  11 doğru. Pozitif directional utility yalnız zayıf bir tail hipotezidir;
+  küçük örneklem, %1,7 kapsam ve baseline başarısızlığı nedeniyle başarı
+  kanıtı değildir.
+
+Bu sonuç yalnız fiyat-only V1 ailesini kapatır; Forecast Contract'ı ve ürün
+hedefini kapatmaz. `BEKLE` veya “kanıt yok” güvenli ara davranıştır, nihai ürün
+başarısı değildir. Ölçüm dürüstlüğü değişmez bir kısıttır; ürün hedefi ise
+kalibre edilmiş, yararlı sıklıkta, baselineları ve maliyetleri geçen, coin/zaman/
+rejim boyunca tekrarlanan ve fresh forward dönemde ayakta kalan başarılı
+tahminler üretmektir.
+
+Bir sonraki ve tek kontrollü araştırma kampanyası `DERIVATIVES_STATE_V2` olarak
+dondurulur:
+
+- Yeni RSI/MACD/EMA veya threshold araması yapılmaz.
+- Exact point-in-time Binance USD-M funding, open-interest/positioning,
+  perpetual premium/basis ve taker akışı Forecast Core'a feature provider
+  olarak eklenir.
+- Derin ve güvenilir tarihçesi olmayan liquidation, order-book ve haber
+  katalizörleri bu kampanyaya sonradan eklenmez; forward olarak birikmeye devam
+  edebilir.
+- 4h PRIMARY, 24h SECONDARY, 1h EXPLORATORY endpoint'tir; her ufuk ayrı geçer
+  veya reddedilir.
+- Ham model aksiyonu ile Risk Manager sonrası uygulanabilir aksiyon ayrı
+  ölçülür. Risk yön üretmez, yalnız veto eder.
+- İlk V1 validator'ındaki tanısal kusurlar düzeltilir: forecast/action haftası
+  ayrımı, 8 haftadan az blokta N/A, event-weighted whole-week bootstrap,
+  CALIBRATION'da dondurulmuş constant-direction baseline ve NEUTRAL dahil üç
+  sınıf ECE.
+- Tarihsel geçiş yalnız DEVELOPMENT_ONLY'dır; ürün güven oranı için yeni sealed
+  future ve fresh forward doğrulama zorunludur.
+
+Çalışma orkestrasyonunun sorumluluğu asistandadır. Bağımsız ajanlar yalnız veri
+fizibilitesi, model uygulaması ve red-team denetimi gibi sınırları belli işleri
+paralelleştirmek için kullanılır; ajan görüşleri fiyat olasılığına çevrilmez ve
+kullanıcı ajan koordinasyonuyla uğraştırılmaz.
+
+---
+
+## Karar 021 - Derivatives State V2 Veri ve Seçim Sözleşmesi
+
+V2, Forecast Core mimarisini yeniden değiştiren yeni bir sistem değil; aynı
+Forecast Contract'a exact point-in-time türev piyasa özellikleri sağlayan tek
+sınırlı challenger'dır. Model ve veri sözleşmesi gerçek Mac sonucu görülmeden
+dondurulmuştur.
+
+- Deney 400 gün kullanır; collector warmup ve funding öncülüyle 430 gün toplar.
+- Kapsam performansa göre seçilmez. En az 10 hazır coin ile BTC ve ETH zorunludur.
+- Funding oranı gerçekleşen geçmiş event aralığıyla 8 saat eşdeğerine normalize
+  edilir. Eksik veya belirsiz event zinciri imputasyonla doldurulmaz.
+- Availability anlamı açık olmayan Vision taker ratio kullanılmaz. Taker akışı
+  yalnız kapanmış futures kline quote-volume alanlarından hesaplanır.
+- Tek tük source gap bütün deneyi gereksiz yere kapatmaz; eksik context atlanır.
+  Global ve coin gap oranı en fazla %2, haftalık gap oranı en fazla %10 olabilir.
+- 4h tek PRIMARY endpoint'tir. 24h SECONDARY ancak 4h VALIDATION ve observed
+  diagnostic'i çelişkisiz geçerse açılır. 1h yalnız EXPLORATORY'dir ve artifact
+  adaylığı yaratamaz.
+- 24h için minimum 750, 1h/4h için minimum 1.000 validation olayı gerekir.
+- CALIBRATION iki kronolojik parçaya ayrılır: CAL-A point/probability calibration,
+  CAL-B residual dağılım ve tahmin aralığı calibration.
+- JSON'a yazılan artifact hash yeniden okununca da doğrulanmalıdır. Data-quality
+  artifact'i desteklenen cohort, pencere, manifest digest ve hata nedenini taşır.
+- Tarihsel geçiş yalnız DEVELOPMENT_ONLY'dır. Canlı ürün, kullanıcıya güven
+  yüzdesi veya alarm için yeni sealed future ve gerçek forward kanıt gerektirir.
+
+Red-team bulguları gerçek koşudan önce kapatılmıştır: ulaşılmaz 24h sample gate,
+JSON key/hash farkı, unsupported cohort gap'leri, %98 readiness ile %100 runtime
+çelişkisi, funding interval semantiği, raw/Risk aksiyon ayrımı ve az blokta
+yanıltıcı confidence interval düzeltilmiştir. Sonuca göre eşik, model veya veri
+paketi değiştirilmeyecektir.
