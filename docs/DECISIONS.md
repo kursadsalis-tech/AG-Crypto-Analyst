@@ -343,6 +343,9 @@ Bu nedenle yalnız bir kontrollü mimari değişiklik açılır:
   Wilson yalnız yardımcı göstergedir.
 - Seçilmiş %70+ aksiyonlarda hit alt sınırı ve tahmin-gerçekleşme kalibrasyon
   farkı da haftalık blok bootstrap ile geçmek zorundadır.
+- İlerideki üretim consumer'ı yalnız hash biçimini değil, sealed artifact
+  içeriğini yeniden hashleyerek eşleşmeyi ve ayrı promotion attestation'ı
+  doğrulamak zorundadır.
 - SAT, Spot yatırımcı için satış/azaltma/kaçınma önerisidir; short portföy kârı
   veya otomatik işlem gibi raporlanmaz.
 - Forecast örneklemi Risk ile önceden seçilmez; Risk yalnız son eylemi veto eder.
