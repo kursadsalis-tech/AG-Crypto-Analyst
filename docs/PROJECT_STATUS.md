@@ -49,7 +49,7 @@ Tamamlanan ana ürün modülleri:
 - Decision Engine ✅ — SHADOW modunda; ürün kararları doğrulama kazanmadıkça BEKLE
 - Report Generator ✅ — fail-closed günlük yatırım komitesi brifingi
 
-**Ana ürün yol haritasındaki 10 modülün tamamı çalışan ilk sürümleriyle tamamlandı.** Sıradaki faz yeni mimari değil; doğal 11:00 çalışmasının gözlenmesi, veri birikimi, performans doğrulaması ve ürün güvenilirliğinin artırılmasıdır.
+**Ana ürün yol haritasındaki 10 modülün tamamı çalışan ilk sürümleriyle tamamlandı.** Sonraki fazın tek kontrollü mimari istisnası ölçülebilir Forecast Core araştırma katmanıdır; bunun dışında öncelik doğal 11:00 çalışmasının gözlenmesi, veri birikimi, performans doğrulaması ve ürün güvenilirliğidir.
 
 Forward Shadow V2, Decision Engine Shadow Validation, Social Sentiment, On-chain, Macro, Whale Tracker ve Risk Manager süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
@@ -372,6 +372,44 @@ politika değişmedi ve ürün SHADOW_ONLY kaldı.
 
 ---
 
+## 5J. PROBABILISTIC FORECAST CORE - KONTROLLÜ ARAŞTIRMA FAZI
+
+Ürün hedefi netleştirildi: sistem yalnız zayıf kanıtta BEKLE dememeli; kanıt
+kazandığında 1h, 4h ve 24h için medyan hedef fiyat, %80 tahmin aralığı,
+maliyet-üstü UP/DOWN/NEUTRAL olasılığı ve AL/SAT/BEKLE üretebilmelidir.
+
+Bu hedef için tek ve sınırlı mimari değişiklik uygulanmıştır:
+
+- `decision_engine.forecast_contract`: fiyat, ufuk, olasılık, maliyet,
+  referans fiyat, next-open giriş, risk vetosu ve model artifact alanlarını
+  fail-closed doğrulayan sabit sözleşme
+- `analysis.forecast_core_lab`: 13 coin, exact kapalı 1h OHLCV ve tek sabit
+  `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` challenger; mean-loss + L2
+  objective ve alpha=0,05 gerçek veri sonucu görülmeden donduruldu
+- 1h/4h/24h için ayrı FIT -> CALIBRATION -> VALIDATION -> yalnız geçerse
+  OBSERVED_DIAGNOSTIC akışı
+- No-change fiyat/aralık ve geçmiş base-rate olasılık benchmark'ları
+- Brier, log-loss, classwise/action ECE, normalize MAE, dağılım kaybı,
+  interval coverage, coin/rejim kapsamı ve haftalık kümeli bootstrap kapıları;
+  yüksek-güven hit ve calibration bias da haftalık bloklarla sınanır
+- Güven olayı ile hit-rate olayının aynı tanımı: next-open'dan horizon close'a
+  10 bps maliyet + 5 bps minimum hareket eşiğini aşma
+- SAT semantiği Spot yatırımcı için SELL/REDUCE/AVOID'dır; short pozisyon veya
+  hayalî portföy kârı olarak sayılmaz
+- Forecast tüm geçerli fiyat bağlamlarında ölçülür; Risk Manager yalnız
+  risk-adjusted eylemi BEKLE'ye veto eder
+
+Kod derleme, sözleşme, NaN/sonsuz değer, horizon süresi, fiyat aralığı,
+future-feature mutation, next-open ayrımı ve artifact hash testlerinden geçti.
+Gerçek Mac veri tabanı sonucu henüz alınmamıştır. Sonuç alınana kadar canlı
+Decision Engine, cycle, rapor ve alarm akışı değişmemiştir.
+
+Bu laboratuvarın aynı tarihsel dönemi daha önce görülmüştür. Bu nedenle tüm
+kapılar geçse bile sonuç yalnız DEVELOPMENT_ONLY'dır; kullanıcıya güven oranı
+ve ürün önerisi çıkarmak için yeni sealed future dönem ve gerçek forward
+kalibrasyon zorunludur. Tek challenger VALIDATION'da kalırsa yeni
+fiyat/indikatör araması açılmaz.
+
 ## 6. COIN KAPSAMI
 
 Takip listesi:
@@ -413,18 +451,18 @@ Yeni oturumda sıfırdan mimari konuşulmayacak.
 
 Öncelik sırası:
 
-1. Fiyat-teknik kural aramasını ve gün-saat belirsiz tarihsel haber replay'ini yeniden açma.
-2. Haber katalizörünü yalnız kesin published/collected timestamp taşıyan gerçek forward örneklerle doğrula.
-3. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
-4. Teknik veriyi yön tahmini yerine risk/açıklama bağlamıyla sınırla.
-5. Social Sentiment veri kapsamını ve takip listesi coinlerinde oluşan örneklemi paralel izle; düşük güvenli sonuçları alarm/işlem sinyali sayma.
-6. Günlük 11:00 yatırım komitesi raporunda yalnızca yeterli güvene sahip doğrulanmış sinyalleri kullan.
-7. Kritik alarm sisteminin yalnızca anlamlı olaylarda bildirim verdiğini izlemeye devam et.
-8. On-chain 24h geçmişini ve veri kalitesini paralel izle; WARMING_UP/NO_DATA metriklerini karara dahil etme.
-9. Macro, Whale ve Risk snapshot'larını kendi olgunluk sınırlarıyla biriktirmeye devam et.
-10. Decision Engine 1h gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
-11. İlk doğal 11:00 Report Generator çalışmasını gözle; günlük dosya ve SQLite snapshot'ın üretildiğini doğrula.
-12. Ana yol haritası tamamlandığı için yeni mimari açmadan ürün güvenilirliği, veri kalitesi ve ölçülmüş performans üzerinde ilerle.
+1. Forecast Core laboratuvarını gerçek Mac veri tabanında bir kez çalıştır; geçmeyen horizon için EXAM/OBSERVED_DIAGNOSTIC açılmadığını doğrula.
+2. Sonuç başarısızsa fiyat-only model aramasını kapat; başarılıysa yalnız DEVELOPMENT_ONLY artifact dondur ve fresh forward fazını ayrıca tasarla.
+3. Fiyat-teknik eşik aramasını ve gün-saat belirsiz tarihsel haber replay'ini yeniden açma.
+4. Haber katalizörünü yalnız kesin published/collected timestamp taşıyan gerçek forward örneklerle doğrula.
+5. Forward Shadow V2 örneklemi büyüdükçe NEWS BASE vs MULTIFACTOR gerçek performansını izlemeye devam et; mevcut küçük örneklemde Champion onayı verme.
+6. Teknik veriyi yön tahmini yerine risk/açıklama bağlamıyla sınırla.
+7. Social Sentiment veri kapsamını paralel izle; düşük güvenli sonucu alarm/işlem sinyali sayma.
+8. Günlük 11:00 raporunda yalnız yeterli kanıta sahip doğrulanmış sinyalleri kullan.
+9. Kritik alarm sisteminin yalnız anlamlı olaylarda bildirim verdiğini izle.
+10. On-chain, Macro, Whale ve Risk verilerini kendi olgunluk sınırlarıyla biriktir.
+11. Decision Engine gölge sonuçlarını çakışmasız biriktir; üretim onayı verme.
+12. İlk doğal 11:00 Report Generator çalışmasını doğrula.
 
 ---
 
