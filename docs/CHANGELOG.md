@@ -2,6 +2,26 @@
 
 ## Unreleased - Historical Decision Validation
 
+### Probabilistic Forecast Core Lab
+
+- Tek merkezi Forecast Contract; yeni runtime ajan ağı veya ajan oylaması yok
+- 1h/4h/24h medyan hedef, %80 fiyat aralığı ve UP/DOWN/NEUTRAL olasılık sözleşmesi
+- Son kapanış fiyat hedefi ile next-open işlem olasılığı referanslarının açık ayrımı
+- Tek sabit `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` challenger;
+  mean-loss + alpha*L2 objective, RSI/MACD/EMA grid araması yok
+- Kronolojik FIT/CALIBRATION/VALIDATION ve yalnız geçişte observed diagnostic
+- Exact quote-volume, label purge, horizon cooldown ve Risk-veto ayrımı
+- No-change/climatology benchmark; Brier/log-loss/ECE/MAE/pinball/interval kapıları
+- Confidence olayı ve hit-rate olayının aynı maliyet + minimum hareket tanımı
+- Haftalık kümeli bootstrap ile cross-coin/zaman bağımlılığı koruması
+- %70+ aksiyon hit alt sınırı ve kalibrasyon bias aralığı için ayrıca haftalık
+  blok bootstrap kapısı
+- SAT=spot SELL/REDUCE/AVOID; short veya portföy kârı değildir
+- Contract gerçek araştırma satırlarında çalışır; NaN/inf, horizon, fiyat aralığı,
+  feature-mutation, next-open ve artifact hash self-testleri başarılı
+- Canlı Decision Engine, rapor, cycle ve alarm politikası değiştirilmedi
+- Gerçek Mac sonucu bekleniyor; tarihsel geçiş olsa bile DEVELOPMENT_ONLY
+
 ### Leakage-Safe Decision Replay
 
 - 13 coin için yaklaşık 400 günlük kapalı 1h mumla point-in-time replay
