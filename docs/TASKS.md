@@ -178,6 +178,17 @@
 
 ## AKTİF GÖREVLER
 
+- [x] Tek merkezi Forecast Core veri sözleşmesini 1h/4h/24h için kilitle
+- [x] Sabit pooled-ridge dağılım challenger'ını ve no-change/climatology benchmark'larını kodla
+- [x] FIT/CALIBRATION/VALIDATION/EXAM purge, next-open maliyet ve exact quote-volume korumalarını ekle
+- [x] Kalibre UP/DOWN/NEUTRAL olasılığı, medyan hedef ve %80 fiyat aralığı üret
+- [x] Brier/log-loss/ECE, normalize MAE, dağılım kaybı, interval ve ekonomik kapıları sabitle
+- [x] Forecast Contract ve laboratuvar deterministik self-testlerini geçir
+- [ ] Forecast Core laboratuvarını gerçek Mac veri tabanında bir kez çalıştır
+- [ ] Başarısız horizon için EXAM'ın açılmadığını ve canlı politikanın değişmediğini doğrula
+- [ ] Geçen horizon varsa yalnız DEVELOPMENT_ONLY artifact olarak dondur; ürün alarmına bağlama
+- [ ] Tek challenger başarısızsa yeni fiyat/indikatör modeli aramayı durdur
+
 - [x] Decision Engine politikasını 13 coin ve yaklaşık 400 günlük kapalı 1h mumla point-in-time replay et
 - [x] Girişleri sonraki mum açılışına taşı ve 1h/4h/24h sonuçlara 10 bps maliyet uygula
 - [x] Replay'i kronolojik LEARN/VALIDATION/EXAM olarak ayır
@@ -228,6 +239,7 @@ Sıradaki faz:
 - gerçek forward örneklemlerin büyütülmesi,
 - günlük rapor ve kritik alarm sürekliliğinin izlenmesi,
 - ölçülmüş sonuçlara göre kontrollü iyileştirme,
+- tek Forecast Core laboratuvarının gerçek veri sonucunu alma,
 - gereksiz yeni mimari açmadan ürün güvenilirliğinin artırılması.
 
 Decision Engine SHADOW politikasından veya Forward üretim kapısından yalnız önceden kayıtlı kanıt koşulları sağlandığında ve ayrı bir üretim kararıyla çıkılabilir.
