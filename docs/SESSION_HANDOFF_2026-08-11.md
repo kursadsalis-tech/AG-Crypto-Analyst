@@ -1,5 +1,38 @@
 # AG Crypto Analyst — Session Handoff (2026-08-11, v1.2.0)
 
+## 2026-08-12 controlled Forecast Core addition
+
+- Product goal is calibrated, successful 1h/4h/24h price forecasting; merely
+  suppressing weak signals is not counted as product success.
+- One bounded architecture change was approved: a single Forecast Core, not a
+  runtime network or vote of agents.
+- Added `decision_engine/forecast_contract.py` and
+  `analysis/forecast_core_lab.py`.
+- The only pre-registered price-only challenger is
+  `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED` with a mean-loss + alpha*L2
+  objective frozen before any real run; no indicator/threshold grid is permitted.
+- Output semantics: decision-close median target and 80% interval; calibrated
+  next-open-to-horizon UP/DOWN/NEUTRAL probability beyond 10 bps cost plus 5
+  bps minimum move; AL/SAT/BEKLE; Risk veto remains final.
+- SAT means spot SELL/REDUCE/AVOID, never an assumed short portfolio profit.
+- FIT/CALIBRATION/VALIDATION are strictly purged. The final historical slice is
+  only `OBSERVED_DIAGNOSTIC` because its broad chronology was seen before.
+- Validation includes no-change/climatology baselines, class/action calibration,
+  normalized point/distribution errors, interval quality, coin/regime breadth,
+  constant-direction action baseline and weekly clustered bootstrap bounds,
+  including high-confidence claimed-hit and calibration bias.
+- Forecast quality is measured before Risk; Risk only changes the adjusted
+  action to BEKLE.
+- Compilation, contract and deterministic mutation/hash tests passed. A
+  synthetic end-to-end model/evaluation run also passed.
+- Live Decision Engine, report, alert and cycle integrations are unchanged.
+
+Immediate next action: run `python3 -m analysis.forecast_core_lab` once on the
+real Mac database. If validation rejects a horizon, its observed diagnostic is
+not opened. If all horizons reject, stop price-only model search. Any historical
+pass remains DEVELOPMENT_ONLY and requires a newly sealed future period plus
+fresh forward calibration before user-facing confidence.
+
 ## Current product state
 
 - Product version: v1.2.0.
