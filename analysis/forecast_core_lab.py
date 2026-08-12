@@ -180,11 +180,33 @@ def ensure_historical_coverage(con, fetch_start, end):
             result[symbol] = {"status": "FETCH_DISABLED", "fetched": 0}
             continue
         try:
-            fetched = historical_market_data.fetch_symbol_history(
-                symbol,
-                int(fetch_start.timestamp() * 1000),
-                int(end.timestamp() * 1000),
-            )
+            ranges = []
+            if coverage is None:
+                ranges.append((fetch_start, end))
+            else:
+                if coverage["start"] > fetch_start + timedelta(hours=2):
+                    ranges.append((fetch_start, coverage["start"] - timedelta(milliseconds=1)))
+                if coverage["end"] < end - timedelta(hours=2):
+                    ranges.append((coverage["end"] + timedelta(milliseconds=1), end))
+                if coverage["missing_quote_volume"]:
+                    missing = con.execute("""
+                        SELECT MIN(open_time), MAX(close_time)
+                        FROM market_klines
+                        WHERE symbol=? AND interval='1h'
+                          AND close_time>=? AND close_time<=?
+                          AND quote_volume IS NULL
+                    """, (symbol, iso(fetch_start), iso(end))).fetchone()
+                    if missing and missing[0] and missing[1]:
+                        ranges.append((parse_time(missing[0]), parse_time(missing[1])))
+            fetched = 0
+            for range_start, range_end in ranges:
+                if range_start >= range_end:
+                    continue
+                fetched += historical_market_data.fetch_symbol_history(
+                    symbol,
+                    int(range_start.timestamp() * 1000),
+                    int(range_end.timestamp() * 1000),
+                )
             con.commit()
             refreshed = stored_coverage(con, symbol, fetch_start, end)
             refreshed_ready = bool(
@@ -932,21 +954,6 @@ def evaluate(model, rows, z):
             directional_utility(row) - row["_constant_baseline_utility"]
         )
 
-    eligible = [row for row in forecasts if row["risk_eligible"]]
-    random_ranked = sorted(
-        eligible,
-        key=lambda row: hashlib.sha256(
-            f"{row['symbol']}|{iso(row['as_of'])}|{row['horizon']}|coverage".encode()
-        ).hexdigest(),
-    )[:len(actions)]
-    random_utilities = []
-    for row in random_ranked:
-        digest = hashlib.sha256(
-            f"{row['symbol']}|{iso(row['as_of'])}|direction".encode()
-        ).digest()
-        direction = "AL" if digest[0] % 2 == 0 else "SAT"
-        random_utilities.append(directional_utility(row, direction))
-
     up_ece = binary_ece((row["p_up"], row["actual_class"] == "UP")
                         for row in forecasts)
     down_ece = binary_ece((row["p_down"], row["actual_class"] == "DOWN")
@@ -1029,8 +1036,6 @@ def evaluate(model, rows, z):
         if double_cost_utilities else 0.0,
         "constant_baseline_direction": constant_direction,
         "constant_baseline_utility_pct": max(long_average, sell_average),
-        "random_same_coverage_utility_pct": statistics.fmean(random_utilities)
-        if random_utilities else 0.0,
         "action_utility_block_lb": weekly_block_bootstrap_lower(
             actions, lambda row: directional_utility(row), 1500 + model["horizon"]
         ),
@@ -1042,8 +1047,10 @@ def evaluate(model, rows, z):
         "coin_skill_evaluated": coin_skill_evaluated,
         "coin_skill_positive": coin_skill_positive,
         "supported_coin_slices": len(coin_slices["supported"]),
+        "supported_coin_slice_names": ",".join(coin_slices["supported"]),
         "unsupported_coin_slices": ",".join(coin_slices["unsupported"]),
         "supported_regime_slices": len(regime_slices["supported"]),
+        "supported_regime_slice_names": ",".join(regime_slices["supported"]),
         "unsupported_regime_slices": ",".join(regime_slices["unsupported"]),
         "coin_count": coin["unique"],
         "largest_coin_share": coin["largest"],
@@ -1388,7 +1395,8 @@ def render(result):
         "Chronology: "
         f"FIT<{iso(boundaries['fit_end'])} | "
         f"CAL<{iso(boundaries['learn_end'])} | "
-        f"VAL<{iso(boundaries['validation_end'])} | EXAM=remaining"
+        f"VAL<{iso(boundaries['validation_end'])} | "
+        "OBSERVED_DIAGNOSTIC=remaining_if_VAL_passes"
     )
     print(
         f"Contexts: raw={len(result['built']['rows'])} | "
@@ -1431,7 +1439,8 @@ def render(result):
     else:
         print(
             "The single pre-registered price-only challenger was rejected. "
-            "No threshold was tuned and EXAM was not opened for failed horizons."
+            "No threshold was tuned and OBSERVED_DIAGNOSTIC was not opened "
+            "for failed horizons."
         )
     print(
         "Live Decision Engine and alert policy were not changed. A new sealed "
@@ -1540,6 +1549,13 @@ def self_test():
     bad["risk_adjusted_action"] = "SAT"
     try:
         build_forecast_record(**bad)
+        raise AssertionError("risk layer reversed forecast direction")
+    except ValueError:
+        pass
+    bad = record.to_dict()
+    bad["risk_adjusted_action"] = "SAT"
+    try:
+        build_forecast_record(**bad)
         raise AssertionError("risk layer reversed the forecast direction")
     except ValueError:
         pass
@@ -1581,6 +1597,15 @@ def self_test():
     assert artifact_hash_valid(artifact)
     artifact["state"] = "MUTATED"
     assert not artifact_hash_valid(artifact)
+
+    block_rows = [
+        {"as_of": base + timedelta(weeks=index), "value": 0.70}
+        for index in range(10)
+    ]
+    block_interval = weekly_block_bootstrap_interval(
+        block_rows, lambda row: row["value"], seed=42, repetitions=200
+    )
+    assert 0.69 <= block_interval[0] <= block_interval[1] <= 0.71
 
     print("Forecast Core self-test: PASS")
 
