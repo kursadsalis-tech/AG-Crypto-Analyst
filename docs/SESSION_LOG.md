@@ -1,5 +1,42 @@
 # AG Crypto Analyst - Session Log
 
+## Oturum 2026-08-12 - Probabilistic Forecast Core Kararı
+
+Kullanıcı ürün hedefini yeniden netleştirdi: fail-closed BEKLE güvenlik
+başarısıdır ancak ürün başarısı değildir. Asıl hedef, yeterli kanıt oluştuğunda
+1h/4h/24h hedef fiyat aralığı ve gerçekten kalibre edilmiş güvenle AL/SAT/BEKLE
+üreten başarılı bir tahmin sistemidir.
+
+Üç uzman geliştirme ajanı mimari, model ve red-team validasyonunu bağımsız
+inceledi. Ortak karar yeni runtime ajan ağı kurmamak; mevcut ajanları veri/kalite
+üreticisi olarak bırakmak ve tek ölçülebilir Forecast Core oluşturmaktır.
+
+Uygulananlar:
+
+- Sabit Forecast Contract eklendi.
+- Tek fiyat-only `POOLED_RIDGE_DISTRIBUTION_V1_ALPHA_0_05_FIXED`
+  laboratuvarı eklendi.
+- Gerçek veri görülmeden ridge objective mean-loss + alpha*L2 olarak
+  netleştirildi; alpha=0,05 ve model sürümü V1_ALPHA_0_05_FIXED donduruldu.
+- 1h/4h/24h, FIT/CALIBRATION/VALIDATION/observed-diagnostic kronolojisi kuruldu.
+- Hedef fiyat decision-close, işlem olasılığı next-open referansına bağlandı.
+- Güven, 10 bps maliyet + 5 bps minimum hareketi aşma olasılığı olarak tanımlandı.
+- UP/DOWN/action kalibrasyonu, benchmark skill, interval ve ekonomik yön faydası
+  haftalık kümeli bootstrap ile kapılandı.
+- Yüksek-güven hit ve calibration bias için haftalık block interval zorunlu oldu.
+- Risk'in forecast örneklemini seçmesi engellendi; yalnız risk-adjusted eylemi
+  veto etmesi sağlandı.
+- Spot SAT'ın short kârı gibi portföye yazılması kaldırıldı; SELL/REDUCE/AVOID
+  olarak tanımlandı.
+- Sahte portföy simülasyonu kaldırıldı.
+- Gerçek araştırma satırları Forecast Contract doğrulamasına bağlandı.
+- NaN/inf, horizon, aralık, future mutation, next-open ve hash testleri geçti.
+
+Canlı Decision Engine, Report Generator, LaunchAgent cycle ve alarm kapısı
+değişmedi. Bir sonraki tek adım laboratuvarı gerçek Mac veri tabanında
+çalıştırmaktır. Başarısızlıkta fiyat-only arama kapanacak; geçişte bile sonuç
+yalnız DEVELOPMENT_ONLY olacak ve yeni sealed future + forward kanıt gerekecek.
+
 ## Oturum 2026-08-11
 
 ### Oturumun Ana Amacı
