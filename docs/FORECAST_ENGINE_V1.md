@@ -74,3 +74,21 @@ At settlement the engine writes a structured diagnosis: `TARGET_ALIGNED`,
 regime and abstention tags. The daily investment committee report v1.3 shows
 the latest 39 forecasts, latest settled result for each coin/horizon, target
 error, diagnosis counts and horizon-level forward performance.
+
+
+## Evidence-gated self-correction (v1.2)
+
+`analysis.forecast_learning_cycle` reviews settled forecasts without blacklisting
+coins or mutating weights after a single miss. It groups errors by horizon,
+regime, structured diagnosis and point-in-time context tags. A pattern is
+eligible for a bounded challenger hypothesis only after at least 30 events
+across three independent ISO weeks; the learning review remains
+`COLLECTING_EVIDENCE` until at least 100 settled forecasts exist.
+
+The review describes statistical association, never an invented causal claim.
+It may propose a direction-calibration, target-scale, interval-recalibration or
+context-feature challenger. It cannot replace the frozen champion. A real
+correction must be trained separately, evaluated against the unchanged champion
+on untouched forward evidence and promoted only if it demonstrably improves
+calibration, target error and cost-adjusted utility. News/social/agent evidence
+remains observed-only until such a challenger passes.
