@@ -520,3 +520,12 @@ Bağlayıcı karar:
   imputasyon yapılmaz; forward birikim sürdürülür.
 - Nihai hedef değişmedi: yararlı sıklıkta, kalibre, maliyet sonrası pozitif ve
   yeni forward dönemde tekrarlanan yüksek güvenli tahminler.
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+1. Exact-time catalyst research is permitted because the protected recent Binance announcement window passed the source-quality contract (1336/1336 exact timestamps). Timestamp-less legacy rows remain excluded.
+2. A known-time pinned announcement is handled as an ordering outlier through a 99.9% chronological-backbone gate; no timestamp tolerance or invented time is used.
+3. Price readiness is judged by matched independent events/coin-events, coverage, coin breadth and both catalyst directions. The redundant pre-outcome raw ticker-event threshold was aligned from 100 to 75 before any return was read.
+4. The only allowed historical hypothesis is frozen: STRICT_LISTING=AL and STRICT_DELISTING=SAT/REDUCE/AVOID, with 4h primary, 24h secondary, 1h exploratory and 10bps cost.
+5. Multi-coin announcements are clustered by article and cannot cross the chronological DEVELOPMENT/VALIDATION split. No model family, feature search or threshold grid is allowed.
+6. Even a historical pass remains SHADOW_ONLY and cannot produce a confidence claim or product alert without fresh forward probability calibration.
