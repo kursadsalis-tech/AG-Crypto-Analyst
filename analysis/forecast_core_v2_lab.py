@@ -35,9 +35,9 @@ from decision_engine.forecast_contract import (
 
 
 DB_NAME = v1.DB_NAME
-LAB_VERSION = "FORECAST_CORE_V2_LAB_V1_0_PRE_REGISTERED"
+LAB_VERSION = "FORECAST_CORE_V2_LAB_V1_1_PRE_REGISTERED"
 MODEL_FAMILY = "PURE_STDLIB_HISTOGRAM_GRADIENT_BOOSTED_ADDITIVE_STUMPS"
-MODEL_VERSION = "FUTURES_MICROSTRUCTURE_GBDT_V2_FIXED"
+MODEL_VERSION = "FUTURES_MICROSTRUCTURE_GBDT_V2_1_FIXED"
 HORIZONS = (4, 24, 1)
 HORIZON_ROLES = {4: "PRIMARY", 24: "SECONDARY", 1: "EXPLORATORY"}
 SYMBOLS = v1.SYMBOLS
@@ -79,9 +79,6 @@ DERIVATIVE_FEATURE_NAMES = (
     "taker_imbalance_1h",
     "taker_imbalance_4h",
     "taker_imbalance_24h",
-    "log_top_account_ratio",
-    "log_top_position_ratio",
-    "log_global_account_ratio",
     "btc_futures_basis_pct",
     "btc_premium_close_pct",
     "btc_funding_rate_8h_pct",
@@ -512,9 +509,6 @@ def _joined_derivative_coverage(con, symbol, start=None, end=None):
         "m.taker_buy_quote_volume IS NOT NULL",
         "p.open_interest_contracts IS NOT NULL",
         "p.open_interest_value IS NOT NULL",
-        "p.top_account_ratio IS NOT NULL",
-        "p.top_position_ratio IS NOT NULL",
-        "p.global_account_ratio IS NOT NULL",
         # The final 5-minute snapshot must have existed before the 1h close.
         "p.source_max_time<p.hour_close_time",
     ]
@@ -709,23 +703,25 @@ def load_derivatives(con, start, end, symbols):
         for source in positioning_rows:
             hour_close = parse_time(source[0])
             source_max = parse_time(source[1])
-            # Sparse Vision ratio cells are explicit missing contexts. Skip
-            # only that hour; never coerce NULL into a numeric model feature.
-            if any(value is None for value in source[2:]):
+            # OI is the required positioning input. Binance Vision account
+            # ratios are structurally sparse on some otherwise complete days;
+            # V2.1 excludes those optional ratios instead of discarding valid
+            # OI/basis/funding/taker-flow contexts.
+            if any(value is None for value in source[2:4]):
                 continue
-            values = [float(value) for value in source[2:]]
-            if source_max >= hour_close or any(not math.isfinite(value) for value in values):
+            oi_contracts = float(source[2])
+            oi_value = float(source[3])
+            if source_max >= hour_close or any(
+                not math.isfinite(value) for value in (oi_contracts, oi_value)
+            ):
                 continue
-            if values[1] <= 0.0 or any(value <= 0.0 for value in values[2:]):
+            if oi_value <= 0.0:
                 continue
             positioning.append({
                 "hour_close_time": hour_close,
                 "source_max_time": source_max,
-                "open_interest_contracts": values[0],
-                "open_interest_value": values[1],
-                "top_account_ratio": values[2],
-                "top_position_ratio": values[3],
-                "global_account_ratio": values[4],
+                "open_interest_contracts": oi_contracts,
+                "open_interest_value": oi_value,
             })
 
         funding_rows = con.execute("""
@@ -840,13 +836,6 @@ def _derivative_state(symbol, decision_time, spot_close, derivatives):
     (
         funding_rate, funding_z, hours_since_funding, funding_interval
     ) = _funding_state(item, decision_time)
-    ratios = (
-        current_position["top_account_ratio"],
-        current_position["top_position_ratio"],
-        current_position["global_account_ratio"],
-    )
-    if any(value <= 0.0 for value in ratios):
-        raise ValueError("invalid positioning ratio")
     return {
         "basis_pct": _pct(market[market_index]["close"], spot_close),
         "premium_close_pct": market[market_index]["premium_close"] * 100.0,
@@ -861,9 +850,6 @@ def _derivative_state(symbol, decision_time, spot_close, derivatives):
         "taker_imbalance_1h": _taker_imbalance(market, market_index, 1),
         "taker_imbalance_4h": _taker_imbalance(market, market_index, 4),
         "taker_imbalance_24h": _taker_imbalance(market, market_index, 24),
-        "log_top_account_ratio": math.log(ratios[0]),
-        "log_top_position_ratio": math.log(ratios[1]),
-        "log_global_account_ratio": math.log(ratios[2]),
     }
 
 
@@ -877,8 +863,6 @@ def derivative_features(symbol, decision_time, spot_close, btc_spot_close, deriv
         own["oi_change_1h_pct"], own["oi_change_4h_pct"], own["oi_change_24h_pct"],
         own["log_oi_value_to_futures_volume_24h"], own["taker_imbalance_1h"],
         own["taker_imbalance_4h"], own["taker_imbalance_24h"],
-        own["log_top_account_ratio"], own["log_top_position_ratio"],
-        own["log_global_account_ratio"],
         btc["basis_pct"], btc["premium_close_pct"], btc["funding_rate_8h_pct"],
         btc["funding_interval_hours"],
         btc["oi_change_1h_pct"], btc["oi_change_4h_pct"], btc["oi_change_24h_pct"],
@@ -1473,7 +1457,7 @@ def model_artifact(models, boundaries, passed_horizons, state, data_provenance=N
     return seal_artifact(payload)
 
 
-def data_blocked_result(start, end, boundaries, readiness):
+def data_blocked_result(start, end, boundaries, readiness, built=None):
     provenance = {
         "analysis_start": iso(start), "analysis_end": iso(end),
         "supported_symbols": readiness.get("supported_symbols", []),
@@ -1497,15 +1481,16 @@ def data_blocked_result(start, end, boundaries, readiness):
         "status": "BLOCK",
         "failed_gates": ",".join(readiness["failures"]),
     }])
+    blocked_built = built or {
+        "rows": [], "source_gaps": 0, "attempted_contexts": 0,
+        "source_gap_rate": 0.0, "max_symbol_gap_rate": 0.0,
+        "max_weekly_gap_rate": 0.0, "symbol_gap_rates": {},
+        "risk_blocks": 0,
+    }
     return {
         "start": start, "end": end, "boundaries": boundaries,
         "readiness": readiness,
-        "built": {
-            "rows": [], "source_gaps": 0, "attempted_contexts": 0,
-            "source_gap_rate": 0.0, "max_symbol_gap_rate": 0.0,
-            "max_weekly_gap_rate": 0.0, "symbol_gap_rates": {},
-            "risk_blocks": 0,
-        },
+        "built": blocked_built,
         "segmented_rows": 0, "selected_rows": 0, "selection": [],
         "passed_horizons": [], "conclusion": "DATA_QUALITY_BLOCKED",
         "artifact_hash": artifact["artifact_hash"],
@@ -1574,7 +1559,7 @@ def run_lab(now=None):
             **readiness, "ready": False,
             "failures": readiness["failures"] + gap_failures,
         }
-        return data_blocked_result(start, end, boundaries, readiness)
+        return data_blocked_result(start, end, boundaries, readiness, built)
 
     segmented = v1.assign_segments(built["rows"], boundaries)
     selected = v1.non_overlapping(segmented)
@@ -1725,7 +1710,7 @@ def percent(value):
 
 
 def render(result):
-    print("AG Crypto Analyst - Futures/Microstructure Forecast Core V2 Lab v1.0.0")
+    print("AG Crypto Analyst - Futures/Microstructure Forecast Core V2 Lab v1.1.0")
     print(
         f"Contract: {CONTRACT_VERSION} | model={MODEL_VERSION} | "
         "implementation=PURE_STDLIB_HISTOGRAM_ADDITIVE_STUMPS"
@@ -1929,8 +1914,8 @@ def self_test():
         ("BTCUSDT",),
     )
     assert loaded["BTCUSDT"]["funding"][0]["mark_price"] is None
-    assert len(loaded["BTCUSDT"]["positioning"]) == 1
-    assert sparse_closed not in loaded["BTCUSDT"]["positioning_by_close"]
+    assert len(loaded["BTCUSDT"]["positioning"]) == 2
+    assert sparse_closed in loaded["BTCUSDT"]["positioning_by_close"]
     blocked = derivative_readiness(con, start + timedelta(hours=2))
     assert not blocked["ready"] and blocked["supported_symbols"] == []
     con.close()
@@ -1952,4 +1937,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
