@@ -67,3 +67,18 @@ git pull origin main && python3 -m data.options_implied_feasibility
 Send the complete terminal output. The next decision will be made from the
 reported BTC/ETH active contracts, expiries, two-sided quotes and liquid
 strikes near 24 hours.
+
+
+## Unified Forecast Engine — first live runtime
+
+The earlier options-provider search is closed as a delivery priority. Commit
+`e7cc0cf` adds the missing product-facing forecast runtime. Its first Mac run
+sealed artifact `56c040aaaca4...` and persisted 39/39 exact forward forecasts
+for 13 symbols across 1h, 4h and 24h with no missing row.
+
+All first-bundle opinions are BEKLE because no direction reached the frozen 70%
+action threshold. This is not presented as model success. It is the live
+baseline from which target error, interval coverage, Brier, direction hit and
+action utility will now be settled automatically. The next work item is to
+observe the first settlements and connect this forecast table to the daily
+investment committee report; no new provider or model lab is opened.
