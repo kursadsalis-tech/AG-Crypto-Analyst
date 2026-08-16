@@ -501,3 +501,19 @@ Tamamlandı.
 # Sonraki Faz
 
 Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren geliştirmeler yalnız ölçülmüş ürün ihtiyacıyla açılacaktır; yakın öncelik operasyonel doğrulama, veri birikimi ve güvenilirliktir.
+
+
+---
+
+## Forecast Core V2.1 Historical Result — 2026-08-16
+
+- Binance USD-M türev arşivi 12/13 coin için hazırlandı; 400 günlük ortak pencere kuruldu.
+- Seyrek ve modelde zorunlu olmayan hesap-oranı alanlarının geçerli OI bağlamlarını silmesi düzeltildi.
+- Eksik tek OI saatinin 24 saatlik pencereyi topluca geçersiz saymasına yol açan positional-index hatası kaldırıldı; yalnız exact 1h/4h/24h anchor eksikleri atlanıyor.
+- Son veri kalitesi: 52 bağlam atlandı, en kötü hafta %2.4; önceden kayıtlı %2 global ve %10 haftalık sınırlar geçildi.
+- Dondurulmuş Futures/Microstructure Forecast Core V2.1 gerçek VALIDATION'da reddedildi:
+  - 4h PRIMARY: n=5,748, Brier skill +%0.2, MAE skill %0.0, aksiyon 0.
+  - 24h SECONDARY: n=948, Brier skill +%3.8, MAE skill -%2.8, class ECE %11.2, aksiyon 0.
+  - 1h EXPLORATORY: n=23,028, Brier skill -%1.0, MAE skill -%0.2, aksiyon 0.
+- Eşik düşürülmedi; OBSERVED_DIAGNOSTIC açılmadı; canlı Decision Engine, Risk Manager ve alarm politikası değiştirilmedi.
+- Additive-stump V2.1 ailesi kapatıldı. Sonraki tek model araştırması aynı Forecast Contract ve veri katmanı üzerinde interaction-capable Forecast Core V3 ile sınırlandı.
