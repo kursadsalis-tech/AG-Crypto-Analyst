@@ -357,3 +357,23 @@ The assistant manages project direction and performs every inspection or edit it
   published_at/available_at provenance; never revive day-only historical news.
 - If historical catalyst coverage is inadequate, collect forward rather than
   fabricate timestamps or claim historical success.
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+- Forecast Core V1 price-only, V2.1 futures/microstructure and V3 interaction challenger were rejected. Do not reopen price/derivatives model or threshold search on the same dataset.
+- First-party Binance listing/delisting source audit v1.4 passed: raw=2423, valid exact-time=2281, recent 1095d + 30d safety=1336/1336 exact, strict directional=253, one known-time pinned ordering outlier, chronological backbone=99.956%.
+- The 142 timestamp-less legacy announcements are outside the protected recent research window and remain excluded; no timestamp was fabricated.
+- Targeted checksum-verified Binance Vision spot collection completed for the recent event window: 1323 archives, READY=1079, NOT_LISTED=244, ERROR=0, rows=25005.
+- Initial readiness output: 90 strict events, 88 with ticker, 189 coin-events, 171 matched 24h coin-events, 81 unique events, 169 coins, 90.5% match; listing=68 and delisting=103.
+- The sole readiness failure was an internally inconsistent raw-event gate (100 raw ticker events while the more meaningful matched-independent-event gate was 75). Before reading returns, collector v1.1 aligned it to 75.
+- Added frozen event study `analysis.exact_time_catalyst_event_study`: STRICT_LISTING=AL; STRICT_DELISTING=SAT/REDUCE/AVOID; primary=4h, secondary=24h, exploratory=1h; 10bps cost; article-clustered chronological 70/30 DEVELOPMENT/VALIDATION; no model or threshold grid.
+- Event-study py_compile, module self-test and synthetic causal-entry build passed. Real catalyst returns have NOT yet been read.
+- Product state remains SHADOW_ONLY. Existing Decision Engine, Risk Manager and alerts are unchanged.
+
+Next user command (run only after returning):
+
+```bash
+git pull origin main && python3 -m data.exact_time_catalyst_market_data --workers 2 && python3 -m analysis.exact_time_catalyst_event_study
+```
+
+Ask for the complete terminal output. Interpret the fixed 4h validation first. A historical pass is only a candidate and must enter fresh forward probability calibration; a rejection ends this bounded catalyst hypothesis without another threshold/model search.
