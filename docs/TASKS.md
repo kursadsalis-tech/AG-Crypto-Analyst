@@ -293,3 +293,13 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [ ] Gün/saat uydurulan veya yalnız arşiv günü taşıyan olayları kesin olarak dışla
 - [ ] Yeterli geçmiş varsa tek event-conditioned Forecast Core adayını sonuç görülmeden dondur
 - [ ] Yeterli geçmiş yoksa aynı collector sözleşmesiyle forward exact-time veri biriktir
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+- [x] Audit first-party Binance exact-time listing/delisting history without reading price outcomes.
+- [x] Isolate timestamp-less legacy announcements and prove 100% exact-time coverage in the protected recent window.
+- [x] Collect checksum-verified targeted Binance Vision spot archives around strict catalyst events.
+- [x] Implement and self-test the frozen direct catalyst event study (listing=AL, delisting=SAT/REDUCE/AVOID).
+- [ ] Run the real fixed catalyst study and inspect the primary 4h validation output.
+- [ ] If and only if 4h validation passes, freeze the candidate and start fresh forward probability calibration.
+- [ ] If 4h validation rejects, stop this bounded catalyst hypothesis; do not open another threshold/model grid on the same data.
