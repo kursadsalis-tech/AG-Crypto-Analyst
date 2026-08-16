@@ -18,6 +18,7 @@ from pathlib import Path
 VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1"
 BASE_URL = "https://www.binance.com"
 LIST_URL = BASE_URL + "/bapi/apex/v1/public/apex/cms/article/list/query"
+DETAIL_URL = BASE_URL + "/bapi/composite/v1/public/cms/article/detail/query"
 CATEGORIES = {
     48: "NEW_CRYPTOCURRENCY_LISTING",
     161: "DELISTING",
@@ -110,14 +111,19 @@ def extract_tickers(title):
     return sorted(value for value in values if value not in TICKER_STOPWORDS)
 
 
-def normalize_article(article, catalog_id, category):
+def normalize_article(
+    article, catalog_id, category, release_value=None,
+    timestamp_source="LIST_RELEASE_DATE",
+):
     code = str(article.get("code") or "").strip()
     title = str(article.get("title") or "").strip()
     if not re.fullmatch(r"[0-9a-fA-F]{16,64}", code):
         raise ValueError("invalid article code")
     if len(title) < 8:
         raise ValueError("invalid article title")
-    released = parse_release_date(article.get("releaseDate"))
+    released = parse_release_date(
+        article.get("releaseDate") if release_value is None else release_value
+    )
     tickers = extract_tickers(title)
     return {
         "source": "BINANCE_OFFICIAL_ANNOUNCEMENT",
@@ -127,6 +133,7 @@ def normalize_article(article, catalog_id, category):
         "title": title,
         "release_time": released.isoformat(),
         "available_at": released.isoformat(),
+        "timestamp_source": timestamp_source,
         "event_type": classify(title, category),
         "tickers": ",".join(tickers),
         "ticker_count": len(tickers),
@@ -166,6 +173,42 @@ def fetch_category(session, catalog_id, category):
     return output
 
 
+def detail_release_date(session, article_code):
+    response = session.get(
+        DETAIL_URL,
+        params={"articleCode": article_code},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("code") not in {None, "000000"}:
+        raise ValueError(f"Binance detail response code={payload.get('code')}")
+
+    def candidates(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key.lower() in {
+                    "releasedate", "publishdate", "publishtime", "publishedat"
+                } and child is not None and child != "":
+                    yield key, child
+                yield from candidates(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from candidates(child)
+
+    valid = []
+    for key, value in candidates(payload.get("data")):
+        try:
+            valid.append((parse_release_date(value), key, value))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    if not valid:
+        raise ValueError("detail metadata has no valid release/publish timestamp")
+    valid.sort(key=lambda item: item[0])
+    released, key, raw_value = valid[-1]
+    return raw_value, f"DETAIL_{key.upper()}", released
+
+
 def audit(rows, raw_count, invalid):
     times = sorted(datetime.fromisoformat(row["release_time"]) for row in rows)
     strict = [
@@ -182,6 +225,9 @@ def audit(rows, raw_count, invalid):
         "raw_articles": raw_count,
         "valid_articles": len(rows),
         "invalid_articles": len(invalid),
+        "detail_recovered_articles": sum(
+            row["timestamp_source"].startswith("DETAIL_") for row in rows
+        ),
         "exact_timestamp_ratio": len(rows) / raw_count if raw_count else 0.0,
         "unique_story_ratio": len(set(codes)) / len(codes) if codes else 0.0,
         "usable_span_days": span_days,
@@ -227,12 +273,24 @@ def run():
     for article, catalog_id, category in raw:
         try:
             rows.append(normalize_article(article, catalog_id, category))
-        except Exception as exc:
-            invalid.append({
-                "catalog_id": catalog_id,
-                "code": article.get("code"),
-                "error": str(exc),
-            })
+        except Exception as list_exc:
+            try:
+                release_value, timestamp_source, _ = detail_release_date(
+                    session, str(article.get("code") or "").strip()
+                )
+                rows.append(normalize_article(
+                    article, catalog_id, category,
+                    release_value=release_value,
+                    timestamp_source=timestamp_source,
+                ))
+            except Exception as detail_exc:
+                invalid.append({
+                    "catalog_id": catalog_id,
+                    "code": article.get("code"),
+                    "title": article.get("title"),
+                    "list_error": str(list_exc),
+                    "detail_error": str(detail_exc),
+                })
     rows.sort(key=lambda row: (row["release_time"], row["article_code"]))
     result = audit(rows, len(raw), invalid)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -257,6 +315,7 @@ def render(result):
     print(
         f"Strict directional={result['strict_directional_articles']} | "
         f"with_ticker={result['articles_with_ticker']} | "
+        f"detail_recovered={result['detail_recovered_articles']} | "
         f"categories={result['category_counts']}"
     )
     failed = [name for name, value in result["gates"].items() if not value]
@@ -307,6 +366,26 @@ def self_test():
 
     fetched = fetch_category(FakeSession(), 48, CATEGORIES[48])
     assert len(fetched) == 1
+
+    class FakeDetailResponse(FakeResponse):
+        def json(self):
+            return {
+                "code": "000000",
+                "data": {"article": {"releaseDate": 1_735_689_600_000}},
+            }
+
+    class FakeDetailSession:
+        def get(self, url, params, timeout):
+            assert url == DETAIL_URL
+            assert params["articleCode"] == "a" * 32
+            return FakeDetailResponse()
+
+    detail_value, detail_source, detail_time = detail_release_date(
+        FakeDetailSession(), "a" * 32
+    )
+    assert detail_value == 1_735_689_600_000
+    assert detail_source == "DETAIL_RELEASEDATE"
+    assert detail_time.isoformat().startswith("2025-01-01")
     print("Exact-time catalyst feasibility self-test: PASS")
 
 
