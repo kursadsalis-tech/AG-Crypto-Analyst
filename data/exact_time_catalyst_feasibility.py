@@ -15,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1"
+VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_1"
 BASE_URL = "https://www.binance.com"
 LIST_URL = BASE_URL + "/bapi/apex/v1/public/apex/cms/article/list/query"
 DETAIL_URL = BASE_URL + "/bapi/composite/v1/public/cms/article/detail/query"
@@ -304,7 +304,7 @@ def run():
 
 
 def render(result):
-    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.0.1")
+    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.1.0")
     print(f"Source: Binance official announcement metadata | status={result['status']}")
     print(
         f"Raw={result['raw_articles']} | valid={result['valid_articles']} | "
