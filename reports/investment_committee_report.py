@@ -217,10 +217,19 @@ def latest_settled_forecasts(con):
     if not table_exists(con, "forecast_engine_predictions"):
         return {}
     con.row_factory = sqlite3.Row
-    rows = con.execute("""
+    columns = {
+        row[1] for row in con.execute(
+            "PRAGMA table_info(forecast_engine_predictions)"
+        ).fetchall()
+    }
+    diagnosis_select = (
+        "p.diagnosis_code" if "diagnosis_code" in columns
+        else "NULL AS diagnosis_code"
+    )
+    rows = con.execute(f"""
         SELECT p.symbol, p.horizon_hours, p.exit_price, p.actual_return_pct,
                p.absolute_error_pct, p.interval_hit, p.direction_hit,
-               p.diagnosis_code, p.due_time
+               {diagnosis_select}, p.due_time
         FROM forecast_engine_predictions p
         JOIN (
             SELECT symbol, horizon_hours, MAX(forecast_id) AS forecast_id
