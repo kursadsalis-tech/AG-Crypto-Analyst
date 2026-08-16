@@ -98,3 +98,16 @@ investment committee report; no new provider or model lab is opened.
   `reports/daily_crypto_profit_agent_report.md`; Telegram summary when configured.
 - Next verification: pull main, run the agent self-test once, then let the next
   natural hourly job create/fill the first paper positions.
+
+## Oturum Sonu Yönetişim Notu — Crypto Profit Agent
+
+Kullanıcının kesin talebi:
+
+- AG Crypto Analyst'ın nihai patronu/orkestratörü ana asistandır; yetkiler Crypto Profit Agent ile paylaşılmayacaktır.
+- Ajan öğrenen, hesap veren ve yeterli kanıtla tartışabilen bir yardımcıdır; kendi kendine üretime geçemez veya gerçek emir gönderemez.
+- Ajanın eğitimi, denetimi ve performansından ana orkestratör sorumludur.
+- Paper simülasyon gerçek borsa işlemlerine çok yakın olmalıdır: spread, maker/taker ücretleri, slippage, latency, exchange filtreleri, kısmi/reddedilen dolumlar, likidite, funding/borrow, veri ve bağlantı hataları dahil edilmelidir.
+- Bilinmeyen koşullar iyimser doldurulmaz; fail-closed veya açık tahmin etiketi kullanılır.
+- Gerçek paraya geçiş; aynı execution contract, dry-run/reconciliation, kanıt kapıları, kullanıcının açık onayı ve ayrı orkestratör terfi kararı olmadan yapılamaz.
+
+Sonraki oturum başlangıç cümlesi: “Dostum, AG Crypto Analyst’a kaldığımız yerden devam edelim.”
