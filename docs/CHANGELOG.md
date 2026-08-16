@@ -539,3 +539,11 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - V3 hem piyasa/V1 baselinelarını hem frozen V2.1'i geçemedi.
 - Önceden kayıtlı stop kuralı uygulandı: aynı fiyat+türev veri üzerinde yeni model, threshold veya V4 araması açılmayacak.
 - Sonraki araştırma yalnız exact-time catalyst verisi veya yeni forward kanıtla aynı Forecast Contract'a feature/event provider ekleyebilir.
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+- Added `data.exact_time_catalyst_feasibility` v1.4 with recent-window exact-time coverage, conservative safety buffer and pinned-announcement chronological-backbone handling.
+- Added `data.exact_time_catalyst_market_data` v1.1 for targeted checksum-verified Binance Vision spot archives and causal 1h/4h/24h price-readiness checks.
+- Collected 25,005 hourly rows across 1,079 ready archives with zero archive errors in the first real run.
+- Added `analysis.exact_time_catalyst_event_study` v1.0 with fixed listing/delisting actions, article-clustered chronology, weekly cluster bootstrap and fail-closed validation gates.
+- Real event-study returns remain unopened at this checkpoint.
