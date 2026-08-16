@@ -478,3 +478,21 @@ Karar:
   gerektirir.
 - Tarihsel geçiş olsa bile ürün SHADOW_ONLY kalır ve fresh forward doğrulama
   olmadan kullanıcıya güven yüzdesiyle AL/SAT alarmı verilmez.
+
+
+### Karar 022A - V3 Ön Kayıtlı Model Sözleşmesi
+
+V3 yalnız 4h PRIMARY endpoint için tek modeldir:
+scikit-learn HistGradientBoostingClassifier/Regressor, max_depth=4,
+max_leaf_nodes=15, max_iter=180, learning_rate=0.05, min_samples_leaf=80,
+L2=1.0, early_stopping=False ve random_state=20260816.
+
+- FIT 2025-07-12..2026-01-08; CAL 2026-01-08..2026-03-09; development gate
+  2026-03-09..2026-05-28'dir.
+- Sealed 2026-05-28..2026-08-16 verisi development modülünce sorgulanmaz.
+- CAL-A point/probability, CAL-B residual/interval kalibrasyonu için korunur.
+- %70 aksiyon eşiği ve V2 validation kapıları değişmez.
+- V3 hem piyasa/V1 baselinelarını hem frozen V2.1 Brier, log-loss, MAE ve
+  distribution loss sonuçlarını geçmelidir.
+- Development gate başarısızsa sealed evaluator açılmaz. Geçerse model pickle
+  SHA-256 ile mühürlenir; sealed evaluator ayrı commit ve tek koşu olur.
