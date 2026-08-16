@@ -15,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_2"
+VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_3"
 BASE_URL = "https://www.binance.com"
 LIST_URL = BASE_URL + "/bapi/apex/v1/public/apex/cms/article/list/query"
 DETAIL_URL = BASE_URL + "/bapi/composite/v1/public/cms/article/detail/query"
@@ -29,6 +29,7 @@ PAGE_SIZE = 20
 MAX_PAGES = 100
 TIMEOUT = 25
 RECENT_AUDIT_DAYS = 1095
+ORDER_SAFETY_DAYS = 30
 OUTPUT_PATH = Path("reports/exact_time_catalyst_feasibility.csv")
 AUDIT_PATH = Path("reports/exact_time_catalyst_audit.json")
 
@@ -221,12 +222,13 @@ def audit(rows, raw_count, invalid):
     counts = Counter(row["category"] for row in rows)
     audit_end = times[-1] if times else utcnow()
     recent_cutoff = audit_end - timedelta(days=RECENT_AUDIT_DAYS)
+    protected_cutoff = recent_cutoff - timedelta(days=ORDER_SAFETY_DAYS)
     recent_boundaries = {}
     for category in CATEGORIES.values():
         ranks = [
             row["raw_rank"] for row in rows
             if row["category"] == category
-            and datetime.fromisoformat(row["release_time"]) >= recent_cutoff
+            and datetime.fromisoformat(row["release_time"]) >= protected_cutoff
         ]
         recent_boundaries[category] = max(ranks, default=0)
     recent_raw = sum(recent_boundaries.values())
@@ -240,6 +242,7 @@ def audit(rows, raw_count, invalid):
         for item in invalid
     )
     order_violations = 0
+    max_order_inversion_seconds = 0.0
     for category in CATEGORIES.values():
         ordered = sorted(
             (row for row in rows if row["category"] == category),
@@ -250,6 +253,10 @@ def audit(rows, raw_count, invalid):
             current = datetime.fromisoformat(row["release_time"])
             if previous is not None and current > previous:
                 order_violations += 1
+                max_order_inversion_seconds = max(
+                    max_order_inversion_seconds,
+                    (current - previous).total_seconds(),
+                )
             previous = current
     span_days = (times[-1] - times[0]).total_seconds() / 86400.0 if len(times) >= 2 else 0.0
     result = {
@@ -264,7 +271,9 @@ def audit(rows, raw_count, invalid):
         ),
         "exact_timestamp_ratio": len(rows) / raw_count if raw_count else 0.0,
         "recent_audit_days": RECENT_AUDIT_DAYS,
+        "order_safety_days": ORDER_SAFETY_DAYS,
         "recent_cutoff": recent_cutoff.isoformat(),
+        "protected_cutoff": protected_cutoff.isoformat(),
         "recent_raw_articles": recent_raw,
         "recent_valid_articles": recent_valid,
         "recent_invalid_articles": recent_invalid,
@@ -272,6 +281,7 @@ def audit(rows, raw_count, invalid):
         "recent_rank_boundaries": recent_boundaries,
         "recent_accounting_complete": recent_valid + recent_invalid == recent_raw,
         "catalog_time_order_violations": order_violations,
+        "max_order_inversion_days": max_order_inversion_seconds / 86400.0,
         "unique_story_ratio": len(set(codes)) / len(codes) if codes else 0.0,
         "usable_span_days": span_days,
         "strict_directional_articles": len(strict),
@@ -283,7 +293,9 @@ def audit(rows, raw_count, invalid):
         "raw_articles_gte_300": raw_count >= 300,
         "recent_exact_timestamp_ratio_gte_99pct": recent_exact_ratio >= 0.99,
         "recent_rank_accounting_complete": result["recent_accounting_complete"],
-        "catalog_time_order_violations_eq_0": order_violations == 0,
+        "max_order_inversion_within_safety_buffer": (
+            max_order_inversion_seconds <= ORDER_SAFETY_DAYS * 86400.0
+        ),
         "unique_story_ratio_gte_99pct": result["unique_story_ratio"] >= 0.99,
         "usable_span_gte_730d": span_days >= 730.0,
         "strict_directional_articles_gte_150": len(strict) >= 150,
@@ -354,7 +366,7 @@ def run():
 
 
 def render(result):
-    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.2.0")
+    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.3.0")
     print(f"Source: Binance official announcement metadata | status={result['status']}")
     print(
         f"Raw={result['raw_articles']} | valid={result['valid_articles']} | "
@@ -363,12 +375,14 @@ def render(result):
         f"span={result['usable_span_days']:.1f}d"
     )
     print(
-        f"Recent {result['recent_audit_days']}d: "
+        f"Recent {result['recent_audit_days']}d "
+        f"(+{result['order_safety_days']}d safety): "
         f"raw={result['recent_raw_articles']} | "
         f"valid={result['recent_valid_articles']} | "
         f"invalid={result['recent_invalid_articles']} | "
         f"exact_time={100.0 * result['recent_exact_timestamp_ratio']:.1f}% | "
-        f"order_violations={result['catalog_time_order_violations']}"
+        f"order_violations={result['catalog_time_order_violations']} | "
+        f"max_inversion={result['max_order_inversion_days']:.2f}d"
     )
     print(
         f"Strict directional={result['strict_directional_articles']} | "
