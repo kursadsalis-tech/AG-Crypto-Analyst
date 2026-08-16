@@ -586,3 +586,17 @@ Interaction-capable V3 development modülü ve sabit runtime eklendi. Model yaln
 4h PRIMARY üzerinde çalışır ve mühürlü 2026-05-28 sonrası dönemi okumaz.
 Development gate geçmeden sealed evaluator oluşturulmayacaktır. Canlı ürün
 SHADOW_ONLY kalır.
+
+
+---
+
+## 12. FORECAST CORE V3 DEVELOPMENT SONUCU
+
+V3 interaction-capable 4h model development gate'te REJECT oldu:
+n=5.688, Brier skill -%3,3, MAE skill %0,0, class ECE %9,1; 34 aksiyon,
+%47,1 hit ve -%0,295 utility. 2026-05-28 sonrası sealed dönem açılmadı.
+
+Aynı fiyat+türev veri üzerinde model araması sona ermiştir. Sıradaki çalışma
+mimari değişiklik değildir: mevcut Forecast Contract'a yalnız kesin zamanlı
+catalyst event provider eklenmesinin veri fizibilitesidir. Veri yeterli değilse
+tarihsel sonuç üretilmeyecek; exact-time forward veri biriktirilecektir.
