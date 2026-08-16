@@ -93,6 +93,8 @@ def ensure_tables(con):
             calibration_state TEXT NOT NULL,
             production_eligible INTEGER NOT NULL,
             reason_codes_json TEXT NOT NULL,
+            regime TEXT NOT NULL DEFAULT 'UNKNOWN',
+            feature_snapshot_json TEXT NOT NULL DEFAULT '{}',
             status TEXT NOT NULL DEFAULT 'OPEN',
             entry_price REAL,
             exit_price REAL,
@@ -104,6 +106,8 @@ def ensure_tables(con):
             direction_hit INTEGER,
             action_hit INTEGER,
             action_net_utility_pct REAL,
+            diagnosis_code TEXT,
+            diagnosis_json TEXT,
             settled_at TEXT,
             UNIQUE(model_version, artifact_hash, symbol, as_of, horizon_hours)
         );
@@ -113,7 +117,74 @@ def ensure_tables(con):
         CREATE INDEX IF NOT EXISTS idx_forecast_symbol_horizon
         ON forecast_engine_predictions(symbol, horizon_hours, as_of);
     """)
+    existing = {
+        row[1] for row in con.execute(
+            "PRAGMA table_info(forecast_engine_predictions)"
+        ).fetchall()
+    }
+    migrations = {
+        "regime": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+        "feature_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+        "diagnosis_code": "TEXT",
+        "diagnosis_json": "TEXT",
+    }
+    for column, definition in migrations.items():
+        if column not in existing:
+            con.execute(
+                f"ALTER TABLE forecast_engine_predictions "
+                f"ADD COLUMN {column} {definition}"
+            )
     con.commit()
+
+
+def table_exists(con, table_name):
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone() is not None
+
+
+def latest_agent_context(con, symbol, available_at):
+    """Capture prior agent evidence for later diagnosis, never as model input."""
+    if not table_exists(con, "decision_engine_snapshots"):
+        return {"status": "MISSING", "used_by_model": False}
+    row = con.execute("""
+        SELECT created_at, evidence_json, reason_json
+        FROM decision_engine_snapshots
+        WHERE symbol=? AND created_at<=?
+        ORDER BY id DESC LIMIT 1
+    """, (symbol, iso(available_at))).fetchone()
+    if not row:
+        return {"status": "MISSING", "used_by_model": False}
+    try:
+        evidence = json.loads(row[1]) if row[1] else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        evidence = {}
+    try:
+        reasons = json.loads(row[2]) if row[2] else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        reasons = []
+    return {
+        "status": "OBSERVED_ONLY",
+        "available_at": row[0],
+        "used_by_model": False,
+        "evidence": evidence,
+        "reasons": reasons,
+    }
+
+
+def feature_snapshot(core, row, agent_context, issued_at):
+    return {
+        "schema": "FORECAST_FEATURE_SNAPSHOT_V1",
+        "issued_at": iso(issued_at),
+        "model_features": {
+            name: float(value)
+            for name, value in zip(core.FEATURE_NAMES, row["features"])
+        },
+        "scale_pct": float(row["scale_pct"]),
+        "regime": row["regime"],
+        "agent_context": agent_context,
+    }
 
 
 def artifact_hash(payload):
@@ -326,12 +397,19 @@ def create_forecasts(con, model_payload, series, decision_time, now):
 
     rows, no_forecast = live_rows(con, series, decision_time, now)
     forecasts = []
+    contexts = {
+        symbol: latest_agent_context(con, symbol, now)
+        for symbol in core.SYMBOLS
+    }
     for row in rows:
         try:
             prediction = core.forecast_row(model_payload["models"][row["horizon"]], row)
             record, reasons = validate_contract(prediction, model_payload)
             signed_expected = float(prediction["expected_trade_return_pct"])
             action_utility = float(prediction["expected_net_return_pct"])
+            snapshot = feature_snapshot(
+                core, row, contexts[row["symbol"]], now
+            )
             values = record.to_dict()
             con.execute("""
                 INSERT OR IGNORE INTO forecast_engine_predictions(
@@ -341,8 +419,9 @@ def create_forecasts(con, model_payload, series, decision_time, now):
                     predicted_return_pct, expected_market_return_pct,
                     action_utility_pct, shadow_action, risk_adjusted_action,
                     risk_eligible, risk_state, risk_cap_pct, calibration_state,
-                    production_eligible, reason_codes_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    production_eligible, reason_codes_json, regime,
+                    feature_snapshot_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 iso(now), MODEL_VERSION, model_payload["artifact_hash"],
                 values["symbol"], values["as_of"], values["feature_cutoff"],
@@ -353,6 +432,7 @@ def create_forecasts(con, model_payload, series, decision_time, now):
                 action_utility, values["shadow_action"], values["risk_adjusted_action"],
                 int(values["risk_eligible"]), values["risk_state"], values["risk_cap_pct"],
                 values["calibration_state"], 0, json.dumps(reasons, ensure_ascii=False),
+                row["regime"], json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
             ))
             forecasts.append({**prediction, "reasons": reasons})
         except Exception as exc:
@@ -369,6 +449,108 @@ def create_forecasts(con, model_payload, series, decision_time, now):
     if not no_forecast and int(stored) != len(expected_pairs):
         raise RuntimeError(f"PERSISTED_FORECAST_BUNDLE_INCOMPLETE:{stored}/39")
     return forecasts, no_forecast, int(stored)
+
+
+def backfill_open_feature_snapshots(con, series):
+    """Recover exact model features for pre-migration open forecasts only."""
+    from analysis import forecast_core_lab as core
+
+    rows = con.execute("""
+        SELECT forecast_id, symbol, as_of, horizon_hours, created_at
+        FROM forecast_engine_predictions
+        WHERE status='OPEN' AND feature_snapshot_json='{}'
+    """).fetchall()
+    updated = 0
+    btc = series.get("BTCUSDT", {}).get("candles", [])
+    btc_by_close = series.get("BTCUSDT", {}).get("by_close", {})
+    for forecast_id, symbol, as_of, horizon, created_at in rows:
+        decision_time = parse_time(as_of)
+        item = series.get(symbol) or {}
+        index = (item.get("by_close") or {}).get(decision_time)
+        btc_index = btc_by_close.get(decision_time)
+        if index is None or btc_index is None:
+            continue
+        try:
+            features = core.feature_values(
+                symbol, item["candles"], index, btc, btc_index
+            )
+            scale = max(
+                float(features[4]) * math.sqrt(float(horizon)), 0.10
+            )
+            btc_threshold = max(
+                0.50, float(features[11]) * math.sqrt(24.0)
+            )
+            regime = "UP" if features[10] > btc_threshold else (
+                "DOWN" if features[10] < -btc_threshold else "SIDEWAYS"
+            )
+            snapshot = {
+                "schema": "FORECAST_FEATURE_SNAPSHOT_V1",
+                "issued_at": created_at,
+                "model_features": {
+                    name: float(value)
+                    for name, value in zip(core.FEATURE_NAMES, features)
+                },
+                "scale_pct": scale,
+                "regime": regime,
+                "agent_context": {
+                    "status": "NOT_BACKFILLED_CAUSALLY",
+                    "used_by_model": False,
+                },
+            }
+            con.execute("""
+                UPDATE forecast_engine_predictions
+                SET regime=?, feature_snapshot_json=?
+                WHERE forecast_id=? AND feature_snapshot_json='{}'
+            """, (regime, json.dumps(snapshot, ensure_ascii=False, sort_keys=True), forecast_id))
+            updated += 1
+        except Exception:
+            continue
+    con.commit()
+    return updated
+
+
+def diagnose_outcome(
+    predicted_return, actual_return, interval_hit, probabilities,
+    actual_class, action, absolute_error, snapshot, regime, meaningful,
+):
+    predicted_class = max(probabilities, key=probabilities.get)
+    if not interval_hit:
+        code = (
+            "INTERVAL_MISS_UP"
+            if actual_return > predicted_return
+            else "INTERVAL_MISS_DOWN"
+        )
+    elif predicted_class != actual_class:
+        code = "DIRECTION_CLASS_MISS"
+    elif absolute_error > max(meaningful, abs(actual_return) * 0.50):
+        code = "TARGET_MAGNITUDE_MISS"
+    else:
+        code = "TARGET_ALIGNED"
+
+    model_features = snapshot.get("model_features") or {}
+    tags = [f"REGIME_{regime}"]
+    if float(model_features.get("vol_24h", 0.0)) >= 0.75:
+        tags.append("HIGH_VOLATILITY")
+    if abs(float(model_features.get("log_quote_volume_ratio", 0.0))) >= 0.50:
+        tags.append("VOLUME_DISLOCATION")
+    if abs(float(model_features.get("btc_ret_24h", 0.0))) >= 2.0:
+        tags.append("BTC_24H_SHOCK")
+    if probabilities["NEUTRAL"] == max(probabilities.values()):
+        tags.append("NEUTRAL_DOMINANT")
+    if action == "BEKLE":
+        tags.append("ACTION_ABSTAINED")
+    return code, {
+        "schema": "FORECAST_ERROR_DIAGNOSIS_V1",
+        "primary_code": code,
+        "tags": tags,
+        "predicted_class": predicted_class,
+        "actual_class": actual_class,
+        "predicted_return_pct": float(predicted_return),
+        "actual_return_pct": float(actual_return),
+        "absolute_error_pct": float(absolute_error),
+        "interval_hit": bool(interval_hit),
+        "agent_context": snapshot.get("agent_context") or {},
+    }
 
 
 def _price_for_settlement(con, symbol, as_of, due):
@@ -394,7 +576,9 @@ def settle_due(con, now):
     from analysis import forecast_core_lab as core
     rows = con.execute("""
         SELECT forecast_id, symbol, as_of, due_time, current_price, target_price,
-               price_p10, price_p90, p_up, p_down, p_neutral, shadow_action
+               price_p10, price_p90, p_up, p_down, p_neutral, shadow_action,
+               predicted_return_pct, expected_market_return_pct,
+               feature_snapshot_json, regime
         FROM forecast_engine_predictions
         WHERE status='OPEN' AND due_time<=?
         ORDER BY due_time
@@ -425,14 +609,24 @@ def settle_due(con, now):
             utility = -actual_return - cost
         error = abs((float(row[5]) / exit_price - 1.0) * 100.0)
         interval_hit = int(float(row[6]) <= exit_price <= float(row[7]))
+        try:
+            snapshot = json.loads(row[14]) if row[14] else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            snapshot = {}
+        diagnosis_code, diagnosis = diagnose_outcome(
+            float(row[12]), actual_return, interval_hit, probabilities,
+            actual_class, action, error, snapshot, str(row[15]), meaningful,
+        )
         con.execute("""
             UPDATE forecast_engine_predictions SET
                 status='SETTLED', entry_price=?, exit_price=?, actual_return_pct=?,
                 actual_class=?, absolute_error_pct=?, interval_hit=?, brier_score=?,
-                direction_hit=?, action_hit=?, action_net_utility_pct=?, settled_at=?
+                direction_hit=?, action_hit=?, action_net_utility_pct=?,
+                diagnosis_code=?, diagnosis_json=?, settled_at=?
             WHERE forecast_id=? AND status='OPEN'
         """, (entry, exit_price, actual_return, actual_class, error, interval_hit,
               brier, int(predicted_class == actual_class), action_hit, utility,
+              diagnosis_code, json.dumps(diagnosis, ensure_ascii=False, sort_keys=True),
               iso(now), row[0]))
         settled += 1
     con.commit()
@@ -502,6 +696,7 @@ def run(now=None, force_retrain=False):
         model = None if force_retrain else load_cached_model(now)
         if model is None:
             model = train_model(series, start, end, now)
+        backfill_open_feature_snapshots(con, series)
         settled = settle_due(con, now)
         decision_time = latest_common_close(series, end)
         validate_forecast_freshness(decision_time, now)
@@ -541,6 +736,15 @@ def self_test():
         pass
     else:
         raise AssertionError("stale forecast guard failed")
+    code, diagnosis = diagnose_outcome(
+        0.2, -0.5, 1,
+        {"UP": 0.7, "DOWN": 0.2, "NEUTRAL": 0.1},
+        "DOWN", "AL", 0.7,
+        {"model_features": {"vol_24h": 1.0}},
+        "SIDEWAYS", 0.15,
+    )
+    assert code == "DIRECTION_CLASS_MISS"
+    assert "HIGH_VOLATILITY" in diagnosis["tags"]
     print("Unified Forecast Engine self-test: PASS")
 
 
