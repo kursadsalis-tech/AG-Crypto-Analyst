@@ -551,3 +551,30 @@ Resmi hafıza dosyaları:
 - docs/SESSION_HANDOFF_2026-08-11.md
 
 Yeni oturumlarda önce bu dosyalar ve mevcut GitHub kodu kontrol edilir; kullanıcıdan proje geçmişini yeniden anlatması istenmez.
+
+
+---
+
+## 11. FORECAST CORE V2.1 GERÇEK SONUÇ — 2026-08-16
+
+Binance USD-M derivatives backfill tamamlandı. 12/13 coin 400 günlük ortak
+pencerede hazırdır; yalnız SLP destek penceresinin dışında kalmıştır. Exact OI
+anchor düzeltmesinden sonra veri-kalite kapıları geçti: 52 bağlam atlandı, en
+kötü haftalık gap %2,4'tür.
+
+Dondurulmuş V2.1 model sonucu:
+
+- 4h PRIMARY: REJECT — n=5.748, Brier skill +%0,2, MAE skill %0,0, raw action 0.
+- 24h SECONDARY: REJECT — n=948, Brier skill +%3,8, MAE skill -%2,8,
+  class ECE %11,2, raw action 0.
+- 1h EXPLORATORY: REJECT — n=23.028, Brier skill -%1,0, MAE skill -%0,2,
+  raw action 0.
+
+Sonuç NO_VALIDATED_FUTURES_MICROSTRUCTURE_EDGE ve ürün durumu
+SHADOW_ONLY'dır. V2.1 kapanmıştır; threshold düşürülmeyecek ve bu sonuç başarı
+olarak sunulmayacaktır.
+
+Sonraki somut çalışma: mevcut Forecast Contract/veri/validator mimarisini
+koruyarak interaction-capable Forecast Core V3'ü geliştirmek. V2'nin açmadığı
+2026-05-28 sonrası dönem mühürlü final değerlendirme olarak korunacaktır. V3 de
+geçmezse aynı fiyat+türev veri üzerinde model araması sona erecektir.
