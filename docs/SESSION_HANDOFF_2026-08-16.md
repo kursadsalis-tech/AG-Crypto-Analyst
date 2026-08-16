@@ -40,6 +40,13 @@ It reads no future outcome and computes no probability, target, return or
 backtest. Passing it authorizes only a forward collector design; failing it
 ends this option-source path without architecture churn.
 
+The first Mac run reached neither BTC nor ETH on Deribit and timed out. This
+was a provider connectivity failure, not a liquidity/data verdict. Version
+1.1 therefore keeps Deribit as the first source and automatically falls back
+to Bybit's unauthenticated V5 option instruments/tickers endpoints. Both
+providers are audited under the same frozen BTC/ETH liquidity gates; a partial
+surface cannot pass.
+
 ## Next command
 
 ```bash
