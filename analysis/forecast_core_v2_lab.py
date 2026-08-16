@@ -679,6 +679,8 @@ def load_derivatives(con, start, end, symbols):
         """, (symbol, iso(start), iso(end))).fetchall()
         market = []
         for source in market_rows:
+            if any(value is None for value in source[2:]):
+                continue
             values = [float(value) for value in source[2:]]
             if any(not math.isfinite(value) for value in values):
                 continue
@@ -707,6 +709,10 @@ def load_derivatives(con, start, end, symbols):
         for source in positioning_rows:
             hour_close = parse_time(source[0])
             source_max = parse_time(source[1])
+            # Sparse Vision ratio cells are explicit missing contexts. Skip
+            # only that hour; never coerce NULL into a numeric model feature.
+            if any(value is None for value in source[2:]):
+                continue
             values = [float(value) for value in source[2:]]
             if source_max >= hour_close or any(not math.isfinite(value) for value in values):
                 continue
@@ -1902,6 +1908,16 @@ def self_test():
             10.0, 1000.0, 1.1, 1.2, 0.9, 1.05, "self-test",
         ),
     )
+    sparse_closed = closed + timedelta(hours=1)
+    con.execute(
+        "INSERT INTO futures_positioning_hourly VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "BTCUSDT", iso(sparse_closed),
+            iso(sparse_closed - timedelta(minutes=5)),
+            11.0, 1100.0, None, 1.2, 0.9, None, "self-test-sparse",
+        ),
+    )
     con.execute(
         "INSERT INTO funding_events VALUES (?, ?, ?, ?)",
         ("BTCUSDT", iso(start), 0.0001, None),
@@ -1913,6 +1929,8 @@ def self_test():
         ("BTCUSDT",),
     )
     assert loaded["BTCUSDT"]["funding"][0]["mark_price"] is None
+    assert len(loaded["BTCUSDT"]["positioning"]) == 1
+    assert sparse_closed not in loaded["BTCUSDT"]["positioning_by_close"]
     blocked = derivative_readiness(con, start + timedelta(hours=2))
     assert not blocked["ready"] and blocked["supported_symbols"] == []
     con.close()
@@ -1934,3 +1952,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
