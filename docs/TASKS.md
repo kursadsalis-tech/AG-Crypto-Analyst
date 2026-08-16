@@ -326,3 +326,15 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [x] Add latest 39 forecasts and previous outcomes to the daily committee report
 - [x] Add horizon-level MAE, direction, interval and action scorecards to the report
 - [x] Keep report compatible with pre-migration forecast databases
+
+
+## Evidence-gated Forecast Self-Correction — 2026-08-16
+
+- [x] Coin kara listesi ve tek hata sonrası ağırlık değiştirmeyi yasakla
+- [x] Settlement hatalarını ufuk, rejim, tanı ve bağlam etiketleriyle grupla
+- [x] En az 30 olay ve 3 bağımsız hafta olmadan hata örüntüsü açma
+- [x] En az 100 settlement öncesinde öğrenme durumunu COLLECTING_EVIDENCE tut
+- [x] Yön kalibrasyonu, hedef ölçeği, aralık ve bağlam-feature challenger türlerini sınırla
+- [x] Forecast Learning Review'u ana canlı çevrime bağla
+- [ ] Yeterli forward örneklemde ilk kararlı hata örüntüsünü doğrula
+- [ ] Yalnız champion'ı untouched forward ölçümde geçen düzeltmeyi terfi ettir
