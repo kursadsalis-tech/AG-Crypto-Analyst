@@ -557,18 +557,21 @@ def parse_metrics_zip(path: Path) -> tuple[int, list[tuple]]:
                     finite_float(_pick(
                         row, "count_toptrader_long_short_ratio",
                         "top_account_ratio",
-                    ), "top_account_ratio"),
+                    ), "top_account_ratio", optional=True),
                     finite_float(_pick(
                         row, "count_toptrader_long_short_ratio_position",
                         "sum_toptrader_long_short_ratio", "top_position_ratio",
-                    ), "top_position_ratio"),
+                    ), "top_position_ratio", optional=True),
                     finite_float(_pick(
                         row, "count_long_short_ratio", "global_account_ratio",
-                    ), "global_account_ratio"),
+                    ), "global_account_ratio", optional=True),
+                    # Vision metric schemas legitimately contain blank ratio
+                    # cells. Taker ratio is not a V2 feature; retain NULL for
+                    # audit instead of rejecting the complete daily archive.
                     finite_float(_pick(
                         row, "taker_buy_sell_ratio",
                         "sum_taker_long_short_vol_ratio", "taker_ratio",
-                    ), "taker_ratio"),
+                    ), "taker_ratio", optional=True),
                 )
                 current = hourly.get(hour_close)
                 if current is None or candidate[0] > current[0]:
@@ -677,8 +680,12 @@ def save_positioning_rows(
         candidate_time = parse_time(row[1])
         if candidate_time < existing_time:
             continue
-        candidate_payload = tuple(float(value) for value in row[2:])
-        existing_payload = tuple(float(value) for value in existing[1:7])
+        candidate_payload = tuple(
+            None if value is None else float(value) for value in row[2:]
+        )
+        existing_payload = tuple(
+            None if value is None else float(value) for value in existing[1:7]
+        )
         existing_url = str(existing[7] or "")
         if candidate_time == existing_time:
             if candidate_payload == existing_payload:
@@ -697,7 +704,15 @@ def save_positioning_rows(
             # Cross-archive disagreement is a data-quality error. Persist the
             # lexicographically smaller payload so the DB is deterministic
             # regardless of download completion order, then fail closed.
-            if candidate_payload < existing_payload:
+            candidate_key = tuple(
+                (value is not None, value if value is not None else 0.0)
+                for value in candidate_payload
+            )
+            existing_key = tuple(
+                (value is not None, value if value is not None else 0.0)
+                for value in existing_payload
+            )
+            if candidate_key < existing_key:
                 con.execute("""
                     UPDATE futures_positioning_hourly SET
                         open_interest_contracts=?, open_interest_value=?,
@@ -1043,6 +1058,22 @@ def self_test() -> None:
         if abs(hourly[0][3] - 1000.0) > 1e-12:
             raise AssertionError("last-known metric was not retained")
 
+        optional_zip = tmp_path / "metrics-optional-ratios.zip"
+        optional_row = list(metric_rows[0])
+        optional_row[4] = ""
+        optional_row[8] = ""
+        optional_row[11] = ""
+        _make_test_zip(optional_zip, METRIC_COLUMNS, [tuple(optional_row)])
+        optional_raw, optional_hourly = parse_metrics_zip(optional_zip)
+        if optional_raw != 1 or len(optional_hourly) != 1:
+            raise AssertionError("optional metric ratio row was rejected")
+        if not (
+            optional_hourly[0][4] is None
+            and optional_hourly[0][6] is None
+            and optional_hourly[0][7] is None
+        ):
+            raise AssertionError("blank metric ratios were not retained as NULL")
+
         funding_zip = tmp_path / "funding.zip"
         _make_test_zip(
             funding_zip, FUNDING_COLUMNS,
@@ -1100,6 +1131,22 @@ def self_test() -> None:
         ).fetchone()[0]
         if retained != 10.0:
             raise AssertionError("cross-archive conflict was not deterministic")
+        optional_close = duplicate_close + timedelta(hours=1)
+        optional_positioning_row = (
+            iso(optional_close), iso(optional_close - timedelta(minutes=5)),
+            12.0, 1200.0, None, 1.2, None, None,
+        )
+        if save_positioning_rows(
+            duplicate_con, "BTCUSDT", [optional_positioning_row], "archive-c"
+        ) != 1:
+            raise AssertionError("optional positioning row was not stored")
+        stored_optional = duplicate_con.execute(
+            "SELECT top_account_ratio, global_account_ratio, taker_ratio "
+            "FROM futures_positioning_hourly WHERE hour_close_time=?",
+            (iso(optional_close),),
+        ).fetchone()
+        if stored_optional != (None, None, None):
+            raise AssertionError("optional positioning NULL values were mutated")
         duplicate_con.close()
 
         con = sqlite3.connect(":memory:")
@@ -1239,3 +1286,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
