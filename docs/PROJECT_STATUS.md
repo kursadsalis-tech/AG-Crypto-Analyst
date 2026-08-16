@@ -578,3 +578,11 @@ Sonraki somut çalışma: mevcut Forecast Contract/veri/validator mimarisini
 koruyarak interaction-capable Forecast Core V3'ü geliştirmek. V2'nin açmadığı
 2026-05-28 sonrası dönem mühürlü final değerlendirme olarak korunacaktır. V3 de
 geçmezse aynı fiyat+türev veri üzerinde model araması sona erecektir.
+
+
+### Forecast Core V3 Hazırlık Durumu
+
+Interaction-capable V3 development modülü ve sabit runtime eklendi. Model yalnız
+4h PRIMARY üzerinde çalışır ve mühürlü 2026-05-28 sonrası dönemi okumaz.
+Development gate geçmeden sealed evaluator oluşturulmayacaktır. Canlı ürün
+SHADOW_ONLY kalır.
