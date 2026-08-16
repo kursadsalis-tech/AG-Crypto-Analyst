@@ -15,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_3"
+VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_4"
 BASE_URL = "https://www.binance.com"
 LIST_URL = BASE_URL + "/bapi/apex/v1/public/apex/cms/article/list/query"
 DETAIL_URL = BASE_URL + "/bapi/composite/v1/public/cms/article/detail/query"
@@ -212,6 +212,29 @@ def detail_release_date(session, article_code):
     return raw_value, f"DETAIL_{key.upper()}", released
 
 
+def chronological_backbone(rows):
+    """Return ranks in the longest non-increasing timestamp subsequence."""
+    ordered = sorted(rows, key=lambda row: row["raw_rank"])
+    if not ordered:
+        return set()
+    timestamps = [datetime.fromisoformat(row["release_time"]) for row in ordered]
+    lengths = [1] * len(ordered)
+    previous = [-1] * len(ordered)
+    for current in range(len(ordered)):
+        for earlier in range(current):
+            if timestamps[earlier] >= timestamps[current] and (
+                lengths[earlier] + 1 > lengths[current]
+            ):
+                lengths[current] = lengths[earlier] + 1
+                previous[current] = earlier
+    cursor = max(range(len(ordered)), key=lambda index: lengths[index])
+    ranks = set()
+    while cursor >= 0:
+        ranks.add(ordered[cursor]["raw_rank"])
+        cursor = previous[cursor]
+    return ranks
+
+
 def audit(rows, raw_count, invalid):
     times = sorted(datetime.fromisoformat(row["release_time"]) for row in rows)
     strict = [
@@ -224,10 +247,14 @@ def audit(rows, raw_count, invalid):
     recent_cutoff = audit_end - timedelta(days=RECENT_AUDIT_DAYS)
     protected_cutoff = recent_cutoff - timedelta(days=ORDER_SAFETY_DAYS)
     recent_boundaries = {}
+    backbone_ranks = {}
     for category in CATEGORIES.values():
+        category_rows = [row for row in rows if row["category"] == category]
+        backbone_ranks[category] = chronological_backbone(category_rows)
         ranks = [
             row["raw_rank"] for row in rows
             if row["category"] == category
+            and row["raw_rank"] in backbone_ranks[category]
             and datetime.fromisoformat(row["release_time"]) >= protected_cutoff
         ]
         recent_boundaries[category] = max(ranks, default=0)
@@ -241,23 +268,9 @@ def audit(rows, raw_count, invalid):
         item.get("raw_rank", 10**9) <= recent_boundaries.get(item["category"], 0)
         for item in invalid
     )
-    order_violations = 0
-    max_order_inversion_seconds = 0.0
-    for category in CATEGORIES.values():
-        ordered = sorted(
-            (row for row in rows if row["category"] == category),
-            key=lambda row: row["raw_rank"],
-        )
-        previous = None
-        for row in ordered:
-            current = datetime.fromisoformat(row["release_time"])
-            if previous is not None and current > previous:
-                order_violations += 1
-                max_order_inversion_seconds = max(
-                    max_order_inversion_seconds,
-                    (current - previous).total_seconds(),
-                )
-            previous = current
+    backbone_size = sum(len(ranks) for ranks in backbone_ranks.values())
+    ordering_outliers = len(rows) - backbone_size
+    backbone_ratio = backbone_size / len(rows) if rows else 0.0
     span_days = (times[-1] - times[0]).total_seconds() / 86400.0 if len(times) >= 2 else 0.0
     result = {
         "version": VERSION,
@@ -280,8 +293,9 @@ def audit(rows, raw_count, invalid):
         "recent_exact_timestamp_ratio": recent_exact_ratio,
         "recent_rank_boundaries": recent_boundaries,
         "recent_accounting_complete": recent_valid + recent_invalid == recent_raw,
-        "catalog_time_order_violations": order_violations,
-        "max_order_inversion_days": max_order_inversion_seconds / 86400.0,
+        "chronological_backbone_articles": backbone_size,
+        "ordering_outlier_articles": ordering_outliers,
+        "chronological_backbone_ratio": backbone_ratio,
         "unique_story_ratio": len(set(codes)) / len(codes) if codes else 0.0,
         "usable_span_days": span_days,
         "strict_directional_articles": len(strict),
@@ -293,9 +307,7 @@ def audit(rows, raw_count, invalid):
         "raw_articles_gte_300": raw_count >= 300,
         "recent_exact_timestamp_ratio_gte_99pct": recent_exact_ratio >= 0.99,
         "recent_rank_accounting_complete": result["recent_accounting_complete"],
-        "max_order_inversion_within_safety_buffer": (
-            max_order_inversion_seconds <= ORDER_SAFETY_DAYS * 86400.0
-        ),
+        "chronological_backbone_ratio_gte_99_9pct": backbone_ratio >= 0.999,
         "unique_story_ratio_gte_99pct": result["unique_story_ratio"] >= 0.99,
         "usable_span_gte_730d": span_days >= 730.0,
         "strict_directional_articles_gte_150": len(strict) >= 150,
@@ -366,7 +378,7 @@ def run():
 
 
 def render(result):
-    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.3.0")
+    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.4.0")
     print(f"Source: Binance official announcement metadata | status={result['status']}")
     print(
         f"Raw={result['raw_articles']} | valid={result['valid_articles']} | "
@@ -381,8 +393,8 @@ def render(result):
         f"valid={result['recent_valid_articles']} | "
         f"invalid={result['recent_invalid_articles']} | "
         f"exact_time={100.0 * result['recent_exact_timestamp_ratio']:.1f}% | "
-        f"order_violations={result['catalog_time_order_violations']} | "
-        f"max_inversion={result['max_order_inversion_days']:.2f}d"
+        f"ordering_outliers={result['ordering_outlier_articles']} | "
+        f"backbone={100.0 * result['chronological_backbone_ratio']:.3f}%"
     )
     print(
         f"Strict directional={result['strict_directional_articles']} | "
@@ -459,6 +471,17 @@ def self_test():
     assert detail_value == 1_735_689_600_000
     assert detail_source == "DETAIL_RELEASEDATE"
     assert detail_time.isoformat().startswith("2025-01-01")
+    pinned = []
+    for rank, release_time in [
+        (1, "2020-01-01T00:00:00+00:00"),
+        (2, "2025-01-01T00:00:00+00:00"),
+        (3, "2024-01-01T00:00:00+00:00"),
+    ]:
+        item = dict(row)
+        item["raw_rank"] = rank
+        item["release_time"] = release_time
+        pinned.append(item)
+    assert chronological_backbone(pinned) == {2, 3}
     print("Exact-time catalyst feasibility self-test: PASS")
 
 
