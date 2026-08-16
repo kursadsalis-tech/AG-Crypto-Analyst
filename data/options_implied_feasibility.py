@@ -23,9 +23,10 @@ except ImportError:  # stdlib trust store remains the safe fallback
     certifi = None
 
 
-VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1_1_1"
+VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1_2"
 BASE_URL = "https://www.deribit.com/api/v2"
 BYBIT_URL = "https://api.bybit.com/v5/market"
+OKX_URL = "https://www.okx.com/api/v5"
 CURRENCIES = ("BTC", "ETH")
 AUDIT_PATH = Path("reports/options_implied_feasibility.json")
 DETAIL_PATH = Path("reports/options_implied_surface.csv")
@@ -80,6 +81,23 @@ def bybit_rpc(session, method, **params):
     return payload.get("result") or {}
 
 
+def okx_rpc(session, path, **params):
+    url = f"{OKX_URL}/{path}?{urlencode(params)}"
+    if session is None:
+        with urlopen(Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"}),
+                     timeout=30, context=SSL_CONTEXT) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    else:
+        response = session.get(url, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    if str(payload.get("code")) != "0":
+        raise RuntimeError(
+            f"OKX {path}: {payload.get('code')} {payload.get('msg')}"
+        )
+    return payload.get("data") or []
+
+
 def load_deribit_currency(session, currency, now_ms):
     instruments = rpc(
         session, "get_instruments", currency=currency,
@@ -125,6 +143,49 @@ def load_bybit_currency(session, currency, now_ms):
             "mark_iv": row.get("markIv"),
             "open_interest": row.get("openInterest"),
             "volume": row.get("volume24h"),
+        })
+    return parse_surface(currency, metadata, summaries, now_ms)
+
+
+def load_okx_currency(session, currency, now_ms):
+    family = f"{currency}-USD"
+    instruments = okx_rpc(
+        session, "public/instruments", instType="OPTION", uly=family
+    )
+    tickers = okx_rpc(
+        session, "market/tickers", instType="OPTION", uly=family
+    )
+    option_summary = okx_rpc(session, "public/opt-summary", uly=family)
+    open_interest = okx_rpc(
+        session, "public/open-interest", instType="OPTION", uly=family
+    )
+    ticker_by_name = {row.get("instId"): row for row in tickers}
+    volatility_by_name = {row.get("instId"): row for row in option_summary}
+    interest_by_name = {row.get("instId"): row for row in open_interest}
+    metadata = []
+    summaries = []
+    for row in instruments:
+        if row.get("state") not in ("live", "preopen"):
+            continue
+        name = row.get("instId")
+        metadata.append({
+            "instrument_name": name,
+            "expiration_timestamp": row.get("expTime"),
+            "strike": row.get("stk"),
+            "option_type": {
+                "C": "call", "P": "put"
+            }.get(row.get("optType"), str(row.get("optType") or "").lower()),
+        })
+        ticker = ticker_by_name.get(name, {})
+        volatility = volatility_by_name.get(name, {})
+        interest = interest_by_name.get(name, {})
+        summaries.append({
+            "instrument_name": name,
+            "bid_price": ticker.get("bidPx"),
+            "ask_price": ticker.get("askPx"),
+            "mark_iv": volatility.get("markVol"),
+            "open_interest": interest.get("oi"),
+            "volume": ticker.get("vol24h"),
         })
     return parse_surface(currency, metadata, summaries, now_ms)
 
@@ -232,6 +293,7 @@ def run(session=None, now_ms=None):
     providers = (
         ("Deribit public JSON-RPC", load_deribit_currency),
         ("Bybit public V5 REST", load_bybit_currency),
+        ("OKX public V5 REST", load_okx_currency),
     )
     for provider_name, loader in providers:
         provider_rows, provider_audits, provider_errors = [], [], []
@@ -288,7 +350,7 @@ def run(session=None, now_ms=None):
 
 def render(audit):
     status = "SOURCE_FEASIBLE" if audit["ready"] else "SOURCE_BLOCKED"
-    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.1.1")
+    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.2.0")
     print(f"Source: {audit['source'] or 'NONE'} | status={status}")
     print("Scope: BTC/ETH | horizon=24h PRIMARY | history=FORWARD_ONLY")
     for row in audit["currencies"]:
