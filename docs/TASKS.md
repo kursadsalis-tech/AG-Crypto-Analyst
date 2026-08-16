@@ -347,3 +347,16 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [x] Aynı UTC saatinde başarılı bundle varsa yeniden üretme
 - [x] Beklenen taze-kapanış bekleme durumunu sistem hatası sayma
 - [ ] Mac LaunchAgent'i bir kez kur ve ilk doğal saatlik logu doğrula
+
+
+## Crypto Profit Agent — PAPER ONLY — 2026-08-17
+
+- [x] Unified Forecast kayıtlarını kullanan bağımsız sanal portföy ajanını kur
+- [x] Exact next-open giriş ve exact due-close çıkışla lookahead/gap bridging'i engelle
+- [x] 1x LONG/SHORT, açık ücretler, nakit, teminat ve P&L muhasebesini kalıcı kaydet
+- [x] Risk izni, %60 toplam risk, %10 pozisyon ve coin overlap sınırlarını uygula
+- [x] Ajanı mevcut saatlik LaunchAgent akışına bağla
+- [x] İstanbul 03:00 günlük ayrıntılı rapor ve Telegram özetini ekle
+- [ ] İlk doğal saatlik paper-agent cycle'ını ve ilk exact giriş dolumunu doğrula
+- [ ] İlk İstanbul 03:00 raporunu doğrula ve bütçe özetini değerlendir
+- [ ] Politika değişikliklerini yalnız ayrı challenger ve ölçülmüş üstünlükle uygula
