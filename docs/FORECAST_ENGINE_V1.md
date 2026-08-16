@@ -58,3 +58,19 @@ Force a new artifact only after an explicit model-version decision:
 ```bash
 python3 -m decision_engine.forecast_engine --retrain
 ```
+
+
+## Learning and report loop (v1.1)
+
+Every new forecast now persists the exact named model-feature vector, scale and
+market regime. The most recent Decision Engine evidence from news, social,
+on-chain, macro, whale and risk agents is stored as `OBSERVED_ONLY`; it is
+explicitly not treated as a model input until a separate causal challenger is
+frozen and validated.
+
+At settlement the engine writes a structured diagnosis: `TARGET_ALIGNED`,
+`DIRECTION_CLASS_MISS`, `TARGET_MAGNITUDE_MISS`,
+`INTERVAL_MISS_UP` or `INTERVAL_MISS_DOWN`, plus volatility, volume, BTC shock,
+regime and abstention tags. The daily investment committee report v1.3 shows
+the latest 39 forecasts, latest settled result for each coin/horizon, target
+error, diagnosis counts and horizon-level forward performance.
