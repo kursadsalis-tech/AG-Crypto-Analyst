@@ -22,7 +22,9 @@ CATEGORIES = {
     48: "NEW_CRYPTOCURRENCY_LISTING",
     161: "DELISTING",
 }
-PAGE_SIZE = 100
+# Binance rejects oversized announcement queries with HTTP 400.  The current
+# web client uses small pages; keep this fixed and paginate deterministically.
+PAGE_SIZE = 20
 MAX_PAGES = 100
 TIMEOUT = 25
 OUTPUT_PATH = Path("reports/exact_time_catalyst_feasibility.csv")
@@ -213,7 +215,10 @@ def run():
     session.headers.update({
         "User-Agent": "Mozilla/5.0 AG-Crypto-Analyst/1.0",
         "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "en",
+        "Referer": f"{BASE_URL}/en/messages/v2/group/announcement",
         "clienttype": "web",
+        "lang": "en",
     })
     raw = []
     for catalog_id, category in CATEGORIES.items():
@@ -241,7 +246,7 @@ def run():
 
 
 def render(result):
-    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.0.0")
+    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.0.1")
     print(f"Source: Binance official announcement metadata | status={result['status']}")
     print(
         f"Raw={result['raw_articles']} | valid={result['valid_articles']} | "
@@ -284,6 +289,24 @@ def self_test():
     result = audit([row, duplicate], 2, [])
     assert result["unique_story_ratio"] == 0.5
     assert result["status"] == "SOURCE_BLOCKED"
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    class FakeSession:
+        def get(self, url, params, timeout):
+            assert url == LIST_URL
+            assert params["pageSize"] == 20
+            assert params["catalogId"] == 48
+            assert timeout == TIMEOUT
+            return FakeResponse()
+
+    fetched = fetch_category(FakeSession(), 48, CATEGORIES[48])
+    assert len(fetched) == 1
     print("Exact-time catalyst feasibility self-test: PASS")
 
 
