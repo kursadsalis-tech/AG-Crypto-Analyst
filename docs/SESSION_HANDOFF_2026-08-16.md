@@ -47,6 +47,11 @@ to Bybit's unauthenticated V5 option instruments/tickers endpoints. Both
 providers are audited under the same frozen BTC/ETH liquidity gates; a partial
 surface cannot pass.
 
+The Bybit fallback was reachable only up to TLS verification on the first Mac
+run; Python's framework trust store lacked the issuer chain. Version 1.1.1
+uses the installed `certifi` CA bundle when available and otherwise retains
+the standard verified SSL context. Certificate verification is never disabled.
+
 ## Next command
 
 ```bash
