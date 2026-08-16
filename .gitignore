@@ -21,3 +21,5 @@ reports/forecast_core_candidate.json
 reports/forecast_core_v2_lab.csv
 reports/forecast_core_v2_selection.csv
 reports/forecast_core_v2_candidate.json
+reports/exact_time_catalyst_feasibility.csv
+reports/exact_time_catalyst_audit.json
