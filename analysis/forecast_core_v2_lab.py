@@ -1004,10 +1004,11 @@ def _v1_probabilities(row):
     }
 
 
-def evaluate(model, v1_model, rows):
+def evaluate(model, v1_model, rows, forecast_function=None):
+    forecast_function = forecast_function or forecast_row
     forecasts = []
     for row in rows:
-        forecast = forecast_row(model, row)
+        forecast = forecast_function(model, row)
         baseline_input = {**row, "features": row["v1_features"], "risk_eligible": True}
         baseline = v1.forecast_row(v1_model, baseline_input)
         forecast.update({
