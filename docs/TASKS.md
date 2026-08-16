@@ -303,3 +303,15 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [ ] Run the real fixed catalyst study and inspect the primary 4h validation output.
 - [ ] If and only if 4h validation passes, freeze the candidate and start fresh forward probability calibration.
 - [ ] If 4h validation rejects, stop this bounded catalyst hypothesis; do not open another threshold/model grid on the same data.
+
+
+## Unified Forecast Runtime — 2026-08-16
+
+- [x] 13 coin x 1h/4h/24h için 39 gerçek probabilistic forecast üret
+- [x] q50 hedef, %80 aralık ve UP/DOWN/NEUTRAL olasılıklarını kalıcı kaydet
+- [x] Güncel Risk Manager snapshot'ını yalnız veto/cap katmanı olarak bağla
+- [x] Eski mumla retrospektif forecast ve eksik saatle gap-bridged settlement'ı engelle
+- [x] İlk canlı 39/39 forecast bundle'ını gerçek Mac verisinde aç
+- [ ] İlk 1h/4h/24h kayıtlarını otomatik settle et ve sonuçları doğrula
+- [ ] Forecast çıktılarını günlük yatırım komitesi raporunda ana tahmin tablosu olarak göster
+- [ ] Yeterli forward örneklem oluşunca horizon bazlı kalibrasyon ve başarı kapılarını değerlendir
