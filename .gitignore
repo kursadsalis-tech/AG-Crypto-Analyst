@@ -27,3 +27,4 @@ reports/exact_time_catalyst_event_study.csv
 reports/exact_time_catalyst_event_selection.csv
 reports/options_implied_feasibility.json
 reports/options_implied_surface.csv
+reports/unified_forecast_model.pkl
