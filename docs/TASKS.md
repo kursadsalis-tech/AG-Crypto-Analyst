@@ -280,8 +280,16 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [x] V2.1'i üç ufukta doğrulanmış edge olmadığı için reddet ve model ailesini kapat
 - [x] %70 aksiyon eşiğini sonuçtan sonra düşürmeme kararını koru
 - [x] Interaction-capable Forecast Core V3 model ve evaluation manifestini sonuç görülmeden dondur
-- [ ] V3 geliştirmesini yalnız V2 VALIDATION ve daha eski development verisinde yap
-- [ ] 2026-05-28 sonrası mühürlü dönemi model/kalibrasyon/eşik seçiminden izole et
+- [x] V3 geliştirmesini yalnız V2 VALIDATION ve daha eski development verisinde yap
+- [x] 2026-05-28 sonrası mühürlü dönemi model/kalibrasyon/eşik seçiminden izole et
 - [ ] V3'ü mühürlü final dönemde yalnız bir kez değerlendir
 - [ ] Tarihsel geçiş olsa bile fresh forward doğrulama tamamlanmadan ürün alarmını açma
-- [ ] V3 reddedilirse aynı fiyat+türev veri üzerinde model/threshold aramasını durdur
+- [x] V3 reddedildiği için aynı fiyat+türev veri üzerinde model/threshold aramasını durdur
+
+
+## Exact-Time Catalyst Sonraki Faz
+
+- [ ] Resmî ve doğrulanabilir catalyst kaynaklarında published_at/available_at tarihsel kapsam fizibilitesini denetle
+- [ ] Gün/saat uydurulan veya yalnız arşiv günü taşıyan olayları kesin olarak dışla
+- [ ] Yeterli geçmiş varsa tek event-conditioned Forecast Core adayını sonuç görülmeden dondur
+- [ ] Yeterli geçmiş yoksa aynı collector sözleşmesiyle forward exact-time veri biriktir
