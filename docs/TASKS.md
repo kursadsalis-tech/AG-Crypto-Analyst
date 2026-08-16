@@ -338,3 +338,12 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [x] Forecast Learning Review'u ana canlı çevrime bağla
 - [ ] Yeterli forward örneklemde ilk kararlı hata örüntüsünü doğrula
 - [ ] Yalnız champion'ı untouched forward ölçümde geçen düzeltmeyi terfi ettir
+
+
+## Automatic Hourly Forecast Operations — 2026-08-17
+
+- [x] Risk refresh -> exact settlement -> 39 forecast -> learning sırasını tek saatlik işe bağla
+- [x] Her saatin :02 dakikasında çalış; veri gecikirse :07 ve :12'de idempotent retry yap
+- [x] Aynı UTC saatinde başarılı bundle varsa yeniden üretme
+- [x] Beklenen taze-kapanış bekleme durumunu sistem hatası sayma
+- [ ] Mac LaunchAgent'i bir kez kur ve ilk doğal saatlik logu doğrula
