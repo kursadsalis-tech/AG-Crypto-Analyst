@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from analysis import forecast_learning_cycle
 from decision_engine import forecast_cycle
+from paper_trading import crypto_profit_agent
 from risk_manager import risk_cycle
 
 
@@ -45,11 +46,13 @@ def main():
     else:
         forecast_result = forecast_cycle.main(force=True)
 
+    paper_result = crypto_profit_agent.main()
     learning_result = forecast_learning_cycle.main()
     blocking = [
         name for name, result in (
             ("risk", risk_result),
             ("forecast", forecast_result),
+            ("paper_agent", paper_result),
             ("learning", learning_result),
         )
         if isinstance(result, dict)
@@ -63,6 +66,7 @@ def main():
         "status": status,
         "risk": risk_result,
         "forecast": forecast_result,
+        "paper_agent": paper_result,
         "learning": learning_result,
     }
 
