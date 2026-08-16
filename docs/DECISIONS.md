@@ -583,3 +583,25 @@ Amaç Forecast Engine'in olasılıklarını gerçekçi ücret ve sermaye muhaseb
 portföy geçmişini geriye dönük yeniden yazamaz; yeni sürüm/challenger olarak
 başlar. İstanbul 03:00 kapanışında ayrıntılı günlük rapor kaydedilir ve Telegram
 yapılandırılmışsa kısa özet gönderilir.
+
+---
+
+## Karar 026 - Kripto Kazanç Ajanı Yetki Sınırı ve Gerçek İşlem Paritesi
+
+Unified Forecast Engine ve bütün AG Crypto Analyst sisteminin nihai yönetim, model/politika terfi, risk limiti, sermaye kullanımı ve gerçek işlem yetkisi ana orkestratörde kalır. Bu yetkiler Crypto Profit Agent ile paylaşılmaz.
+
+Crypto Profit Agent öğrenebilir, gerekçeli öneri sunabilir, sonuçları hakkında hesap verebilir ve kanıtla itiraz edebilir. Ancak kendi modelini/politikasını üretime terfi ettiremez; ücret, risk, sermaye veya işlem kurallarını değiştiremez; Risk Manager vetosunu aşamaz ve gerçek emir gönderemez. Ajanın eğitimi, denetimi, performans değerlendirmesi ve önerilerinin kabul/reddi ana orkestratörün sorumluluğundadır.
+
+Paper simülasyon gelecekteki gerçek işlem ortamıyla aynı execution contract'a yaklaşacaktır. En az şu gerçeklikler açıkça modellenir:
+
+- seçilen borsa, piyasa ve enstrüman semantiği; spot ile futures/short ayrımı,
+- exact exchange timestamp, yalnız o anda erişilebilir veri ve lookahead yasağı,
+- bid/ask, spread, maker/taker ücretleri, dinamik slippage ve emir gecikmesi,
+- tick size, step size, minimum notional, kısmi dolum ve reddedilen emirler,
+- likidite/kapasite, açık pozisyon ve gerçek sermaye muhasebesi,
+- futures kullanılırsa funding, borrow ve liquidation kuralları,
+- veri boşluğu, bağlantı kesintisi, stale fiyat ve borsa kesintileri.
+
+Güvenilir biçimde modellenemeyen koşul sessizce iyimser varsayılmaz; açık ESTIMATED/DATA_BLOCKED etiketiyle fail-closed ele alınır. Simülatör ile ilerideki canlı emir adaptörü aynı karar ve execution sözleşmesini kullanacak; sermaye açılmadan önce shadow/dry-run ve simülasyon-canlı reconciliation testleri tamamlanacaktır.
+
+Gerçek para kullanımı ancak kullanıcının açık onayı, ana orkestratörün ayrı terfi kararı ve önceden tanımlı performans/risk kapılarının birlikte geçilmesiyle mümkündür.
