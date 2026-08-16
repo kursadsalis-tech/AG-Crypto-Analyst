@@ -92,3 +92,23 @@ correction must be trained separately, evaluated against the unchanged champion
 on untouched forward evidence and promoted only if it demonstrably improves
 calibration, target error and cost-adjusted utility. News/social/agent evidence
 remains observed-only until such a challenger passes.
+
+
+## Automatic hourly operation
+
+The product does not depend on manual terminal runs. The macOS LaunchAgent
+`com.agca.hourly-forecast` runs at minutes 02, 07 and 12 of every hour. It
+refreshes Risk Manager, settles every exactly-due 1h/4h/24h forecast, opens one
+idempotent 39-row bundle for the fresh hourly close and runs the Forecast
+Learning Review. The later two attempts are safe retries for delayed exchange
+data; an already-opened hourly bundle is not duplicated.
+
+One-time installation:
+
+```bash
+python3 -m scripts.install_hourly_forecast_launchd
+```
+
+The Mac must be awake and the user logged in. Output is written to
+`reports/hourly_forecast_launchd.log`; failures are written to
+`reports/hourly_forecast_launchd_error.log`.
