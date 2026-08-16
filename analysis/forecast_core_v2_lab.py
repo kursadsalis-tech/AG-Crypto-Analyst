@@ -35,7 +35,7 @@ from decision_engine.forecast_contract import (
 
 
 DB_NAME = v1.DB_NAME
-LAB_VERSION = "FORECAST_CORE_V2_LAB_V1_1_PRE_REGISTERED"
+LAB_VERSION = "FORECAST_CORE_V2_LAB_V1_2_PRE_REGISTERED"
 MODEL_FAMILY = "PURE_STDLIB_HISTOGRAM_GRADIENT_BOOSTED_ADDITIVE_STUMPS"
 MODEL_VERSION = "FUTURES_MICROSTRUCTURE_GBDT_V2_1_FIXED"
 HORIZONS = (4, 24, 1)
@@ -812,7 +812,7 @@ def _derivative_state(symbol, decision_time, spot_close, derivatives):
     position_index = item["positioning_by_close"].get(decision_time)
     if market_index is None or position_index is None:
         raise ValueError("missing exact derivatives hour")
-    if market_index < 23 or position_index < 24:
+    if market_index < 23:
         raise ValueError("insufficient derivative warmup")
     market = item["market"]
     positioning = item["positioning"]
@@ -820,13 +820,16 @@ def _derivative_state(symbol, decision_time, spot_close, derivatives):
     current_position = positioning[position_index]
     if current_position["source_max_time"] >= current_position["hour_close_time"]:
         raise ValueError("positioning snapshot was not available before cutoff")
+    previous_positions = {}
     for offset in (1, 4, 24):
         expected = decision_time - timedelta(hours=offset)
-        previous = positioning[position_index - offset]
-        if previous["hour_close_time"] != expected:
-            raise ValueError("non-contiguous positioning history")
+        previous_index = item["positioning_by_close"].get(expected)
+        if previous_index is None:
+            raise ValueError("missing exact positioning anchor")
+        previous = positioning[previous_index]
         if previous["source_max_time"] >= previous["hour_close_time"]:
             raise ValueError("future positioning source time")
+        previous_positions[offset] = previous
     oi_current = current_position["open_interest_value"]
     futures_volume_24h = sum(
         row["quote_volume"] for row in market[market_index - 23:market_index + 1]
@@ -843,9 +846,9 @@ def _derivative_state(symbol, decision_time, spot_close, derivatives):
         "funding_z_7d": funding_z,
         "funding_interval_hours": funding_interval,
         "hours_since_funding": hours_since_funding,
-        "oi_change_1h_pct": _pct(oi_current, positioning[position_index - 1]["open_interest_value"]),
-        "oi_change_4h_pct": _pct(oi_current, positioning[position_index - 4]["open_interest_value"]),
-        "oi_change_24h_pct": _pct(oi_current, positioning[position_index - 24]["open_interest_value"]),
+        "oi_change_1h_pct": _pct(oi_current, previous_positions[1]["open_interest_value"]),
+        "oi_change_4h_pct": _pct(oi_current, previous_positions[4]["open_interest_value"]),
+        "oi_change_24h_pct": _pct(oi_current, previous_positions[24]["open_interest_value"]),
         "log_oi_value_to_futures_volume_24h": math.log1p(oi_current / futures_volume_24h),
         "taker_imbalance_1h": _taker_imbalance(market, market_index, 1),
         "taker_imbalance_4h": _taker_imbalance(market, market_index, 4),
@@ -1710,7 +1713,7 @@ def percent(value):
 
 
 def render(result):
-    print("AG Crypto Analyst - Futures/Microstructure Forecast Core V2 Lab v1.1.0")
+    print("AG Crypto Analyst - Futures/Microstructure Forecast Core V2 Lab v1.2.0")
     print(
         f"Contract: {CONTRACT_VERSION} | model={MODEL_VERSION} | "
         "implementation=PURE_STDLIB_HISTOGRAM_ADDITIVE_STUMPS"
@@ -1916,6 +1919,43 @@ def self_test():
     assert loaded["BTCUSDT"]["funding"][0]["mark_price"] is None
     assert len(loaded["BTCUSDT"]["positioning"]) == 2
     assert sparse_closed in loaded["BTCUSDT"]["positioning_by_close"]
+
+    # A missing unrelated positioning hour must not invalidate every context
+    # in the following 24 hours. Only the exact 1h/4h/24h anchors are required.
+    decision = start + timedelta(hours=48)
+    market = []
+    for offset in range(24, -1, -1):
+        close_time = decision - timedelta(hours=offset)
+        market.append({
+            "open_time": close_time - timedelta(hours=1),
+            "close_time": close_time, "close": 100.0,
+            "quote_volume": 1000.0, "taker_buy_quote_volume": 500.0,
+            "premium_close": 0.0,
+        })
+    anchor_times = [decision - timedelta(hours=value) for value in (24, 4, 1, 0)]
+    positions = [{
+        "hour_close_time": value,
+        "source_max_time": value - timedelta(minutes=5),
+        "open_interest_value": 1000.0 + index,
+    } for index, value in enumerate(anchor_times)]
+    funding = [{
+        "funding_time": decision - timedelta(hours=48 - 8 * index),
+        "funding_rate": 0.0001, "mark_price": None,
+    } for index in range(7)]
+    exact_item = {
+        "market": market,
+        "market_by_close": {row["close_time"]: index for index, row in enumerate(market)},
+        "positioning": positions,
+        "positioning_by_close": {
+            row["hour_close_time"]: index for index, row in enumerate(positions)
+        },
+        "funding": funding,
+        "funding_times": [row["funding_time"] for row in funding],
+    }
+    exact_state = _derivative_state(
+        "BTCUSDT", decision, 100.0, {"BTCUSDT": exact_item}
+    )
+    assert math.isfinite(exact_state["oi_change_24h_pct"])
     blocked = derivative_readiness(con, start + timedelta(hours=2))
     assert not blocked["ready"] and blocked["supported_symbols"] == []
     con.close()
