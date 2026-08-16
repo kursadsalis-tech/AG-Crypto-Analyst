@@ -600,3 +600,9 @@ Aynı fiyat+türev veri üzerinde model araması sona ermiştir. Sıradaki çal�
 mimari değişiklik değildir: mevcut Forecast Contract'a yalnız kesin zamanlı
 catalyst event provider eklenmesinin veri fizibilitesidir. Veri yeterli değilse
 tarihsel sonuç üretilmeyecek; exact-time forward veri biriktirilecektir.
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+Exact-time Binance listing/delisting source feasibility passed, and checksum-verified targeted spot-price coverage is available for a frozen catalyst event study. The direct listing/delisting hypothesis has been implemented but its real returns have not yet been opened. Current product state remains SHADOW_ONLY; live Decision Engine, Risk Manager and alert policy are unchanged.
+
+Immediate pending step: run the committed market-data readiness v1.1 and fixed catalyst event study, then evaluate the primary 4h validation result without tuning.
