@@ -556,3 +556,30 @@ Bağlayıcı öğrenme politikası:
 - Orderbook "manipüle edilemez gerçek" kabul edilmez; spoofing ve kısa ömürlü
   emir riski nedeniyle ayrı veri-kalitesi ve forward kanıtı olmadan modele
   eklenmez.
+
+
+---
+
+## Karar 025 - Kripto Kazanç Ajanı Sanal Portföy Sözleşmesi
+
+Unified Forecast Engine yanında çalışan ayrı bir Kripto Kazanç Ajanı kurulacaktır.
+Ajan yalnız sanal para kullanır; gerçek borsa emri, para yatırma/çekme veya trade
+API yetkisi kullanamaz.
+
+İlk politika sonuç görülmeden sabitlenmiştir:
+
+- 10.000 USDT başlangıç sermayesi,
+- Binance 1h spot fiyatlarıyla exact next-open giriş ve exact due-close çıkış,
+- 1x sanal LONG/SHORT,
+- girişte ve çıkışta 10'ar baz puan ücret,
+- işlem başına azami %10, toplam azami %60 açık risk,
+- aynı anda azami 6 pozisyon ve cycle başına azami 3 yeni işlem,
+- yalnız 4h/24h; yön olasılığı >=%52, yön farkı >=5 puan ve q50 yön uyumu,
+- Risk Manager izin vermediğinde yeni pozisyon yok,
+- aynı coinde açık/giriş bekleyen işlem varken overlap yok.
+
+Amaç Forecast Engine'in olasılıklarını gerçekçi ücret ve sermaye muhasebesinde
+ölçmektir; işlem üretmek için eşik zorla düşürülmez. Politika değişikliği aynı
+portföy geçmişini geriye dönük yeniden yazamaz; yeni sürüm/challenger olarak
+başlar. İstanbul 03:00 kapanışında ayrıntılı günlük rapor kaydedilir ve Telegram
+yapılandırılmışsa kısa özet gönderilir.
