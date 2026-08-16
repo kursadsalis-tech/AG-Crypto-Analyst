@@ -691,3 +691,19 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
   model kampanyası açılmasına, V2'nin görmediği son dönemin mühürlü tutulmasına
   ve V3 başarısız olursa aynı veri üzerinde model aramasının durdurulmasına
   karar verildi.
+
+
+## Oturum 2026-08-16 - Forecast Core V3 Development Reddi
+
+- scikit-learn 1.8.0 runtime Mac'e kuruldu.
+- Tek sabit interaction-capable HistGradientBoosting V3 yalnız 4h PRIMARY için
+  development verisinde çalıştırıldı.
+- Sealed 2026-05-28..2026-08-16 dönemi sorgulanmadı ve açılmadı.
+- Development sonucu: n=5.688, Brier -%3,3, MAE %0,0, ECE %9,1.
+- 34 aksiyon (%0,6 coverage), %47,1 hit ve -%0,295 utility oluştu.
+- V3 hem frozen V2.1 hem V1/piyasa baselinelarına karşı reddedildi.
+- Stop kuralı uygulandı: aynı fiyat+türev veri üzerinde V4/model/threshold
+  araması açılmayacak.
+- Sonraki yol, mimariyi koruyarak kesin published_at/available_at taşıyan
+  catalyst olaylarını aynı Forecast Contract'a event provider olarak eklemektir.
+  Yaklaşık zamanlı eski haber verisi kullanılmayacaktır.
