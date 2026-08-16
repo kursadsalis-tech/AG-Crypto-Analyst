@@ -10,14 +10,20 @@ import argparse
 import csv
 import json
 import math
+import ssl
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+try:
+    import certifi
+except ImportError:  # stdlib trust store remains the safe fallback
+    certifi = None
 
-VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1_1"
+
+VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1_1_1"
 BASE_URL = "https://www.deribit.com/api/v2"
 BYBIT_URL = "https://api.bybit.com/v5/market"
 CURRENCIES = ("BTC", "ETH")
@@ -29,6 +35,10 @@ MIN_TWO_SIDED_TOTAL = 20
 MIN_LIQUID_STRIKES_NEAR_24H = 6
 TARGET_MIN_HOURS = 8.0
 TARGET_MAX_HOURS = 72.0
+SSL_CONTEXT = (
+    ssl.create_default_context(cafile=certifi.where())
+    if certifi is not None else ssl.create_default_context()
+)
 
 
 def finite(value):
@@ -42,7 +52,7 @@ def rpc(session, method, **params):
     url = f"{BASE_URL}/public/{method}?{urlencode(params)}"
     if session is None:
         with urlopen(Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"}),
-                     timeout=12) as response:
+                     timeout=12, context=SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     else:
         response = session.get(url, timeout=12)
@@ -57,7 +67,7 @@ def bybit_rpc(session, method, **params):
     url = f"{BYBIT_URL}/{method}?{urlencode(params)}"
     if session is None:
         with urlopen(Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"}),
-                     timeout=30) as response:
+                     timeout=30, context=SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     else:
         response = session.get(url, timeout=30)
@@ -278,7 +288,7 @@ def run(session=None, now_ms=None):
 
 def render(audit):
     status = "SOURCE_FEASIBLE" if audit["ready"] else "SOURCE_BLOCKED"
-    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.1.0")
+    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.1.1")
     print(f"Source: {audit['source'] or 'NONE'} | status={status}")
     print("Scope: BTC/ETH | horizon=24h PRIMARY | history=FORWARD_ONLY")
     for row in audit["currencies"]:
