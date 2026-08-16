@@ -279,7 +279,7 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [x] Forecast Core V2.1'i dondurulmuş gerçek VALIDATION'da bir kez çalıştır
 - [x] V2.1'i üç ufukta doğrulanmış edge olmadığı için reddet ve model ailesini kapat
 - [x] %70 aksiyon eşiğini sonuçtan sonra düşürmeme kararını koru
-- [ ] Interaction-capable Forecast Core V3 model ve evaluation manifestini sonuç görülmeden dondur
+- [x] Interaction-capable Forecast Core V3 model ve evaluation manifestini sonuç görülmeden dondur
 - [ ] V3 geliştirmesini yalnız V2 VALIDATION ve daha eski development verisinde yap
 - [ ] 2026-05-28 sonrası mühürlü dönemi model/kalibrasyon/eşik seçiminden izole et
 - [ ] V3'ü mühürlü final dönemde yalnız bir kez değerlendir
