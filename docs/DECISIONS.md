@@ -529,3 +529,30 @@ Bağlayıcı karar:
 4. The only allowed historical hypothesis is frozen: STRICT_LISTING=AL and STRICT_DELISTING=SAT/REDUCE/AVOID, with 4h primary, 24h secondary, 1h exploratory and 10bps cost.
 5. Multi-coin announcements are clustered by article and cannot cross the chronological DEVELOPMENT/VALIDATION split. No model family, feature search or threshold grid is allowed.
 6. Even a historical pass remains SHADOW_ONLY and cannot produce a confidence claim or product alert without fresh forward probability calibration.
+
+
+---
+
+## Karar 024 - Kanıta Dayalı Kendini Düzeltme
+
+Tahmin motoru hiçbir coini geçmiş yanılgılar nedeniyle kara listeye almayacak ve
+tek bir settlement hatasından sonra canlı model ağırlıklarını değiştirmeyecek.
+
+Bağlayıcı öğrenme politikası:
+
+- Her tahmin anındaki model feature snapshot'ı ve observed-only ajan bağlamı
+  korunur; sonuç geldiğinde hata yön, hedef büyüklüğü, aralık, rejim ve bağlam
+  etiketleriyle sınıflandırılır.
+- "Kök neden" yalnız tekrarlanan, farklı zaman bloklarına yayılan istatistiksel
+  örüntü anlamına gelir; feature importance veya tek olay nedensellik kanıtı
+  sayılmaz.
+- En az 30 olay ve 3 bağımsız hafta olmadan challenger hipotezi oluşturulmaz;
+  toplam 100 settlement öncesinde sistem yalnız kanıt toplar.
+- Öğrenme katmanı canlı champion'ı değiştiremez. Sınırlı challenger, değişmemiş
+  champion'ı untouched forward veride kalibrasyon, hedef hatası ve maliyet
+  sonrası faydada yenmeden terfi edemez.
+- Haber ve sosyal sinyaller çöpe atılmaz, fakat doğrulanana kadar model girdisi
+  değil observed-only teşhis bağlamıdır.
+- Orderbook "manipüle edilemez gerçek" kabul edilmez; spoofing ve kısa ömürlü
+  emir riski nedeniyle ayrı veri-kalitesi ve forward kanıtı olmadan modele
+  eklenmez.
