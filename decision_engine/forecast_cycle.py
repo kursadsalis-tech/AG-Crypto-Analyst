@@ -83,12 +83,18 @@ def main(force=False):
         return result
     except Exception as exc:
         message = str(exc)
+        waiting_for_close = message.startswith("STALE_COMMON_CANDLE")
+        status = "WAITING_FRESH_CLOSE" if waiting_for_close else "ERROR"
         con = sqlite3.connect(DB_NAME, timeout=30)
         try:
             ensure_state_table(con)
-            save_state(con, "ERROR", message)
+            save_state(con, status, message)
         finally:
             con.close()
+        if waiting_for_close:
+            print("Unified Forecast Engine: güncel kapanış penceresi kaçırıldı; "
+                  "sonraki taze saat kapanışı bekleniyor.")
+            return {"status": "SKIPPED", "reason": status, "message": message}
         print(f"Unified Forecast cycle: HATA -> {message}")
         return {"status": "ERROR", "message": message}
 
