@@ -82,3 +82,19 @@ baseline from which target error, interval coverage, Brier, direction hit and
 action utility will now be settled automatically. The next work item is to
 observe the first settlements and connect this forecast table to the daily
 investment committee report; no new provider or model lab is opened.
+
+
+## 2026-08-17 — Crypto Profit Agent handoff
+
+- Added `paper_trading.crypto_profit_agent` as PAPER_ONLY economic validation.
+- Default virtual capital: 10,000 USDT; 1x LONG/SHORT; 10 bps per side.
+- Exact next-open entry and exact due-close exit; no gap bridging.
+- Risk limits: 10% per position, 60% total, six open, three new/cycle.
+- Candidate policy: 4h/24h, >=52% directional probability, >=5pp gap,
+  q50 direction alignment, current Risk Manager permission.
+- Integrated into `decision_engine.hourly_forecast_job`; existing LaunchAgent
+  does not need reinstall after git pull.
+- Europe/Istanbul 03:00 report:
+  `reports/daily_crypto_profit_agent_report.md`; Telegram summary when configured.
+- Next verification: pull main, run the agent self-test once, then let the next
+  natural hourly job create/fill the first paper positions.
