@@ -404,7 +404,7 @@ def select_new_positions(con, now):
             f"q50_move={row['predicted_move_pct']:.3f}%"
         )
         planned_entry = parse_time(row["as_of"]) + timedelta(milliseconds=1)
-        con.execute("""
+        cursor = con.execute("""
             INSERT OR IGNORE INTO paper_agent_positions(
                 forecast_id,agent_version,policy_version,symbol,horizon_hours,
                 direction,status,selected_at,as_of,planned_entry_time,due_time,
@@ -419,7 +419,7 @@ def select_new_positions(con, now):
             row["target_price"], row["model_version"], row["artifact_hash"],
             reason,
         ))
-        if con.total_changes:
+        if cursor.rowcount == 1:
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
@@ -520,7 +520,7 @@ def markdown_report(payload):
         lines.append(
             f"- #{row[0]} {row[1]} {row[2]} {row[3]}h | "
             f"seçim={row[4]} | giriş={row[5] or 'PENDING'} @ "
-            f"{float(row[6]):.8g if row[6] is not None else 'N/A'} | "
+            f"{(format(float(row[6]), '.8g') if row[6] is not None else 'N/A')} | "
             f"notional={float(row[7]):.2f} | ücret={float(row[8]):.2f} | "
             f"confidence={100*float(row[9]):.1f}% | status={row[11]} | {row[10]}"
         )
