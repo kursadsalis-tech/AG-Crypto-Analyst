@@ -52,6 +52,12 @@ run; Python's framework trust store lacked the issuer chain. Version 1.1.1
 uses the installed `certifi` CA bundle when available and otherwise retains
 the standard verified SSL context. Certificate verification is never disabled.
 
+The next Mac run reached Bybit successfully but its regional public endpoint
+returned an empty BTC/ETH option universe. Version 1.2 adds one final official
+fallback: OKX public option instruments, tickers, implied-volatility summary
+and open interest. If OKX also provides no complete BTC/ETH surface, the
+options-implied research path ends rather than adding more providers.
+
 ## Next command
 
 ```bash
