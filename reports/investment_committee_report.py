@@ -567,7 +567,7 @@ def build_report(
         "",
         "### Forecast Performansı",
         "",
-        "| Ufuk | Sonuçlanan | Açık | Yön başarısı | MAE | Aralık başarısı | Aksiyon | Aksiyon başarısı |",
+        "| Ufuk | Sonuçlanan | Açık | Sınıf başarısı | MAE | Aralık başarısı | Aksiyon | Aksiyon başarısı |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for horizon in (1, 4, 24):
@@ -579,6 +579,7 @@ def build_report(
             f"%{score['interval_hit_rate']:.1f} | "
             f"{score['actions']} | %{score['action_hit_rate']:.1f} |"
         )
+    lines.extend(["", "Sınıf başarısı, **UP/DOWN/NEUTRAL** üç sınıfının toplam isabetidir; yalnız yönlü işlem başarısı değildir."])
     if diagnosis_counts:
         lines.extend(["", "### Biriken Hata Nedenleri", ""])
         for code, count in diagnosis_counts.items():
