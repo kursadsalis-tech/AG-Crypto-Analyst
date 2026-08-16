@@ -526,3 +526,16 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Hyperparameter/model/threshold grid açılmadı. V1 ve dondurulmuş V2.1 baselinelarını geçmek zorunlu hale getirildi.
 - Geliştirme sorguları 2026-05-28'de fiziksel olarak kesiliyor; 2026-05-28..2026-08-16 sealed dönemine erişen evaluator henüz oluşturulmadı.
 - Runtime scikit-learn 1.8.0 olarak sabitlendi. Sentetik model, probability, artifact round-trip ve V2 regression testleri geçti.
+
+
+---
+
+## Forecast Core V3 Development Result — 2026-08-16
+
+- Interaction-capable 4h PRIMARY V3 development gate çalıştırıldı.
+- Sealed 2026-05-28..2026-08-16 dönemi okunmadı veya değerlendirilmedi.
+- Sonuç REJECT: n=5.688, Brier skill -%3,3, MAE skill %0,0, class ECE %9,1.
+- 34 ham aksiyon (%0,6 coverage), %47,1 claimed hit ve -%0,295 ortalama utility üretildi.
+- V3 hem piyasa/V1 baselinelarını hem frozen V2.1'i geçemedi.
+- Önceden kayıtlı stop kuralı uygulandı: aynı fiyat+türev veri üzerinde yeni model, threshold veya V4 araması açılmayacak.
+- Sonraki araştırma yalnız exact-time catalyst verisi veya yeni forward kanıtla aynı Forecast Contract'a feature/event provider ekleyebilir.
