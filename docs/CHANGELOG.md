@@ -547,3 +547,14 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Collected 25,005 hourly rows across 1,079 ready archives with zero archive errors in the first real run.
 - Added `analysis.exact_time_catalyst_event_study` v1.0 with fixed listing/delisting actions, article-clustered chronology, weekly cluster bootstrap and fail-closed validation gates.
 - Real event-study returns remain unopened at this checkpoint.
+
+
+## 2026-08-17 — Crypto Profit Agent v1.0.0
+
+- Added autonomous PAPER_ONLY portfolio agent consuming Unified Forecast rows.
+- Added exact timestamp fills, 1x LONG/SHORT ledger, explicit two-sided fees,
+  cash/reserved capital, realized/unrealized P&L and persistent trade audit.
+- Added fixed opportunity policy with Risk Manager veto and portfolio limits.
+- Integrated paper execution into the existing hourly Forecast LaunchAgent.
+- Added Europe/Istanbul 03:00 detailed Markdown report and Telegram summary.
+- Added deterministic policy/P&L/time-window self-test.
