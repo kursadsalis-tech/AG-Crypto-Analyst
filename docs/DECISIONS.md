@@ -445,3 +445,36 @@ JSON key/hash farkı, unsupported cohort gap'leri, %98 readiness ile %100 runtim
 çelişkisi, funding interval semantiği, raw/Risk aksiyon ayrımı ve az blokta
 yanıltıcı confidence interval düzeltilmiştir. Sonuca göre eşik, model veya veri
 paketi değiştirilmeyecektir.
+
+
+---
+
+## Karar 022 - Forecast Core V2.1 Reddi ve Tek V3 Model Kampanyası
+
+2026-08-16 gerçek VALIDATION sonucu, veri kalitesi geçtikten sonra V2.1
+futures/microstructure additive-stump modelinde doğrulanmış edge olmadığını
+gösterdi. 4h PRIMARY baseline'a yakın kaldı; 24h'deki +%3,8 Brier izi MAE,
+kalibrasyon ve aksiyon kapılarını geçmedi; 1h baseline'dan kötüydü. Hiçbir
+ufukta %70 olasılık eşiğini aşan ham aksiyon oluşmadı.
+
+Karar:
+
+- FUTURES_MICROSTRUCTURE_GBDT_V2_1_FIXED reddedildi ve yeniden eşik/model
+  ayarı için açılmayacak.
+- %70 eşiği düşürülmeyecek; sıfır aksiyon başarı olarak sunulmayacak.
+- Forecast Contract, point-in-time türev veri katmanı, Risk veto ve validation
+  kapıları korunacak. Mimari yeniden yazılmayacak.
+- Bir sonraki tek kontrollü model kampanyası, etkileşimleri öğrenebilen gerçek
+  gradient-boosting Forecast Core V3'tür. V2'nin additive stump sınırlamasını
+  kaldırır; yeni bir veri/threshold grid kampanyası açmaz.
+- V2 VALIDATION dönemi bundan sonra development verisidir. V2 tarafından
+  açılmayan 2026-05-28 sonrası OBSERVED_DIAGNOSTIC dilimi V3 sonucu için
+  mühürlü tutulur; model, kalibrasyon veya eşik seçimine giremez.
+- V3 hyperparameter seçimi yalnız development içindeki purged walk-forward
+  bloklarda, küçük ve önceden kayıtlı bir aralıkta yapılabilir. Son mühürlü
+  dilim yalnız bir kez açılır.
+- V3 de reddedilirse aynı fiyat+türev veri üzerinde yeni model/threshold araması
+  durdurulur. Sonraki ilerleme exact-time catalyst veya yeni forward veri
+  gerektirir.
+- Tarihsel geçiş olsa bile ürün SHADOW_ONLY kalır ve fresh forward doğrulama
+  olmadan kullanıcıya güven yüzdesiyle AL/SAT alarmı verilmez.
