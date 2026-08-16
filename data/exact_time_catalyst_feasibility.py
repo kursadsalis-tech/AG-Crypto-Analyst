@@ -12,10 +12,10 @@ import csv
 import json
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_1"
+VERSION = "EXACT_TIME_CATALYST_FEASIBILITY_V1_2"
 BASE_URL = "https://www.binance.com"
 LIST_URL = BASE_URL + "/bapi/apex/v1/public/apex/cms/article/list/query"
 DETAIL_URL = BASE_URL + "/bapi/composite/v1/public/cms/article/detail/query"
@@ -28,6 +28,7 @@ CATEGORIES = {
 PAGE_SIZE = 20
 MAX_PAGES = 100
 TIMEOUT = 25
+RECENT_AUDIT_DAYS = 1095
 OUTPUT_PATH = Path("reports/exact_time_catalyst_feasibility.csv")
 AUDIT_PATH = Path("reports/exact_time_catalyst_audit.json")
 
@@ -113,7 +114,7 @@ def extract_tickers(title):
 
 def normalize_article(
     article, catalog_id, category, release_value=None,
-    timestamp_source="LIST_RELEASE_DATE",
+    timestamp_source="LIST_RELEASE_DATE", raw_rank=None,
 ):
     code = str(article.get("code") or "").strip()
     title = str(article.get("title") or "").strip()
@@ -129,6 +130,7 @@ def normalize_article(
         "source": "BINANCE_OFFICIAL_ANNOUNCEMENT",
         "catalog_id": catalog_id,
         "category": category,
+        "raw_rank": raw_rank,
         "article_code": code.lower(),
         "title": title,
         "release_time": released.isoformat(),
@@ -164,7 +166,7 @@ def fetch_category(session, catalog_id, category):
             if code in seen:
                 continue
             seen.add(code)
-            output.append((article, catalog_id, category))
+            output.append((article, catalog_id, category, len(output) + 1))
             page_new += 1
         if page_new == 0 or len(articles) < PAGE_SIZE:
             break
@@ -217,6 +219,38 @@ def audit(rows, raw_count, invalid):
     ]
     codes = [row["article_code"] for row in rows]
     counts = Counter(row["category"] for row in rows)
+    audit_end = times[-1] if times else utcnow()
+    recent_cutoff = audit_end - timedelta(days=RECENT_AUDIT_DAYS)
+    recent_boundaries = {}
+    for category in CATEGORIES.values():
+        ranks = [
+            row["raw_rank"] for row in rows
+            if row["category"] == category
+            and datetime.fromisoformat(row["release_time"]) >= recent_cutoff
+        ]
+        recent_boundaries[category] = max(ranks, default=0)
+    recent_raw = sum(recent_boundaries.values())
+    recent_valid = sum(
+        row["raw_rank"] <= recent_boundaries[row["category"]]
+        for row in rows
+    )
+    recent_exact_ratio = recent_valid / recent_raw if recent_raw else 0.0
+    recent_invalid = sum(
+        item.get("raw_rank", 10**9) <= recent_boundaries.get(item["category"], 0)
+        for item in invalid
+    )
+    order_violations = 0
+    for category in CATEGORIES.values():
+        ordered = sorted(
+            (row for row in rows if row["category"] == category),
+            key=lambda row: row["raw_rank"],
+        )
+        previous = None
+        for row in ordered:
+            current = datetime.fromisoformat(row["release_time"])
+            if previous is not None and current > previous:
+                order_violations += 1
+            previous = current
     span_days = (times[-1] - times[0]).total_seconds() / 86400.0 if len(times) >= 2 else 0.0
     result = {
         "version": VERSION,
@@ -229,6 +263,15 @@ def audit(rows, raw_count, invalid):
             row["timestamp_source"].startswith("DETAIL_") for row in rows
         ),
         "exact_timestamp_ratio": len(rows) / raw_count if raw_count else 0.0,
+        "recent_audit_days": RECENT_AUDIT_DAYS,
+        "recent_cutoff": recent_cutoff.isoformat(),
+        "recent_raw_articles": recent_raw,
+        "recent_valid_articles": recent_valid,
+        "recent_invalid_articles": recent_invalid,
+        "recent_exact_timestamp_ratio": recent_exact_ratio,
+        "recent_rank_boundaries": recent_boundaries,
+        "recent_accounting_complete": recent_valid + recent_invalid == recent_raw,
+        "catalog_time_order_violations": order_violations,
         "unique_story_ratio": len(set(codes)) / len(codes) if codes else 0.0,
         "usable_span_days": span_days,
         "strict_directional_articles": len(strict),
@@ -238,7 +281,9 @@ def audit(rows, raw_count, invalid):
     }
     gates = {
         "raw_articles_gte_300": raw_count >= 300,
-        "exact_timestamp_ratio_gte_99pct": result["exact_timestamp_ratio"] >= 0.99,
+        "recent_exact_timestamp_ratio_gte_99pct": recent_exact_ratio >= 0.99,
+        "recent_rank_accounting_complete": result["recent_accounting_complete"],
+        "catalog_time_order_violations_eq_0": order_violations == 0,
         "unique_story_ratio_gte_99pct": result["unique_story_ratio"] >= 0.99,
         "usable_span_gte_730d": span_days >= 730.0,
         "strict_directional_articles_gte_150": len(strict) >= 150,
@@ -270,9 +315,11 @@ def run():
     for catalog_id, category in CATEGORIES.items():
         raw.extend(fetch_category(session, catalog_id, category))
     rows, invalid = [], []
-    for article, catalog_id, category in raw:
+    for article, catalog_id, category, raw_rank in raw:
         try:
-            rows.append(normalize_article(article, catalog_id, category))
+            rows.append(normalize_article(
+                article, catalog_id, category, raw_rank=raw_rank
+            ))
         except Exception as list_exc:
             try:
                 release_value, timestamp_source, _ = detail_release_date(
@@ -282,10 +329,13 @@ def run():
                     article, catalog_id, category,
                     release_value=release_value,
                     timestamp_source=timestamp_source,
+                    raw_rank=raw_rank,
                 ))
             except Exception as detail_exc:
                 invalid.append({
                     "catalog_id": catalog_id,
+                    "category": category,
+                    "raw_rank": raw_rank,
                     "code": article.get("code"),
                     "title": article.get("title"),
                     "list_error": str(list_exc),
@@ -304,13 +354,21 @@ def run():
 
 
 def render(result):
-    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.1.0")
+    print("AG Crypto Analyst - Exact-Time Catalyst Source Feasibility v1.2.0")
     print(f"Source: Binance official announcement metadata | status={result['status']}")
     print(
         f"Raw={result['raw_articles']} | valid={result['valid_articles']} | "
         f"exact_time={100.0 * result['exact_timestamp_ratio']:.1f}% | "
         f"unique={100.0 * result['unique_story_ratio']:.1f}% | "
         f"span={result['usable_span_days']:.1f}d"
+    )
+    print(
+        f"Recent {result['recent_audit_days']}d: "
+        f"raw={result['recent_raw_articles']} | "
+        f"valid={result['recent_valid_articles']} | "
+        f"invalid={result['recent_invalid_articles']} | "
+        f"exact_time={100.0 * result['recent_exact_timestamp_ratio']:.1f}% | "
+        f"order_violations={result['catalog_time_order_violations']}"
     )
     print(
         f"Strict directional={result['strict_directional_articles']} | "
@@ -340,11 +398,12 @@ def self_test():
     }
     articles, total = article_list(payload, 48)
     assert total is None and len(articles) == 1
-    row = normalize_article(articles[0], 48, CATEGORIES[48])
+    row = normalize_article(articles[0], 48, CATEGORIES[48], raw_rank=1)
     assert row["event_type"] == "STRICT_LISTING"
     assert row["tickers"] == "EXT"
     assert row["release_time"].startswith("2025-01-01")
     duplicate = dict(row)
+    duplicate["raw_rank"] = 2
     result = audit([row, duplicate], 2, [])
     assert result["unique_story_ratio"] == 0.5
     assert result["status"] == "SOURCE_BLOCKED"
