@@ -17,8 +17,8 @@ from risk_manager import signal_risk_gate
 
 
 DB_NAME = "crypto_data.db"
-REPORT_VERSION = "1.2.0"
-REPORT_POLICY = "INVESTMENT_COMMITTEE_REPORT_V1"
+REPORT_VERSION = "1.3.0"
+REPORT_POLICY = "INVESTMENT_COMMITTEE_REPORT_V2_FORECAST"
 DECISION_ENGINE_VERSION = "1.1.0"
 DECISION_POLICY_VERSION = "DECISION_POLICY_V1_SHADOW"
 MAX_DECISION_AGE_MINUTES = 30.0
@@ -188,6 +188,134 @@ def decision_shadow_performance(con):
     return result
 
 
+
+def latest_forecast_bundle(con):
+    if not table_exists(con, "forecast_engine_predictions"):
+        return None, []
+    con.row_factory = sqlite3.Row
+    latest = con.execute("""
+        SELECT as_of, artifact_hash, model_version, MAX(created_at) AS created_at
+        FROM forecast_engine_predictions
+        GROUP BY as_of, artifact_hash, model_version
+        ORDER BY as_of DESC LIMIT 1
+    """).fetchone()
+    if not latest:
+        return None, []
+    rows = con.execute("""
+        SELECT symbol, horizon_hours, current_price, target_price,
+               price_p10, price_p90, p_up, p_down, p_neutral,
+               shadow_action, risk_adjusted_action, risk_eligible,
+               risk_state, risk_cap_pct, due_time, status
+        FROM forecast_engine_predictions
+        WHERE as_of=? AND artifact_hash=? AND model_version=?
+        ORDER BY symbol, horizon_hours
+    """, (latest["as_of"], latest["artifact_hash"], latest["model_version"])).fetchall()
+    return dict(latest), [dict(row) for row in rows]
+
+
+def latest_settled_forecasts(con):
+    if not table_exists(con, "forecast_engine_predictions"):
+        return {}
+    con.row_factory = sqlite3.Row
+    rows = con.execute("""
+        SELECT p.symbol, p.horizon_hours, p.exit_price, p.actual_return_pct,
+               p.absolute_error_pct, p.interval_hit, p.direction_hit,
+               p.diagnosis_code, p.due_time
+        FROM forecast_engine_predictions p
+        JOIN (
+            SELECT symbol, horizon_hours, MAX(forecast_id) AS forecast_id
+            FROM forecast_engine_predictions
+            WHERE status='SETTLED'
+            GROUP BY symbol, horizon_hours
+        ) latest ON latest.forecast_id=p.forecast_id
+    """).fetchall()
+    return {
+        (row["symbol"], int(row["horizon_hours"])): dict(row)
+        for row in rows
+    }
+
+
+def unified_forecast_performance(con):
+    empty = {
+        "settled": 0, "open": 0, "direction_hit_rate": 0.0,
+        "mae_pct": 0.0, "interval_hit_rate": 0.0,
+        "actions": 0, "action_hit_rate": 0.0,
+    }
+    if not table_exists(con, "forecast_engine_predictions"):
+        return {horizon: dict(empty) for horizon in (1, 4, 24)}
+    result = {}
+    for horizon in (1, 4, 24):
+        settled = con.execute("""
+            SELECT COUNT(*), COALESCE(AVG(direction_hit),0),
+                   COALESCE(AVG(absolute_error_pct),0),
+                   COALESCE(AVG(interval_hit),0)
+            FROM forecast_engine_predictions
+            WHERE status='SETTLED' AND horizon_hours=?
+        """, (horizon,)).fetchone()
+        actions = con.execute("""
+            SELECT COUNT(*), COALESCE(AVG(action_hit),0)
+            FROM forecast_engine_predictions
+            WHERE status='SETTLED' AND horizon_hours=?
+              AND action_hit IS NOT NULL
+        """, (horizon,)).fetchone()
+        open_count = con.execute("""
+            SELECT COUNT(*) FROM forecast_engine_predictions
+            WHERE status='OPEN' AND horizon_hours=?
+        """, (horizon,)).fetchone()[0]
+        result[horizon] = {
+            "settled": int(settled[0] or 0),
+            "open": int(open_count or 0),
+            "direction_hit_rate": float(settled[1] or 0.0) * 100.0,
+            "mae_pct": float(settled[2] or 0.0),
+            "interval_hit_rate": float(settled[3] or 0.0) * 100.0,
+            "actions": int(actions[0] or 0),
+            "action_hit_rate": float(actions[1] or 0.0) * 100.0,
+        }
+    return result
+
+
+def forecast_diagnosis_counts(con):
+    if not table_exists(con, "forecast_engine_predictions"):
+        return {}
+    columns = {
+        row[1] for row in con.execute(
+            "PRAGMA table_info(forecast_engine_predictions)"
+        ).fetchall()
+    }
+    if "diagnosis_code" not in columns:
+        return {}
+    return {
+        str(code): int(count)
+        for code, count in con.execute("""
+            SELECT diagnosis_code, COUNT(*)
+            FROM forecast_engine_predictions
+            WHERE status='SETTLED' AND diagnosis_code IS NOT NULL
+            GROUP BY diagnosis_code ORDER BY COUNT(*) DESC
+        """).fetchall()
+    }
+
+
+def fmt_forecast_price(value):
+    value = float(value)
+    if value >= 1000:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:,.4f}"
+    if value >= 0.01:
+        return f"{value:.6f}"
+    return f"{value:.8f}"
+
+
+def fmt_previous_outcome(outcome):
+    if not outcome:
+        return "Birikiyor"
+    return (
+        f"{fmt_forecast_price(outcome['exit_price'])} | "
+        f"hata=%{float(outcome['absolute_error_pct']):.2f} | "
+        f"{outcome.get('diagnosis_code') or 'DIAGNOSIS_PENDING'}"
+    )
+
+
 def policy_status(policy, now):
     if not policy:
         return {
@@ -328,6 +456,11 @@ def build_report(
     assets,
     forward,
     shadow,
+    forecast_bundle,
+    forecasts,
+    forecast_scores,
+    latest_outcomes,
+    diagnosis_counts,
 ):
     local_now = now.astimezone(ISTANBUL)
     decision_state = decision_run_status(latest_run, now)
@@ -383,6 +516,67 @@ def build_report(
     ]
     if state_reasons:
         lines.append(f"- Üretim kısıtı: {', '.join(state_reasons)}")
+
+
+    lines.extend([
+        "",
+        "## Birleşik Fiyat Tahminleri — Forward Shadow",
+        "",
+        (
+            f"- Forecast zamanı: {forecast_bundle['as_of']} | "
+            f"model={forecast_bundle['model_version']} | satır={len(forecasts)}/39"
+            if forecast_bundle else
+            "- Forecast durumu: **NO_FORECAST — güncel tahmin paketi bulunamadı.**"
+        ),
+        "",
+        "| Coin | Ufuk | Şimdi | q50 hedef | %80 aralık | UP | DOWN | Gölge | Risk sonrası | Önceki sonuç / hata |",
+        "|---|---:|---:|---:|---:|---:|---:|---|---|---|",
+    ])
+    for row in forecasts:
+        outcome = latest_outcomes.get(
+            (row["symbol"], int(row["horizon_hours"]))
+        )
+        lines.append(
+            f"| {row['symbol']} | {int(row['horizon_hours'])}h | "
+            f"{fmt_forecast_price(row['current_price'])} | "
+            f"{fmt_forecast_price(row['target_price'])} | "
+            f"{fmt_forecast_price(row['price_p10'])}–"
+            f"{fmt_forecast_price(row['price_p90'])} | "
+            f"%{float(row['p_up']) * 100:.1f} | "
+            f"%{float(row['p_down']) * 100:.1f} | "
+            f"{row['shadow_action']} | **{row['risk_adjusted_action']}** | "
+            f"{fmt_previous_outcome(outcome)} |"
+        )
+    if not forecasts:
+        lines.append("| Veri yok | — | — | — | — | — | — | BEKLE | **BEKLE** | Birikiyor |")
+
+    lines.extend([
+        "",
+        "Hedef q50 medyandır; aralık q10–q90'dır. UP/DOWN olasılığı 10 bps "
+        "maliyet ve 5 bps anlamlı hareket eşiği sonrasını ifade eder. "
+        "Risk yalnız aksiyonu veto eder; hedefi veya olasılığı değiştirmez.",
+        "",
+        "### Forecast Performansı",
+        "",
+        "| Ufuk | Sonuçlanan | Açık | Yön başarısı | MAE | Aralık başarısı | Aksiyon | Aksiyon başarısı |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for horizon in (1, 4, 24):
+        score = forecast_scores[horizon]
+        lines.append(
+            f"| {horizon}h | {score['settled']} | {score['open']} | "
+            f"%{score['direction_hit_rate']:.1f} | "
+            f"%{score['mae_pct']:.3f} | "
+            f"%{score['interval_hit_rate']:.1f} | "
+            f"{score['actions']} | %{score['action_hit_rate']:.1f} |"
+        )
+    if diagnosis_counts:
+        lines.extend(["", "### Biriken Hata Nedenleri", ""])
+        for code, count in diagnosis_counts.items():
+            lines.append(f"- {code}: {count}")
+    else:
+        lines.extend(["", "Hata teşhisi: İlk tahminlerin sonuçlanması bekleniyor."])
+
 
     lines.extend([
         "",
@@ -503,6 +697,12 @@ def build_report(
         "decision_count": len(decisions),
         "decision_run_id": latest_run["run_id"] if latest_run else None,
         "decision_age_minutes": decision_state["age_minutes"],
+        "forecast_count": len(forecasts),
+        "forecast_as_of": forecast_bundle["as_of"] if forecast_bundle else None,
+        "forecast_settled": sum(
+            row["settled"] for row in forecast_scores.values()
+        ),
+        "forecast_diagnoses": diagnosis_counts,
     }
     return "\n".join(lines) + "\n", summary
 
@@ -570,6 +770,10 @@ def generate(now=None, persist=True, write_file=True):
         )
         forward = forward_performance(con)
         shadow = decision_shadow_performance(con)
+        forecast_bundle, forecasts = latest_forecast_bundle(con)
+        latest_outcomes = latest_settled_forecasts(con)
+        forecast_scores = unified_forecast_performance(con)
+        diagnosis_counts = forecast_diagnosis_counts(con)
         content, summary = build_report(
             now,
             latest_run,
@@ -579,6 +783,11 @@ def generate(now=None, persist=True, write_file=True):
             assets,
             forward,
             shadow,
+            forecast_bundle,
+            forecasts,
+            forecast_scores,
+            latest_outcomes,
+            diagnosis_counts,
         )
         if persist:
             save_report(con, now, content, summary, policy)
@@ -603,7 +812,9 @@ def main():
     print(
         f"Decision run: {summary['decision_run_id'] or 'MISSING'} | "
         f"coin={summary['decision_count']} | "
-        f"risk_blocked={summary['risk_blocked_count']}"
+        f"risk_blocked={summary['risk_blocked_count']} | "
+        f"forecast={summary['forecast_count']}/39 | "
+        f"forecast_settled={summary['forecast_settled']}"
     )
     print(
         "Ürün aksiyonu: "
