@@ -17,8 +17,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1"
+VERSION = "OPTIONS_IMPLIED_FEASIBILITY_V1_1"
 BASE_URL = "https://www.deribit.com/api/v2"
+BYBIT_URL = "https://api.bybit.com/v5/market"
 CURRENCIES = ("BTC", "ETH")
 AUDIT_PATH = Path("reports/options_implied_feasibility.json")
 DETAIL_PATH = Path("reports/options_implied_surface.csv")
@@ -41,15 +42,81 @@ def rpc(session, method, **params):
     url = f"{BASE_URL}/public/{method}?{urlencode(params)}"
     if session is None:
         with urlopen(Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"}),
+                     timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    else:
+        response = session.get(url, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+    if payload.get("error"):
+        raise RuntimeError(f"Deribit {method}: {payload['error']}")
+    return payload.get("result")
+
+
+def bybit_rpc(session, method, **params):
+    url = f"{BYBIT_URL}/{method}?{urlencode(params)}"
+    if session is None:
+        with urlopen(Request(url, headers={"User-Agent": "AG-Crypto-Analyst/1.0"}),
                      timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
     else:
         response = session.get(url, timeout=30)
         response.raise_for_status()
         payload = response.json()
-    if payload.get("error"):
-        raise RuntimeError(f"Deribit {method}: {payload['error']}")
-    return payload.get("result")
+    if payload.get("retCode") != 0:
+        raise RuntimeError(
+            f"Bybit {method}: {payload.get('retCode')} {payload.get('retMsg')}"
+        )
+    return payload.get("result") or {}
+
+
+def load_deribit_currency(session, currency, now_ms):
+    instruments = rpc(
+        session, "get_instruments", currency=currency,
+        kind="option", expired="false"
+    )
+    summaries = rpc(
+        session, "get_book_summary_by_currency",
+        currency=currency, kind="option"
+    )
+    return parse_surface(currency, instruments, summaries, now_ms)
+
+
+def load_bybit_currency(session, currency, now_ms):
+    instruments = []
+    cursor = ""
+    while True:
+        params = {"category": "option", "baseCoin": currency, "limit": 500}
+        if cursor:
+            params["cursor"] = cursor
+        result = bybit_rpc(session, "instruments-info", **params)
+        instruments.extend(result.get("list") or [])
+        cursor = result.get("nextPageCursor") or ""
+        if not cursor:
+            break
+    ticker_result = bybit_rpc(
+        session, "tickers", category="option", baseCoin=currency
+    )
+    metadata = []
+    summaries = []
+    for row in instruments:
+        name = row.get("symbol")
+        metadata.append({
+            "instrument_name": name,
+            "expiration_timestamp": row.get("deliveryTime"),
+            "strike": row.get("strike"),
+            "option_type": str(row.get("optionsType") or "").lower(),
+        })
+    for row in ticker_result.get("list") or []:
+        summaries.append({
+            "instrument_name": row.get("symbol"),
+            "bid_price": row.get("bid1Price"),
+            "ask_price": row.get("ask1Price"),
+            "mark_iv": row.get("markIv"),
+            "open_interest": row.get("openInterest"),
+            "volume": row.get("volume24h"),
+        })
+    return parse_surface(currency, metadata, summaries, now_ms)
 
 
 def parse_surface(currency, instruments, summaries, now_ms):
@@ -149,34 +216,52 @@ def write_csv(rows):
 
 def run(session=None, now_ms=None):
     now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
-    all_rows = []
-    audits = []
-    errors = []
-    for currency in CURRENCIES:
-        try:
-            instruments = rpc(
-                session, "get_instruments", currency=currency,
-                kind="option", expired="false"
+    selected_provider = None
+    all_rows, audits, errors = [], [], []
+    attempts = []
+    providers = (
+        ("Deribit public JSON-RPC", load_deribit_currency),
+        ("Bybit public V5 REST", load_bybit_currency),
+    )
+    for provider_name, loader in providers:
+        provider_rows, provider_audits, provider_errors = [], [], []
+        for currency in CURRENCIES:
+            try:
+                rows = loader(session, currency, now_ms)
+                provider_rows.extend(rows)
+                provider_audits.append(audit_currency(currency, rows))
+            except Exception as exc:  # source isolation is part of the audit
+                provider_errors.append({
+                    "provider": provider_name,
+                    "currency": currency,
+                    "error": str(exc),
+                })
+                # Both currencies are mandatory. A provider-level transport or
+                # schema failure cannot yield a usable partial surface.
+                break
+        attempts.append({
+            "provider": provider_name,
+            "currencies_loaded": len(provider_audits),
+            "errors": provider_errors,
+        })
+        if not provider_errors and len(provider_audits) == len(CURRENCIES):
+            selected_provider = provider_name
+            all_rows, audits, errors = (
+                provider_rows, provider_audits, provider_errors
             )
-            summaries = rpc(
-                session, "get_book_summary_by_currency",
-                currency=currency, kind="option"
-            )
-            rows = parse_surface(currency, instruments, summaries, now_ms)
-            all_rows.extend(rows)
-            audits.append(audit_currency(currency, rows))
-        except Exception as exc:  # source isolation is part of the audit
-            errors.append({"currency": currency, "error": str(exc)})
+            break
+        errors.extend(provider_errors)
     audit = {
         "version": VERSION,
         "captured_at": datetime.fromtimestamp(
             now_ms / 1000.0, tz=timezone.utc
         ).isoformat(),
-        "source": "Deribit public JSON-RPC current option surface",
+        "source": selected_provider,
+        "source_attempts": attempts,
         "scope": "BTC/ETH, forward-only, 24h primary",
         "currencies": audits,
         "source_errors": errors,
-        "ready": not errors and len(audits) == len(CURRENCIES)
+        "ready": selected_provider is not None and len(audits) == len(CURRENCIES)
         and all(row["ready"] for row in audits),
         "historical_claim": False,
         "forecast_computed": False,
@@ -193,8 +278,8 @@ def run(session=None, now_ms=None):
 
 def render(audit):
     status = "SOURCE_FEASIBLE" if audit["ready"] else "SOURCE_BLOCKED"
-    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.0.0")
-    print(f"Source: Deribit public current option surface | status={status}")
+    print("AG Crypto Analyst - Options-Implied Source Feasibility v1.1.0")
+    print(f"Source: {audit['source'] or 'NONE'} | status={status}")
     print("Scope: BTC/ETH | horizon=24h PRIMARY | history=FORWARD_ONLY")
     for row in audit["currencies"]:
         hours = row["target_expiry_hours"]
@@ -208,8 +293,12 @@ def render(audit):
         failed = [key for key, value in row["checks"].items() if not value]
         if failed:
             print("failed: " + ",".join(failed))
-    for error in audit["source_errors"]:
-        print(f"{error['currency']}: SOURCE_ERROR -> {error['error']}")
+    for attempt in audit["source_attempts"]:
+        if attempt["errors"]:
+            reason = "; ".join(
+                f"{row['currency']}={row['error']}" for row in attempt["errors"]
+            )
+            print(f"Fallback: {attempt['provider']} unavailable -> {reason}")
     print("No probability, target price, return or backtest result was computed.")
     print(f"Audit: {AUDIT_PATH}")
     print(f"Surface: {DETAIL_PATH}")
