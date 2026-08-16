@@ -661,3 +661,33 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 - Canlı Decision Engine, Risk Manager, rapor, cycle ve alarm politikası
   değiştirilmedi. Gerçek Mac backfill ve tek V2 lab sonucu sonraki oturuma
   bırakıldı; bugün kullanıcıdan ek komut veya test istenmedi.
+
+
+## Oturum 2026-08-16 - Derivatives Backfill ve Forecast Core V2.1 Sonucu
+
+- 430 günlük Binance USD-M toplama 13 coin için çalıştırıldı. İlk arşiv taramasında
+  316 hata görüldü; 277 taker ratio, 35 top-account ve 4 global-account alanı
+  eksikti.
+- Bu alanların opsiyonel olduğu doğrulandı; collector seyrek oranları NULL audit
+  verisi olarak saklayıp geçerli OI satırlarını koruyacak biçimde düzeltildi.
+- İkinci collector çalışması READY 13/13, archive_errors=0 verdi.
+- İlk V2 lab koşusu NULL coercion TypeError ile validation öncesinde durdu.
+  Loader fail-closed düzeltildi; deney sonucu tüketilmedi.
+- İkinci kalite koşusunda opsiyonel ratio bağımlılığı nedeniyle haftalık gap
+  %28,57 bulundu. V2.1 bu üç seyrek ratio özelliği çıkarılarak sonuç görülmeden
+  yeniden donduruldu.
+- Sonraki koşuda toplam gap yalnız %0,3 iken tek hafta %14,9 bulundu. Kök neden,
+  eksik tek OI saatinin positional offset yüzünden 25 ardışık saati geçersiz
+  saymasıydı. Exact 1h/4h/24h anchor lookup eklendi; imputasyon yapılmadı.
+- Nihai veri kalitesi geçti: supported 12/13, skipped context 52, max weekly gap
+  %2,4, raw context 344.580, non-overlap 148.268.
+- Gerçek VALIDATION sonucu:
+  - 4h PRIMARY REJECT: n=5.748, Brier +%0,2, MAE %0,0, aksiyon 0.
+  - 24h SECONDARY REJECT: n=948, Brier +%3,8, MAE -%2,8, ECE %11,2, aksiyon 0.
+  - 1h EXPLORATORY REJECT: n=23.028, Brier -%1,0, MAE -%0,2, aksiyon 0.
+- NO_VALIDATED_FUTURES_MICROSTRUCTURE_EDGE kaydedildi. OBSERVED_DIAGNOSTIC
+  açılmadı; eşik düşürülmedi; canlı ürün politikası değişmedi.
+- V2.1 additive-stump ailesi kapatıldı. Aynı mimaride tek V3 interaction-capable
+  model kampanyası açılmasına, V2'nin görmediği son dönemin mühürlü tutulmasına
+  ve V3 başarısız olursa aynı veri üzerinde model aramasının durdurulmasına
+  karar verildi.
