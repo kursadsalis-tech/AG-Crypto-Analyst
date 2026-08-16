@@ -23,6 +23,7 @@ ENGINE_VERSION = "UNIFIED_FORECAST_ENGINE_V1"
 MODEL_VERSION = "POOLED_RIDGE_DISTRIBUTION_RUNTIME_V1_FIXED"
 MODEL_PATH = Path("reports/unified_forecast_model.pkl")
 MODEL_TTL = timedelta(days=30)
+MAX_FORECAST_AGE = timedelta(minutes=15)
 HORIZONS = (1, 4, 24)
 MIN_TRAIN_ROWS = 1000
 
@@ -185,6 +186,18 @@ def latest_common_close(series, end):
     if not common:
         raise RuntimeError("NO_COMMON_CLOSED_1H_CANDLE")
     return max(common)
+
+
+def validate_forecast_freshness(decision_time, now):
+    age = now - decision_time
+    if age < timedelta(0) or age > MAX_FORECAST_AGE:
+        raise RuntimeError(
+            f"STALE_COMMON_CANDLE:{age.total_seconds() / 60.0:.1f}m>15m; "
+            "next cycle will retry after a fresh hourly close"
+        )
+    if decision_time + timedelta(hours=1) <= now:
+        raise RuntimeError("STALE_COMMON_CANDLE_WOULD_CREATE_RETROSPECTIVE_FORECAST")
+    return age
 
 
 def latest_risk_snapshot(con, now, symbols):
@@ -491,8 +504,7 @@ def run(now=None, force_retrain=False):
             model = train_model(series, start, end, now)
         settled = settle_due(con, now)
         decision_time = latest_common_close(series, end)
-        if decision_time + timedelta(hours=1) <= now:
-            raise RuntimeError("STALE_COMMON_CANDLE_WOULD_CREATE_RETROSPECTIVE_FORECAST")
+        validate_forecast_freshness(decision_time, now)
         forecasts, no_forecast, stored = create_forecasts(con, model, series, decision_time, now)
         if any(row["due_time"] <= now for row in forecasts):
             raise RuntimeError("FORECAST_DUE_TIME_NOT_FORWARD")
@@ -521,6 +533,14 @@ def self_test():
     assert parse_time("2026-01-01T00:00:00+00:00").tzinfo is not None
     payload = {"x": 1, "models": {1: {}, 4: {}, 24: {}}}
     assert artifact_hash(payload) == artifact_hash(payload)
+    reference = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert validate_forecast_freshness(reference, reference + timedelta(minutes=10)) == timedelta(minutes=10)
+    try:
+        validate_forecast_freshness(reference, reference + timedelta(minutes=16))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("stale forecast guard failed")
     print("Unified Forecast Engine self-test: PASS")
 
 
