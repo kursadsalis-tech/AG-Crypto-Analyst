@@ -315,3 +315,14 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [ ] İlk 1h/4h/24h kayıtlarını otomatik settle et ve sonuçları doğrula
 - [ ] Forecast çıktılarını günlük yatırım komitesi raporunda ana tahmin tablosu olarak göster
 - [ ] Yeterli forward örneklem oluşunca horizon bazlı kalibrasyon ve başarı kapılarını değerlendir
+
+
+## Forecast learning loop — completed
+
+- [x] Persist exact named feature snapshots for every new forecast
+- [x] Preserve other-agent evidence as observed-only context, not silent model input
+- [x] Backfill exact model features for the first open 39-row bundle
+- [x] Diagnose settled target, direction, magnitude and interval errors
+- [x] Add latest 39 forecasts and previous outcomes to the daily committee report
+- [x] Add horizon-level MAE, direction, interval and action scorecards to the report
+- [x] Keep report compatible with pre-migration forecast databases
