@@ -321,3 +321,24 @@ The assistant manages project direction and performs every inspection or edit it
 ## Suggested opening next session
 
 **“Dostum, AG Crypto Analyst’a kaldığımız yerden devam edelim.”**
+
+
+## Update 2026-08-16 — Forecast Core V2.1 Final Result
+
+- Binance USD-M backfill is complete and auditable. Twelve of thirteen symbols
+  support the frozen 400-day window; SLP is excluded only for insufficient span.
+- Optional sparse account-ratio fields were removed before outcomes were opened.
+  OI/funding/basis/kline taker-flow remain exact point-in-time inputs.
+- Exact OI anchor lookup fixed gap amplification without imputing missing values.
+  Final data quality passed with 52 skipped contexts and 2.4% worst-week gap.
+- V2.1 was rejected on VALIDATION: 4h PRIMARY Brier skill +0.2%/MAE 0.0%; 24h
+  SECONDARY +3.8%/-2.8% with 11.2% class ECE; 1h EXPLORATORY -1.0%/-0.2%.
+  All horizons produced zero raw actions at the frozen 0.70 threshold.
+- Conclusion is NO_VALIDATED_FUTURES_MICROSTRUCTURE_EDGE. Do not lower the
+  threshold, reopen V2.1, or present abstention as success.
+- The post-2026-05-28 observed diagnostic was not opened. Keep it sealed for the
+  one bounded interaction-capable Forecast Core V3 campaign.
+- Preserve Forecast Contract, data providers, validator, Risk veto and live
+  SHADOW policy. V3 changes the model layer only. If V3 fails, stop model search
+  on the same price+derivatives dataset and require new exact-time catalyst or
+  fresh forward evidence.
