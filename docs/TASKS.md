@@ -360,3 +360,14 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [ ] İlk doğal saatlik paper-agent cycle'ını ve ilk exact giriş dolumunu doğrula
 - [ ] İlk İstanbul 03:00 raporunu doğrula ve bütçe özetini değerlendir
 - [ ] Politika değişikliklerini yalnız ayrı challenger ve ölçülmüş üstünlükle uygula
+
+## Crypto Profit Agent — Execution Realism & Governance
+
+- [ ] Hedef borsa/piyasa/enstrüman sözleşmesini sabitle; spot ve futures muhasebesini ayır
+- [ ] Bid/ask spread, maker/taker ücretleri, dinamik slippage ve latency modelini ekle
+- [ ] Tick/step size, minimum notional, kısmi dolum ve emir reddi simülasyonunu ekle
+- [ ] Likidite/kapasite ile futures funding, borrow ve liquidation koşullarını modelle
+- [ ] Veri boşluğu, stale fiyat, bağlantı ve borsa kesintilerinde fail-closed davranışı test et
+- [ ] Ajanın yalnız öneri sunabildiği; model/politika/risk/sermaye terfisi yapamadığı yönetişim sözleşmesini kodla
+- [ ] Simülatör ve gelecekteki canlı adaptör için ortak execution contract ve parity testleri oluştur
+- [ ] Gerçek sermaye öncesi shadow/dry-run reconciliation ve açık kullanıcı onayı kapısını zorunlu kıl
