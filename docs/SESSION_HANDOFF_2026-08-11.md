@@ -342,3 +342,18 @@ The assistant manages project direction and performs every inspection or edit it
   SHADOW policy. V3 changes the model layer only. If V3 fails, stop model search
   on the same price+derivatives dataset and require new exact-time catalyst or
   fresh forward evidence.
+
+
+## Update 2026-08-16 — Forecast Core V3 Development Rejected
+
+- V3 fixed interaction HistGradientBoosting ran only on development data.
+- The 2026-05-28..2026-08-16 sealed window was not queried or evaluated.
+- Result: n=5,688; Brier skill -3.3%; MAE skill 0.0%; class ECE 9.1%;
+  34 actions, 47.1% hit, -0.295% utility.
+- V3 failed frozen V2.1, V1 and market baselines. Do not create V4, lower the
+  0.70 threshold, or search another model on the same price+derivatives data.
+- Preserve Forecast Contract, validator, Risk veto and live SHADOW policy.
+- Next bounded work is exact-time catalyst data feasibility. Accept only real
+  published_at/available_at provenance; never revive day-only historical news.
+- If historical catalyst coverage is inadequate, collect forward rather than
+  fabricate timestamps or claim historical success.
