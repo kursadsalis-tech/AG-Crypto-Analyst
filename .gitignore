@@ -25,3 +25,5 @@ reports/exact_time_catalyst_feasibility.csv
 reports/exact_time_catalyst_audit.json
 reports/exact_time_catalyst_event_study.csv
 reports/exact_time_catalyst_event_selection.csv
+reports/options_implied_feasibility.json
+reports/options_implied_surface.csv
