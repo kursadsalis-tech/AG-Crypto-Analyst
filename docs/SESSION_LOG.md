@@ -707,3 +707,9 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 - Sonraki yol, mimariyi koruyarak kesin published_at/available_at taşıyan
   catalyst olaylarını aynı Forecast Contract'a event provider olarak eklemektir.
   Yaklaşık zamanlı eski haber verisi kullanılmayacaktır.
+
+## 2026-08-16 — Exact-time catalyst checkpoint
+
+Completed source-only exact-time catalyst feasibility and targeted market-data preparation. The Binance source passed for the protected recent window; 142 timestamp-less legacy items stay excluded. Targeted Vision collection produced 25,005 hourly candles with no download/checksum errors and 90.5% 24h match coverage across 171 coin-events.
+
+Implemented the single bounded direct catalyst hypothesis and validated its code path with compilation, module self-tests and a synthetic causal-entry test. No real catalyst return, hit rate or utility has been observed yet. Session paused before the committed real run at the user's request.
