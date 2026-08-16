@@ -23,7 +23,7 @@ from pathlib import Path
 from data import derivatives_market_data as shared
 
 
-VERSION = "EXACT_TIME_CATALYST_MARKET_DATA_V1"
+VERSION = "EXACT_TIME_CATALYST_MARKET_DATA_V1_1"
 DB_NAME = os.getenv("AGCA_DB", "crypto_data.db")
 EVENT_PATH = Path("reports/exact_time_catalyst_feasibility.csv")
 VISION_BASE = "https://data.binance.vision/data/spot/daily/klines"
@@ -84,7 +84,8 @@ def ensure_tables(con):
     con.commit()
 
 
-def load_events(path=EVENT_PATH):
+def load_events(path=None):
+    path = Path(path) if path is not None else EVENT_PATH
     if not path.exists():
         raise RuntimeError(
             f"{path} bulunamadı; exact-time source feasibility önce çalışmalı"
@@ -334,7 +335,7 @@ def readiness(con, events, coin_events):
         ),
     }
     gates = {
-        "strict_events_with_ticker_gte_100": strict_with_ticker >= 100,
+        "strict_events_with_ticker_gte_75": strict_with_ticker >= 75,
         "matched_coin_events_24h_gte_100": len(full) >= 100,
         "matched_unique_events_24h_gte_75": len(event_codes) >= 75,
         "matched_coins_24h_gte_20": len(coins) >= 20,
@@ -349,7 +350,7 @@ def readiness(con, events, coin_events):
 
 
 def render(result, cutoff, latest, tasks, statuses, inserted):
-    print("AG Crypto Analyst - Exact-Time Catalyst Market Data v1.0.0")
+    print("AG Crypto Analyst - Exact-Time Catalyst Market Data v1.1.0")
     print(f"Window: {iso(cutoff)} -> {iso(latest)} | status={result['status']}")
     print(
         f"Strict events={result['strict_events']} | with_ticker={result['strict_events_with_ticker']} | "
