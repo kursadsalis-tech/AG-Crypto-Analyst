@@ -517,3 +517,12 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   - 1h EXPLORATORY: n=23,028, Brier skill -%1.0, MAE skill -%0.2, aksiyon 0.
 - Eşik düşürülmedi; OBSERVED_DIAGNOSTIC açılmadı; canlı Decision Engine, Risk Manager ve alarm politikası değiştirilmedi.
 - Additive-stump V2.1 ailesi kapatıldı. Sonraki tek model araştırması aynı Forecast Contract ve veri katmanı üzerinde interaction-capable Forecast Core V3 ile sınırlandı.
+
+
+### Forecast Core V3 Development Gate
+
+- Aynı Forecast Contract, derivatives feature provider, Risk veto ve validator korunarak interaction-capable model katmanı eklendi.
+- Model: scikit-learn HistGradientBoosting, yalnız 4h PRIMARY; depth=4, 15 leaf, 180 iteration, learning-rate=0.05, min-leaf=80, L2=1.0, seed=20260816.
+- Hyperparameter/model/threshold grid açılmadı. V1 ve dondurulmuş V2.1 baselinelarını geçmek zorunlu hale getirildi.
+- Geliştirme sorguları 2026-05-28'de fiziksel olarak kesiliyor; 2026-05-28..2026-08-16 sealed dönemine erişen evaluator henüz oluşturulmadı.
+- Runtime scikit-learn 1.8.0 olarak sabitlendi. Sentetik model, probability, artifact round-trip ve V2 regression testleri geçti.
