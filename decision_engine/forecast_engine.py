@@ -660,23 +660,25 @@ def render(result):
     print("AG Crypto Analyst - Unified Forecast Engine v1.0.0 | FORWARD_SHADOW")
     print(f"Model: {MODEL_VERSION} | artifact={result['artifact_hash'][:12]}... | as_of={iso(result['as_of'])}")
     print("Tahmin: q50 hedef + %80 aralık | güven: maliyet+anlamlı hareket sonrası yön olasılığı")
-    print("SYMBOL       HZN       NOW      TARGET          80% RANGE   UP%  DOWN%  SHADOW  RISK  BEN_OLSAM")
+    print("SYMBOL       HZN       NOW      TARGET          80% RANGE   UP%  DOWN%  SHADOW  MKT    ASSET BEN_OLSAM")
     for row in sorted(result["forecasts"], key=lambda item: (item["symbol"], item["horizon"])):
         opinion = row["risk_adjusted_action"]
+        asset_permission = "ALLOW" if row["risk_eligible"] else "BLOCK"
         print(f"{row['symbol']:<12} {row['horizon']:>2}h {row['current_price']:>10,.4f} "
               f"{row['target_price']:>10,.4f} {row['price_p10']:>10,.4f}-{row['price_p90']:<10,.4f} "
               f"{100*row['p_up']:>5.1f} {100*row['p_down']:>6.1f} "
-              f"{row['action']:<7} {row['risk_state']:<6} {opinion}")
+              f"{row['action']:<7} {row['risk_state']:<6} {asset_permission:<5} {opinion}")
     if result["no_forecast"]:
         print("NO_FORECAST:")
         for item in result["no_forecast"]:
             print(f"- {item['symbol']} {item['horizon']}h | {item['reason']}")
     print("FORWARD PERFORMANCE")
     for horizon, score in result["performance"].items():
-        print(f"{horizon:>2}h | settled={score['settled']} | direction={score['direction_hit_pct']:.1f}% | "
+        print(f"{horizon:>2}h | settled={score['settled']} | class_hit={score['direction_hit_pct']:.1f}% | "
               f"MAE={score['mae_pct']:.3f}% | interval={score['interval_hit_pct']:.1f}% | "
               f"actions={score['actions']} | action_hit={score['action_hit_pct']:.1f}% | utility={score['utility_pct']:+.3f}%")
-    print("Not: BEN_OLSAM gölge görüştür; ürün alarmı veya otomatik işlem değildir. SAT=spot azalt/çık/kaçın, short değildir.")
+    print("Not: class_hit, UP/DOWN/NEUTRAL üç sınıfının isabetidir; yalnız yönlü işlem başarısı değildir.")
+    print("BEN_OLSAM gölge görüştür; ürün alarmı veya otomatik işlem değildir. SAT=spot azalt/çık/kaçın, short değildir.")
 
 
 def run(now=None, force_retrain=False):
