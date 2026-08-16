@@ -713,3 +713,15 @@ Frozen REGIME_AWARE_FORWARD_V2 ağırlıkları ve 0.249 cutoff değiştirilmedi.
 Completed source-only exact-time catalyst feasibility and targeted market-data preparation. The Binance source passed for the protected recent window; 142 timestamp-less legacy items stay excluded. Targeted Vision collection produced 25,005 hourly candles with no download/checksum errors and 90.5% 24h match coverage across 171 coin-events.
 
 Implemented the single bounded direct catalyst hypothesis and validated its code path with compilation, module self-tests and a synthetic causal-entry test. No real catalyst return, hit rate or utility has been observed yet. Session paused before the committed real run at the user's request.
+
+
+## 2026-08-16 — Unified Forecast Engine first live bundle
+
+- Commit: `e7cc0cf`.
+- Runtime model artifact: `56c040aaaca4...`.
+- Exact forward as-of: `2026-08-16T16:59:59.999000+00:00`.
+- Produced and persisted: 39/39 forecasts (13 symbols x 1h/4h/24h), no source gaps.
+- Risk snapshot: NORMAL; Risk Manager remained a veto-only layer.
+- All shadow actions: BEKLE because no calibrated direction probability reached the frozen 70% threshold.
+- Forward performance starts at zero settled observations; due records will be settled automatically by subsequent cycles.
+- Product and Telegram alert state remain SHADOW_ONLY.
