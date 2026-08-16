@@ -496,3 +496,27 @@ L2=1.0, early_stopping=False ve random_state=20260816.
   distribution loss sonuçlarını geçmelidir.
 - Development gate başarısızsa sealed evaluator açılmaz. Geçerse model pickle
   SHA-256 ile mühürlenir; sealed evaluator ayrı commit ve tek koşu olur.
+
+
+---
+
+## Karar 023 - Fiyat + Türev Model Aramasını Durdur
+
+Forecast Core V3 interaction modeli development gate'te reddedildi:
+Brier skill -%3,3, MAE skill %0,0, class ECE %9,1; 34 aksiyonda hit %47,1
+ve utility -%0,295. Sealed dönem açılmadı.
+
+Bağlayıcı karar:
+
+- Aynı spot fiyat ve Binance USD-M türev veri setinde V4, yeni model ailesi,
+  hyperparameter grid'i veya %70 altı threshold araması yapılmayacak.
+- V1, V2.1 ve V3 sonuçları bu veri ailesinde doğrulanmış tahmin edge'i
+  bulunmadığını gösterir. BEKLE veya sıfır aksiyon başarı sayılmaz.
+- Forecast Contract, validator, Risk veto ve canlı SHADOW ürün mimarisi korunur.
+- Yeni tarihsel araştırma ancak kesin event-time/availability-time taşıyan,
+  sonuçlardan bağımsız toplanmış yeni bir catalyst veri ailesiyle açılabilir.
+- Yaklaşık gün/saat atanmış eski haber arşivi tekrar kullanılmayacak.
+- Exact-time catalyst verisi yeterli tarihsel kapsam sağlayamazsa uydurma veya
+  imputasyon yapılmaz; forward birikim sürdürülür.
+- Nihai hedef değişmedi: yararlı sıklıkta, kalibre, maliyet sonrası pozitif ve
+  yeni forward dönemde tekrarlanan yüksek güvenli tahminler.
