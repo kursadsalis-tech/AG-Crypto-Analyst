@@ -5,6 +5,7 @@
 - SQLite'ı source-of-truth bırakan opsiyonel PostgreSQL/Supabase dual-write
 - Ortam değişkeni tabanlı bağlantı; repoda secret yok
 - macOS Keychain desteği ve parolayı görünmeden alan güvenli kurulum aracı
+- Operasyonel tablo allowlist'i ve mevcut runtime kayıtları için bootstrap komutu
 - Otomatik uzak schema, tablo ve sütun oluşturma; primary-key upsert
 - Uzak servis yokken kesintisiz SQLite fallback, retry cooldown ve secret-safe log
 - Ortak runtime connection entegrasyonu, birim testleri ve kullanım dokümanı

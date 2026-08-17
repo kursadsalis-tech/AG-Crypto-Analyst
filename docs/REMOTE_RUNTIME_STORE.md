@@ -37,6 +37,19 @@ and newly discovered columns automatically. Existing SQLite rows in a table
 are included the first time that table is changed and committed while remote
 storage is enabled.
 
+Only operational runtime and audit tables are mirrored. Large research and raw
+history tables such as `market_klines`, futures archives, catalyst archives,
+and historical replay inputs remain local by design. This keeps the remote
+store useful for monitoring without repeatedly transferring hundreds of
+thousands of immutable research rows.
+
+After configuring the connection, copy all existing operational runtime rows
+once with:
+
+```bash
+python3 -m scripts.bootstrap_remote_runtime
+```
+
 ## Failure behavior
 
 - SQLite commits first and remains the source of truth.
