@@ -23,6 +23,38 @@ REMOTE_URL_ENV = "AGCA_REMOTE_DATABASE_URL"
 REMOTE_SCHEMA_ENV = "AGCA_REMOTE_DATABASE_SCHEMA"
 REMOTE_TIMEOUT_ENV = "AGCA_REMOTE_CONNECT_TIMEOUT_SECONDS"
 KEYCHAIN_SERVICE = "agca.remote-runtime-store"
+REMOTE_RUNTIME_TABLES = frozenset(
+    {
+        "agent_run_state",
+        "asset_risk_snapshots",
+        "committee_report_snapshots",
+        "crypto_news",
+        "crypto_news_analysis",
+        "decision_engine_snapshots",
+        "decision_shadow_predictions",
+        "forecast_engine_predictions",
+        "forecast_engine_runs",
+        "forecast_learning_hypotheses",
+        "forecast_learning_reviews",
+        "forward_shadow_alert_log",
+        "forward_shadow_predictions",
+        "forward_shadow_state",
+        "macro_observations",
+        "macro_regime_snapshots",
+        "onchain_observations",
+        "paper_agent_daily_reports",
+        "paper_agent_portfolio",
+        "paper_agent_positions",
+        "risk_gate_decisions",
+        "risk_policy_snapshots",
+        "social_sentiment_observations",
+        "social_sentiment_snapshots",
+        "whale_analysis_snapshots",
+        "whale_events",
+        "whale_evidence_snapshots",
+        "whale_scan_state",
+    }
+)
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _WRITE_TABLE = re.compile(
     r"^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|"
@@ -121,6 +153,9 @@ def connect(database, *args, **kwargs):
 
 def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> None:
     global _retry_after
+    tables = tables & REMOTE_RUNTIME_TABLES
+    if not tables:
+        return
     remote_url = _remote_url()
     if not remote_url or time.monotonic() < _retry_after:
         return
