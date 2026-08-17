@@ -71,6 +71,14 @@ class RuntimeStoreTests(unittest.TestCase):
             "postgresql://user:a%2Fb%40c@example.test/postgres?sslmode=require",
         )
 
+    def test_non_runtime_tables_do_not_trigger_remote_connection(self):
+        with mock.patch.dict(os.environ, {runtime_store.REMOTE_URL_ENV: "postgresql://unused"}):
+            with mock.patch.object(runtime_store, "_remote_url") as remote_url:
+                runtime_store._mirror_after_local_commit(
+                    mock.Mock(), {"market_klines", "futures_hourly_market"}
+                )
+                remote_url.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -184,6 +184,8 @@
 - [x] Uzak schema/table/column oluşturma ve idempotent upsert katmanını ekle
 - [x] Secret-safe loglama, retry cooldown, `.env.example` ve kullanım dokümanı ekle
 - [x] macOS Keychain bağlantı saklama ve özel karakterleri güvenli kodlayan kurulum aracı ekle
+- [x] Remote kapsamını operasyonel runtime tablolarıyla sınırla; büyük araştırma arşivlerini yerelde tut
+- [x] Mevcut runtime kayıtları için tek seferlik bootstrap aracı ekle
 - [x] SQLite-only, rollback ve uzak hata fallback testlerini geçir
 - [ ] Gerçek Supabase URL'si sağlandığında staging bağlantı ve satır eşitliği smoke testini yap
 
