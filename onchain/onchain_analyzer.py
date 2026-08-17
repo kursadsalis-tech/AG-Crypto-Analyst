@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 
@@ -121,7 +122,7 @@ def shown_value(value, unit):
 
 
 def main():
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         results = analyze(con)
     finally:

@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import re
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -213,7 +214,7 @@ def main():
         except Exception as exc:
             print(f"{source}: HATA -> {exc}")
 
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_table(con)
         saved = save_rows(con, collected, dynamic_assets)

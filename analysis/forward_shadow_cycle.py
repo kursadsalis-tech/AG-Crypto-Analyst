@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 from analysis import forecast_learning_cycle, forward_shadow_validator
@@ -67,7 +68,7 @@ def main():
     results.append(("report", report_cycle.main()))
 
     print("\n[13/13] Ürün alarm köprüsü çalıştırılıyor...")
-    con = sqlite3.connect(forward_shadow_product_bridge.DB_NAME)
+    con = runtime_connect(forward_shadow_product_bridge.DB_NAME)
     try:
         sent, pending = forward_shadow_product_bridge.deliver_pending_alerts(con)
         print(f"Ürün alarm köprüsü: gönderilen={sent} | bekleyen={pending}")

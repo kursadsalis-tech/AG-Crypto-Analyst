@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -67,7 +68,7 @@ def main():
             errors.append(f"{chain}: {exc}")
             print(f"{chain}: HATA -> {exc}")
 
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_table(con)
         before = con.total_changes

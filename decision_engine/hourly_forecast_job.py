@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 from analysis import forecast_learning_cycle
@@ -15,7 +16,7 @@ def utcnow():
 
 
 def forecast_succeeded_this_hour(now):
-    con = sqlite3.connect(forecast_cycle.DB_NAME, timeout=30)
+    con = runtime_connect(forecast_cycle.DB_NAME, timeout=30)
     try:
         forecast_cycle.ensure_state_table(con)
         row = con.execute(

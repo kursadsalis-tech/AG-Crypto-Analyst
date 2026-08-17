@@ -1,8 +1,9 @@
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 
 DB_NAME = "crypto_data.db"
 
-connection = sqlite3.connect(DB_NAME)
+connection = runtime_connect(DB_NAME)
 
 cursor = connection.cursor()
 

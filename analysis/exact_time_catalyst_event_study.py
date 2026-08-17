@@ -19,6 +19,7 @@ import csv
 import math
 import random
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 import tempfile
 from collections import Counter, defaultdict
@@ -419,7 +420,7 @@ def main():
     if args.self_test:
         self_test()
         return
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         market_data.ensure_tables(con)
         rows, source_gaps, _, _ = build_rows(con)

@@ -1,11 +1,12 @@
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from statistics import median
 from datetime import datetime
 
 DB_NAME = "crypto_data.db"
 REPORT_FILE = "reports/market_analysis.txt"
 
-connection = sqlite3.connect(DB_NAME)
+connection = runtime_connect(DB_NAME)
 cursor = connection.cursor()
 
 cursor.execute("""

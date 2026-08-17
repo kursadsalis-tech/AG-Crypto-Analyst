@@ -18,6 +18,7 @@ import csv
 import math
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -744,7 +745,7 @@ def main():
 
     replay_start, fetch_start, replay_end = requested_range()
     historical_market_data.DB_NAME = DB_NAME
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         fetch_result = ensure_historical_coverage(
             con,

@@ -35,6 +35,7 @@
 - [x] v1.0.0 - Risk Manager
 - [x] v1.1.0 - Decision Engine (SHADOW politika; ürün kararı BEKLE)
 - [x] v1.2.0 - Report Generator
+- [x] v1.2.1 - Remote Runtime Store (SQLite-first PostgreSQL/Supabase dual-write)
 
 ---
 
@@ -177,6 +178,13 @@
 ---
 
 ## AKTİF GÖREVLER
+
+- [x] Ortam değişkeniyle açılan PostgreSQL/Supabase runtime bağlantısı ekle
+- [x] SQLite-first dual-write ve uzak hata durumunda kesintisiz fallback uygula
+- [x] Uzak schema/table/column oluşturma ve idempotent upsert katmanını ekle
+- [x] Secret-safe loglama, retry cooldown, `.env.example` ve kullanım dokümanı ekle
+- [x] SQLite-only, rollback ve uzak hata fallback testlerini geçir
+- [ ] Gerçek Supabase URL'si sağlandığında staging bağlantı ve satır eşitliği smoke testini yap
 
 - [x] Tek merkezi Forecast Core veri sözleşmesini 1h/4h/24h için kilitle
 - [x] Sabit pooled-ridge dağılım challenger'ını ve no-change/climatology benchmark'larını kodla

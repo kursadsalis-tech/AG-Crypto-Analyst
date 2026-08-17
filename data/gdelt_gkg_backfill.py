@@ -13,6 +13,7 @@ import io
 import os
 import re
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -190,7 +191,7 @@ def process_payload(day: datetime, payload: bytes, conn: sqlite3.Connection) -> 
 
 
 def main() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = runtime_connect(DB_PATH)
     init_db(conn)
     day, resumed = resume_day(conn)
 

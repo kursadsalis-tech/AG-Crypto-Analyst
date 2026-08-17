@@ -12,6 +12,7 @@ import json
 import math
 import pickle
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -44,7 +45,7 @@ def parse_time(value):
 
 
 def connect():
-    con = sqlite3.connect(DB_NAME, timeout=30)
+    con = runtime_connect(DB_NAME, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=30000")
     return con

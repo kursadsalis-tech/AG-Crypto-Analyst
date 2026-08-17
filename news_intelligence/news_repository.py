@@ -1,10 +1,11 @@
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 
 DB_NAME = "crypto_data.db"
 
 
 def create_news_table():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -24,7 +25,7 @@ def create_news_table():
 
 
 def create_news_analysis_table():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -47,7 +48,7 @@ def create_news_analysis_table():
 
 
 def save_news_batch(articles):
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.executemany("""
@@ -75,7 +76,7 @@ def save_news_batch(articles):
 
 
 def get_all_news():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     connection.row_factory = sqlite3.Row
     cursor = connection.cursor()
 
@@ -91,7 +92,7 @@ def get_all_news():
 
 
 def save_news_analysis(analysis):
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -120,7 +121,7 @@ def save_news_analysis(analysis):
 
 
 def save_news_analysis_batch(analyses):
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.executemany("""
@@ -152,7 +153,7 @@ def save_news_analysis_batch(analyses):
 
 
 def get_news_analysis_count():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM crypto_news_analysis")
@@ -163,7 +164,7 @@ def get_news_analysis_count():
 
 
 def get_news_count():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM crypto_news")

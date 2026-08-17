@@ -11,6 +11,7 @@ import json
 import math
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -51,7 +52,7 @@ def parse_time(value):
 
 
 def connect():
-    con = sqlite3.connect(DB_NAME, timeout=30)
+    con = runtime_connect(DB_NAME, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=30000")
     return con

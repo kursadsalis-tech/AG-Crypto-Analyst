@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from onchain import onchain_analyzer, onchain_collector
@@ -68,7 +69,7 @@ def save_state(con, status, message, success_at=None):
 
 def main(force=False):
     now = utcnow()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_state_table(con)
         if not force and not is_due(con, now):

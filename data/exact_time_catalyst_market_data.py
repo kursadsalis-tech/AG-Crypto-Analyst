@@ -13,6 +13,7 @@ import csv
 import os
 import re
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import tempfile
 import zipfile
 from collections import Counter
@@ -402,7 +403,7 @@ def self_test():
         rows = parse_spot_zip(path)
         assert len(rows) == 1 and rows[0][2] == 1.0 and rows[0][8] == 3
 
-        con = sqlite3.connect(":memory:")
+        con = runtime_connect(":memory:")
         ensure_tables(con)
         opened = datetime(2025, 1, 1, 1, tzinfo=timezone.utc)
         for offset in range(24):
@@ -433,7 +434,7 @@ def main():
         return
     events, cutoff, latest = load_events()
     coin_events = event_coin_rows(events)
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_tables(con)
         tasks = build_tasks(con, coin_events)

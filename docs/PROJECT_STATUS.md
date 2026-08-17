@@ -33,7 +33,7 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 ## 3. MEVCUT SÜRÜM
 
-Proje ürün sürümü: **v1.2.0**
+Proje ürün sürümü: **v1.2.1**
 
 Tamamlanan ana ürün modülleri:
 
@@ -50,6 +50,20 @@ Tamamlanan ana ürün modülleri:
 - Report Generator ✅ — fail-closed günlük yatırım komitesi brifingi
 
 **Ana ürün yol haritasındaki 10 modülün tamamı çalışan ilk sürümleriyle tamamlandı.** Sonraki fazın tek kontrollü mimari istisnası ölçülebilir Forecast Core araştırma katmanıdır; bunun dışında öncelik doğal 11:00 çalışmasının gözlenmesi, veri birikimi, performans doğrulaması ve ürün güvenilirliğidir.
+
+### Remote Runtime Store - v1.2.1
+
+- Mevcut SQLite veri sözleşmesi ve yerel dosya source-of-truth olarak korundu.
+- Tüm SQLite bağlantı noktaları ortak, geriye uyumlu runtime bağlantısına alındı.
+- `AGCA_REMOTE_DATABASE_URL` tanımlandığında başarılı yerel commit sonrasında
+  değişen tablolar PostgreSQL/Supabase katmanına best-effort aynalanır.
+- Uzak şema, tablolar ve yeni sütunlar otomatik oluşturulur; birincil anahtarlar
+  idempotent upsert için korunur.
+- Uzak bağlantı/driver/kimlik doğrulama hataları yerel cycle'ı durdurmaz; kısa
+  retry cooldown ve secret-safe uyarı logu uygulanır.
+- Gerçek bağlantı bilgileri repoda tutulmaz; `.env.example` ve kısa kurulum
+  dokümanı eklendi.
+- Bu altyapı ürün sinyali, SHADOW politikası veya üretim izinlerini değiştirmez.
 
 Forward Shadow V2, Decision Engine Shadow Validation, Social Sentiment, On-chain, Macro, Whale Tracker ve Risk Manager süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 

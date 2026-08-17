@@ -1,3 +1,13 @@
+# v1.2.1
+
+## Remote Runtime Store
+
+- SQLite'ı source-of-truth bırakan opsiyonel PostgreSQL/Supabase dual-write
+- Ortam değişkeni tabanlı bağlantı; repoda secret yok
+- Otomatik uzak schema, tablo ve sütun oluşturma; primary-key upsert
+- Uzak servis yokken kesintisiz SQLite fallback, retry cooldown ve secret-safe log
+- Ortak runtime connection entegrasyonu, birim testleri ve kullanım dokümanı
+
 # AG Crypto Analyst - Changelog
 
 ## Unreleased - Historical Decision Validation

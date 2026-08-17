@@ -22,6 +22,7 @@ import math
 import os
 import re
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import tempfile
 import time
 import zipfile
@@ -1100,7 +1101,7 @@ def self_test() -> None:
         else:
             raise AssertionError("ambiguous headerless funding archive accepted")
 
-        duplicate_con = sqlite3.connect(":memory:")
+        duplicate_con = runtime_connect(":memory:")
         ensure_tables(duplicate_con)
         duplicate_close = datetime(2026, 1, 1, 0, 59, 59, 999000,
                                    tzinfo=timezone.utc)
@@ -1149,7 +1150,7 @@ def self_test() -> None:
             raise AssertionError("optional positioning NULL values were mutated")
         duplicate_con.close()
 
-        con = sqlite3.connect(":memory:")
+        con = runtime_connect(":memory:")
         ensure_tables(con)
         symbols = SYMBOLS[:10]
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -1220,7 +1221,7 @@ def run(days: int, workers: int, symbols: tuple[str, ...], db_name: str) -> dict
         raise ValueError(f"workers must be between 1 and {MAX_WORKERS}")
     end = floor_hour(utcnow())
     start = end - timedelta(days=days)
-    con = sqlite3.connect(db_name)
+    con = runtime_connect(db_name)
     try:
         ensure_tables(con)
         print("AG Crypto Analyst - USD-M Derivatives Market Data v1.0.0")

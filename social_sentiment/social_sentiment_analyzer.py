@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -113,7 +114,7 @@ def save_snapshot(con, results):
 
 
 def main():
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_snapshot_table(con)
         results = aggregate(load_recent(con))

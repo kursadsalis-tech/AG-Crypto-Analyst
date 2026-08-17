@@ -1,5 +1,19 @@
 # AG Crypto Analyst - Session Log
 
+## Oturum 2026-08-17 - Remote Runtime Store v1.2.1
+
+- SQLite-first ortak runtime bağlantısı eklendi ve mevcut bağlantı noktaları
+  geriye uyumlu biçimde bu katmana geçirildi.
+- Opsiyonel PostgreSQL/Supabase dual-write, otomatik şema oluşturma, primary-key
+  upsert, bağlantı retry cooldown ve secret-safe fallback loglaması eklendi.
+- `.env.example`, opsiyonel runtime dependency ve kurulum dokümanı eklendi.
+- SQLite-only, rollback ve uzak servis hata senaryoları test edildi; tam proje
+  derlemesi geçti.
+- Gerçek Supabase kimlik bilgisi olmadığı için canlı uzak satır eşitliği testi
+  yapılmadı; SQLite davranışı değişmeden doğrulandı.
+
+---
+
 ## Oturum 2026-08-12 - Probabilistic Forecast Core Kararı
 
 Kullanıcı ürün hedefini yeniden netleştirdi: fail-closed BEKLE güvenlik

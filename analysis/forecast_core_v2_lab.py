@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -1505,7 +1506,7 @@ def run_lab(now=None):
     from data import historical_market_data
 
     _, _, requested_end = v1.requested_range(now)
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         readiness = derivative_readiness(con, requested_end)
         start = readiness["analysis_start"]
@@ -1876,7 +1877,7 @@ def self_test():
     # Contract-test the real collector schema. Archive funding intentionally
     # has no mark price; the feature layer must accept that without weakening
     # timestamp checks.
-    con = sqlite3.connect(":memory:")
+    con = runtime_connect(":memory:")
     derivatives_data.ensure_tables(con)
     opened = start
     closed = start + timedelta(hours=1, milliseconds=-1)

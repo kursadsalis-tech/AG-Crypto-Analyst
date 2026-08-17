@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from decision_engine import forecast_engine
@@ -59,7 +60,7 @@ def save_state(con, status, message, success_at=None):
 
 def main(force=False):
     now = utcnow()
-    con = sqlite3.connect(DB_NAME, timeout=30)
+    con = runtime_connect(DB_NAME, timeout=30)
     try:
         ensure_state_table(con)
         if not force and not is_due(con, now):
@@ -72,7 +73,7 @@ def main(force=False):
         forecast_engine.render(result)
         message = (f"forecasts={len(result['forecasts'])} | no_forecast={len(result['no_forecast'])} | "
                    f"settled={result['settled']} | retrained={int(result['model_retrained'])}")
-        con = sqlite3.connect(DB_NAME, timeout=30)
+        con = runtime_connect(DB_NAME, timeout=30)
         try:
             ensure_state_table(con)
             save_state(con, result["status"], message,
@@ -85,7 +86,7 @@ def main(force=False):
         message = str(exc)
         waiting_for_close = message.startswith("STALE_COMMON_CANDLE")
         status = "WAITING_FRESH_CLOSE" if waiting_for_close else "ERROR"
-        con = sqlite3.connect(DB_NAME, timeout=30)
+        con = runtime_connect(DB_NAME, timeout=30)
         try:
             ensure_state_table(con)
             save_state(con, status, message)

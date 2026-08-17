@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 from analysis import forward_shadow_validator
@@ -481,7 +482,7 @@ def main():
     now = utcnow()
     created_at = iso(now)
     run_id = created_at
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_tables(con)
         policy = signal_risk_gate.latest_policy(con)

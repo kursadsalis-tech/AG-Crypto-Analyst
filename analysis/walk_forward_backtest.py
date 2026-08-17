@@ -11,6 +11,7 @@ import csv
 import math
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -146,7 +147,7 @@ def summarize(rows):
 
 
 def main():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     try:
         symbols = get_spot_symbols()
         raw_rows = load_rows(connection)
