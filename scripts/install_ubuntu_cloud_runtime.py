@@ -36,6 +36,7 @@ def service_text(
     project_dir: Path,
     python_exe: Path,
     service_user: str,
+    service_group: str,
 ) -> str:
     return f"""[Unit]
 Description={description}
@@ -46,7 +47,7 @@ ConditionPathExists={project_dir / "crypto_data.db"}
 [Service]
 Type=oneshot
 User={service_user}
-Group={service_user}
+Group={service_group}
 WorkingDirectory={_quoted(str(project_dir))}
 EnvironmentFile=-{ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
@@ -75,8 +76,12 @@ WantedBy=timers.target
 
 
 def payloads(
-    project_dir: Path, python_exe: Path, service_user: str
+    project_dir: Path,
+    python_exe: Path,
+    service_user: str,
+    service_group: str | None = None,
 ) -> dict[str, str]:
+    service_group = service_group or service_user
     return {
         "agca-live-cycle.service": service_text(
             "AGCA five-minute live product cycle",
@@ -84,6 +89,7 @@ def payloads(
             project_dir,
             python_exe,
             service_user,
+            service_group,
         ),
         "agca-live-cycle.timer": timer_text(
             "Run AGCA live product cycle every five minutes",
@@ -96,6 +102,7 @@ def payloads(
             project_dir,
             python_exe,
             service_user,
+            service_group,
         ),
         "agca-hourly-forecast.timer": timer_text(
             "Run AGCA hourly forecast with delayed-data retries",
@@ -149,7 +156,7 @@ def install(project_dir: Path, service_user: str) -> None:
     os.chown(reports, account.pw_uid, account.pw_gid)
 
     for name, text in payloads(
-        project_dir, python_exe, service_user
+        project_dir, python_exe, service_user, group_name
     ).items():
         path = UNIT_DIR / name
         path.write_text(text, encoding="utf-8")
