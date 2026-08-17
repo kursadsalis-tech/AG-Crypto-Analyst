@@ -19,6 +19,19 @@ dual-write without changing the existing SQLite data contracts.
 4. Set `AGCA_REMOTE_DATABASE_URL`. SSL can be required in the URL with
    `?sslmode=require`.
 
+On macOS, the recommended setup keeps the URL out of shell history and plain
+text configuration. Copy the Supabase Session pooler URI while it still
+contains `[YOUR-PASSWORD]`, then run:
+
+```bash
+python3 -m scripts.configure_remote_runtime
+```
+
+Paste the URI template and enter the database password at the hidden prompt.
+The helper percent-encodes special characters, requires SSL, and stores the
+result in macOS Keychain under `agca.remote-runtime-store`. The environment
+variable remains available for non-macOS deployments and takes precedence.
+
 The default remote schema is `agca_runtime`. AGCA creates the schema, tables,
 and newly discovered columns automatically. Existing SQLite rows in a table
 are included the first time that table is changed and committed while remote

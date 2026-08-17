@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from database import runtime_store
+from scripts.configure_remote_runtime import build_connection_url
 
 
 class RuntimeStoreTests(unittest.TestCase):
@@ -53,6 +54,22 @@ class RuntimeStoreTests(unittest.TestCase):
                 con.execute("INSERT INTO events VALUES (1)")
             mirror.assert_called_once()
         con.close()
+
+    def test_environment_url_takes_priority_over_keychain(self):
+        with mock.patch.dict(os.environ, {runtime_store.REMOTE_URL_ENV: "postgresql://env"}):
+            with mock.patch("subprocess.run") as run:
+                self.assertEqual(runtime_store._remote_url(), "postgresql://env")
+                run.assert_not_called()
+
+    def test_connection_builder_encodes_password_and_requires_ssl(self):
+        result = build_connection_url(
+            "postgresql://user:[YOUR-PASSWORD]@example.test/postgres",
+            "a/b@c",
+        )
+        self.assertEqual(
+            result,
+            "postgresql://user:a%2Fb%40c@example.test/postgres?sslmode=require",
+        )
 
 
 if __name__ == "__main__":

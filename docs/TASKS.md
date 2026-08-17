@@ -183,6 +183,7 @@
 - [x] SQLite-first dual-write ve uzak hata durumunda kesintisiz fallback uygula
 - [x] Uzak schema/table/column oluşturma ve idempotent upsert katmanını ekle
 - [x] Secret-safe loglama, retry cooldown, `.env.example` ve kullanım dokümanı ekle
+- [x] macOS Keychain bağlantı saklama ve özel karakterleri güvenli kodlayan kurulum aracı ekle
 - [x] SQLite-only, rollback ve uzak hata fallback testlerini geçir
 - [ ] Gerçek Supabase URL'si sağlandığında staging bağlantı ve satır eşitliği smoke testini yap
 

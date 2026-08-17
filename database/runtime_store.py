@@ -9,9 +9,11 @@ logged and never rolls back (or prevents) the local write.
 from __future__ import annotations
 
 import logging
+import getpass
 import os
 import re
 import sqlite3
+import subprocess
 import time
 from typing import Iterable
 
@@ -20,6 +22,7 @@ LOGGER = logging.getLogger("agca.runtime_store")
 REMOTE_URL_ENV = "AGCA_REMOTE_DATABASE_URL"
 REMOTE_SCHEMA_ENV = "AGCA_REMOTE_DATABASE_SCHEMA"
 REMOTE_TIMEOUT_ENV = "AGCA_REMOTE_CONNECT_TIMEOUT_SECONDS"
+KEYCHAIN_SERVICE = "agca.remote-runtime-store"
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _WRITE_TABLE = re.compile(
     r"^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|"
@@ -118,7 +121,7 @@ def connect(database, *args, **kwargs):
 
 def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> None:
     global _retry_after
-    remote_url = os.getenv(REMOTE_URL_ENV, "").strip()
+    remote_url = _remote_url()
     if not remote_url or time.monotonic() < _retry_after:
         return
 
@@ -141,6 +144,33 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> N
             "Remote runtime mirror failed; local SQLite commit is intact (error_type=%s)",
             type(exc).__name__,
         )
+
+
+def _remote_url() -> str:
+    """Read the URL from the environment, then macOS Keychain if available."""
+
+    configured = os.getenv(REMOTE_URL_ENV, "").strip()
+    if configured:
+        return configured
+    try:
+        result = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-a",
+                getpass.getuser(),
+                "-w",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _mirror_table(local, remote_cursor, schema: str, table: str) -> None:
