@@ -382,3 +382,19 @@ Gereksiz mimari karmaşıklık yok. Küçük örneklem üzerinde overfitting yok
 - [ ] Ajanın yalnız öneri sunabildiği; model/politika/risk/sermaye terfisi yapamadığı yönetişim sözleşmesini kodla
 - [ ] Simülatör ve gelecekteki canlı adaptör için ortak execution contract ve parity testleri oluştur
 - [ ] Gerçek sermaye öncesi shadow/dry-run reconciliation ve açık kullanıcı onayı kapısını zorunlu kıl
+
+## Mac-Independent Cloud Runtime — 2026-08-18
+
+- [x] Supabase/PostgreSQL operasyonel runtime aynasını ana dala al ve canlı smoke testini geçir
+- [x] Supabase'in veri deposu, Ubuntu VM'in yürütücü olduğu sorumluluk ayrımını kilitle
+- [x] 5 dakikalık ürün cycle'ı ve :02/:07/:12 saatlik retry için provider-neutral systemd installer ekle
+- [x] SQLite yazıcılarını ortak non-blocking cloud lock ile seri hale getir
+- [x] Retrospektif catch-up'ı kapat; stale/exact settlement korumalarını koru
+- [x] Secret-safe ortam, minimal cloud bağımlılıkları ve 24 saat parity/cutover sözleşmesini belgele
+- [ ] Ücretsiz Ubuntu VM'i oluştur ve bütçe/kota alarmını etkinleştir
+- [ ] Mac authoritative SQLite snapshot'ını VM'e güvenli aktar
+- [ ] Mac ve cloud'u Supabase çift-yazıcı yapmadan 24 saat parity modunda çalıştır
+- [ ] 39/39 forecast, settlement, paper muhasebe, 03:00 ve 11:00 rapor eşitliğini doğrula
+- [ ] Nihai DB kopyası + Supabase bootstrap sonrası cloud'u tek writer yap
+- [ ] Mac LaunchAgent'lerini kapat ve geri dönüş prosedürünü doğrula
+
