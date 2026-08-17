@@ -12,6 +12,7 @@ import json
 import math
 import pickle
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -260,7 +261,7 @@ def _artifact(state, metrics, model_sha256=None, runtime_version=None):
 def run_lab():
     from data import historical_market_data
 
-    con = sqlite3.connect(v2.DB_NAME)
+    con = runtime_connect(v2.DB_NAME)
     try:
         readiness = v2.derivative_readiness(con, SEALED_END)
         if not readiness["ready"]:

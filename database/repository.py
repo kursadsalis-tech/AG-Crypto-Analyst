@@ -1,4 +1,5 @@
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime
 
 DB_NAME = "crypto_data.db"
@@ -15,7 +16,7 @@ def save_price(
     weighted_avg_price,
     trade_count
 ):
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
 
     cursor.execute("""

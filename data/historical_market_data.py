@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import time
 from datetime import datetime, timezone
 
@@ -19,7 +20,7 @@ def dataset_mode():
 
 
 def create_market_klines_table():
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS market_klines (
@@ -51,7 +52,7 @@ def create_market_klines_table():
 
 def get_news_time_range(mode=None):
     mode = mode or dataset_mode()
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
     if mode == "historical":
         cursor.execute("""
@@ -100,7 +101,7 @@ def resolve_symbols(coins, spot_symbols):
 
 def get_analyzed_coins(mode=None):
     mode = mode or dataset_mode()
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
     if mode == "historical":
         cursor.execute("""
@@ -142,7 +143,7 @@ def to_milliseconds(value):
 def save_klines(symbol, klines):
     if not klines:
         return
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     cursor = connection.cursor()
     cursor.executemany("""
         INSERT INTO market_klines (

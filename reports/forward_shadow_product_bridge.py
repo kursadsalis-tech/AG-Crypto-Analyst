@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 from notifications.telegram_notifier import is_configured, send_message
@@ -207,7 +208,7 @@ def render_committee_section(con):
 
 
 def main():
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         sent, pending = deliver_pending_alerts(con)
         print(f"Ürün alarm köprüsü: gönderilen={sent} | bekleyen={pending}")

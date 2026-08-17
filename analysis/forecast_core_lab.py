@@ -20,6 +20,7 @@ import math
 import os
 import random
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -1307,7 +1308,7 @@ def run_lab(now=None):
     boundaries = split_boundaries(start, end)
     historical_market_data.DB_NAME = DB_NAME
     historical_market_data.create_market_klines_table()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         fetch_result = ensure_historical_coverage(con, fetch_start, end)
         series = load_series(con, fetch_start, end)

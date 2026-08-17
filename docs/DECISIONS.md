@@ -1,5 +1,16 @@
 # DECISIONS
 
+## Karar 019 - Remote Runtime Store Geçiş Politikası
+
+Canlı runtime verisinin GitHub üzerinden taşınmaması; SQLite'ın yerel
+source-of-truth olarak korunup PostgreSQL/Supabase'e best-effort dual-write
+yapılması kararlaştırıldı. Uzak servis hiçbir zaman yerel committen önce gelmez
+ve uzak hata canlı cycle'ı durdurmaz. Gerçek bağlantı bilgileri yalnız ortam
+değişkenlerinde tutulur. Remote store kurulması ürün politikasını veya SHADOW
+kapılarını değiştirmez; uzaktan okuma/karar kullanımı ayrıca doğrulanacaktır.
+
+---
+
 ## Karar 001 - Proje Hafızası
 
 Her geliştirme oturumu sonunda aşağıdaki dosyalar güncellenecek:

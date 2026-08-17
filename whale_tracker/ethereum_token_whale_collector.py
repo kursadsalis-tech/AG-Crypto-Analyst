@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 import requests
@@ -405,7 +406,7 @@ def main():
     observed_at = utcnow_iso()
     safe_height = fetch_safe_height()
 
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_tables(con)
         previous_height = last_scanned_height(con)
@@ -449,7 +450,7 @@ def main():
     if not heights:
         print("Yeni güvenli Ethereum bloğu yok; ERC-20 tarama yüksekliği korunuyor.")
     else:
-        read_con = sqlite3.connect(DB_NAME)
+        read_con = runtime_connect(DB_NAME)
         try:
             recent = read_con.execute("""
                 SELECT txid, asset, amount_native, usd_estimate, block_height

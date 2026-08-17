@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 
@@ -309,7 +310,7 @@ def pending_candidates(con):
 
 def main():
     now = utcnow()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_gate_table(con)
         policy = latest_policy(con)

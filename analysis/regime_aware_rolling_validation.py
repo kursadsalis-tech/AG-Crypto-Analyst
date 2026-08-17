@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
@@ -94,7 +95,7 @@ def main():
         print("HATA: AGCA_NEWS_DATASET=historical ile çalıştırılmalı.")
         return
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = runtime_connect(DB_NAME)
     try:
         symbols = get_spot_symbols()
         evaluated = []

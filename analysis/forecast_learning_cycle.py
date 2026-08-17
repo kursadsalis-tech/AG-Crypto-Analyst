@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ def iso(value):
 
 
 def connect():
-    con = sqlite3.connect(DB_NAME, timeout=30)
+    con = runtime_connect(DB_NAME, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=30000")
     return con

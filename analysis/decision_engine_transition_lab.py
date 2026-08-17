@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -578,7 +579,7 @@ def render(
 def main():
     replay_start, fetch_start, replay_end = replay.requested_range()
     replay.historical_market_data.DB_NAME = DB_NAME
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         fetch_result = replay.ensure_historical_coverage(
             con,

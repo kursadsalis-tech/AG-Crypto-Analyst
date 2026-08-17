@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -769,7 +770,7 @@ def save_report(con, now, content, summary, policy):
 
 def generate(now=None, persist=True, write_file=True):
     now = now or utcnow()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         latest_run, decisions = latest_decision_run(con)
         policy = signal_risk_gate.latest_policy(con)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from decision_engine import decision_engine, decision_shadow_validator
@@ -72,7 +73,7 @@ def save_state(con, status, message, success_at=None):
 
 def main(force=False):
     now = utcnow()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_state_table(con)
         if not force and not is_due(con, now):
@@ -101,7 +102,7 @@ def main(force=False):
             f"shadow_open={all_scores['open']} | "
             f"source_errors={errors}"
         )
-        con = sqlite3.connect(DB_NAME)
+        con = runtime_connect(DB_NAME)
         try:
             ensure_state_table(con)
             save_state(con, status, message, now)
@@ -116,7 +117,7 @@ def main(force=False):
         }
     except Exception as exc:
         message = str(exc)
-        con = sqlite3.connect(DB_NAME)
+        con = runtime_connect(DB_NAME)
         try:
             ensure_state_table(con)
             save_state(con, "ERROR", message)

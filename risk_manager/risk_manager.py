@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 import time
 from datetime import datetime, timezone
@@ -536,7 +537,7 @@ def main():
             source_errors[symbol] = str(exc)
 
     policy = build_global_policy(assets, source_errors, created_at)
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_tables(con)
         snapshot_id = save_snapshot(con, policy, assets, source_errors)

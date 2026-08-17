@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -138,7 +139,7 @@ def main():
             errors.append(f"{series_id}: {exc}")
             print(f"{series_id}: HATA -> {exc}")
 
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_table(con)
         inserted = 0

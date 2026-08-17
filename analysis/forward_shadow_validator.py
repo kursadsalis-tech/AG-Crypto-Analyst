@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -389,7 +390,7 @@ def summary(con):
 
 
 def main():
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         create_tables(con)
         invalidated = invalidate_legacy_seed(con)

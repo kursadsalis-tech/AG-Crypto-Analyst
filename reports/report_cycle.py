@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
@@ -101,7 +102,7 @@ def save_state(con, status, message, success_at=None):
 
 def main(force=False, record_schedule=True):
     now = utcnow()
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         ensure_state_table(con)
         schedule = schedule_state(con, now)
@@ -135,7 +136,7 @@ def main(force=False, record_schedule=True):
             f"file={result['report_file']}"
         )
         if record_schedule:
-            con = sqlite3.connect(DB_NAME)
+            con = runtime_connect(DB_NAME)
             try:
                 ensure_state_table(con)
                 save_state(con, status, message, now)
@@ -151,7 +152,7 @@ def main(force=False, record_schedule=True):
     except Exception as exc:
         message = str(exc)
         if record_schedule:
-            con = sqlite3.connect(DB_NAME)
+            con = runtime_connect(DB_NAME)
             try:
                 ensure_state_table(con)
                 save_state(con, "ERROR", message)

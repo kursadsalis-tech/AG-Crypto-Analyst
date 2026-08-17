@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 
 from news_intelligence.news_analyzer import classify_news
 
@@ -66,7 +67,7 @@ def save_analysis(conn: sqlite3.Connection, analysis: dict) -> None:
 
 
 def main() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = runtime_connect(DB_PATH)
     create_table(conn)
     articles = load_historical_news(conn)
     analyses = []

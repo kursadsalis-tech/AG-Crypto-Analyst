@@ -20,6 +20,7 @@ import math
 import os
 import re
 import sqlite3
+from database.runtime_store import connect as runtime_connect
 import statistics
 import sys
 import unicodedata
@@ -1092,7 +1093,7 @@ def run_self_tests():
 
 
 def main():
-    con = sqlite3.connect(DB_NAME)
+    con = runtime_connect(DB_NAME)
     try:
         load_result = load_articles(con)
         dedup_result = deduplicate_directional_articles(
