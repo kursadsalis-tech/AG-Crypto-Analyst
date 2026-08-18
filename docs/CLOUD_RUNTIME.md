@@ -126,3 +126,16 @@ Durum kontrolü:
 
 Bu kurulum gerçek emir yetkisi vermez. Crypto Profit Agent PAPER_ONLY,
 Forecast Engine FORWARD_SHADOW ve Risk Manager veto yetkisi değişmeden kalır.
+
+## OneDrive yedekleme kararı
+
+Kullanıcının mevcut 1 TB Microsoft OneDrive alanı felaket kurtarma ve rapor
+arşivi için kullanılabilir. OneDrive compute sağlamaz ve canlı
+`crypto_data.db` dosyasının çalışma yolu olamaz. SQLite, WAL ve lock dosyaları
+senkron klasörde çalıştırılmaz.
+
+Cloud cutover sonrasında yalnız SQLite'ın online backup API ile üretilmiş,
+bütünlüğü doğrulanmış ve tercihen şifrelenmiş kapalı snapshot'ları ile Markdown/
+CSV rapor çıktıları OneDrive'a kopyalanabilir. Bu yedekleme ana çalışma veya
+Supabase mirror başarısını belirlemez; geri yükleme kaynağı olarak ayrıca test
+edilir. OneDrive kimlik bilgileri GitHub'a ya da repo dosyalarına yazılmaz.
