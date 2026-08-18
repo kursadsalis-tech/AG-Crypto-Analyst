@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from database import runtime_store
+from paper_trading import crypto_profit_agent
 from scripts.configure_remote_runtime import build_connection_url
 
 
@@ -38,6 +39,28 @@ class RuntimeStoreTests(unittest.TestCase):
                 check = sqlite3.connect(handle.name)
                 self.assertEqual(check.execute("SELECT value FROM events").fetchone()[0], "local")
                 check.close()
+
+    def test_remote_failure_retries_and_keeps_runtime_table_pending(self):
+        con = runtime_store.connect(":memory:")
+        con.execute("CREATE TABLE paper_agent_portfolio (portfolio_id INTEGER PRIMARY KEY)")
+        with mock.patch.dict(os.environ, {
+            runtime_store.REMOTE_URL_ENV: "postgresql://invalid",
+            "AGCA_REMOTE_RETRY_ATTEMPTS": "3",
+            "AGCA_REMOTE_RETRY_BASE_SECONDS": "0",
+        }):
+            fake_psycopg = types.SimpleNamespace(
+                connect=mock.Mock(side_effect=RuntimeError("remote unavailable"))
+            )
+            with mock.patch.dict("sys.modules", {"psycopg": fake_psycopg}):
+                con.commit()
+        self.assertEqual(fake_psycopg.connect.call_count, 3)
+        self.assertIn("paper_agent_portfolio", con._remote_dirty_tables)
+        health = con.execute("""
+            SELECT status,error_type,consecutive_failures FROM remote_mirror_health
+            WHERE table_name='paper_agent_portfolio'
+        """).fetchone()
+        self.assertEqual(health, ("degraded", "RuntimeError", 1))
+        con.close()
 
     def test_rollback_discards_pending_remote_tables(self):
         con = runtime_store.connect(":memory:")
@@ -78,6 +101,58 @@ class RuntimeStoreTests(unittest.TestCase):
                     mock.Mock(), {"market_klines", "futures_hourly_market"}
                 )
                 remote_url.assert_not_called()
+
+    def test_report_delivery_stays_pending_when_remote_mirror_fails(self):
+        con = runtime_store.connect(":memory:")
+        con.execute("""
+            CREATE TABLE paper_agent_daily_reports (
+                report_date TEXT PRIMARY KEY, remote_mirror_status TEXT,
+                remote_mirrored_at TEXT, delivery_complete INTEGER
+            )
+        """)
+        con.execute("INSERT INTO paper_agent_daily_reports VALUES('2026-08-18','PENDING',NULL,0)")
+        con._remote_dirty_tables.clear()
+        failed = runtime_store.MirrorResult(
+            attempted=frozenset({"paper_agent_daily_reports"}),
+            error_type="OperationalError",
+        )
+        with mock.patch.object(runtime_store, "_mirror_after_local_commit", return_value=failed):
+            self.assertFalse(crypto_profit_agent._confirm_remote_report_delivery(
+                con, "2026-08-18"
+            ))
+        row = con.execute("""
+            SELECT remote_mirror_status,remote_mirrored_at,delivery_complete
+            FROM paper_agent_daily_reports
+        """).fetchone()
+        self.assertEqual(row, ("PENDING", None, 0))
+        con.close()
+
+    def test_report_delivery_completes_after_successful_remote_mirror(self):
+        con = runtime_store.connect(":memory:")
+        con.execute("""
+            CREATE TABLE paper_agent_daily_reports (
+                report_date TEXT PRIMARY KEY, remote_mirror_status TEXT,
+                remote_mirrored_at TEXT, delivery_complete INTEGER
+            )
+        """)
+        con.execute("INSERT INTO paper_agent_daily_reports VALUES('2026-08-18','PENDING',NULL,0)")
+        con._remote_dirty_tables.clear()
+        success = runtime_store.MirrorResult(
+            attempted=frozenset({"paper_agent_daily_reports"}),
+            succeeded=frozenset({"paper_agent_daily_reports"}),
+        )
+        with mock.patch.object(runtime_store, "_mirror_after_local_commit", return_value=success):
+            self.assertTrue(crypto_profit_agent._confirm_remote_report_delivery(
+                con, "2026-08-18"
+            ))
+        row = con.execute("""
+            SELECT remote_mirror_status,remote_mirrored_at,delivery_complete
+            FROM paper_agent_daily_reports
+        """).fetchone()
+        self.assertEqual(row[0], "HEALTHY")
+        self.assertIsNotNone(row[1])
+        self.assertEqual(row[2], 1)
+        con.close()
 
 
 if __name__ == "__main__":
