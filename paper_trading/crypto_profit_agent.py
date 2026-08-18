@@ -116,9 +116,20 @@ def ensure_tables(con):
             window_start TEXT NOT NULL,
             window_end TEXT NOT NULL,
             report_json TEXT NOT NULL,
-            telegram_sent INTEGER NOT NULL DEFAULT 0
+            telegram_sent INTEGER NOT NULL DEFAULT 0,
+            remote_mirror_status TEXT NOT NULL DEFAULT 'PENDING',
+            remote_mirrored_at TEXT,
+            delivery_complete INTEGER NOT NULL DEFAULT 0
         );
     """)
+    columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
+    for name, definition in (
+        ("remote_mirror_status", "TEXT NOT NULL DEFAULT 'PENDING'"),
+        ("remote_mirrored_at", "TEXT"),
+        ("delivery_complete", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in columns:
+            con.execute(f"ALTER TABLE paper_agent_daily_reports ADD COLUMN {name} {definition}")
     con.execute("""
         INSERT OR IGNORE INTO paper_agent_portfolio(
             portfolio_id,created_at,agent_version,policy_version,
@@ -545,20 +556,23 @@ def markdown_report(payload):
     return "\n".join(lines) + "\n"
 
 
-def telegram_summary(payload):
-    p = payload["portfolio"]
-    return (
-        "🤖 AGCA KRİPTO KAZANÇ AJANI — PAPER\n"
-        f"Tarih: {payload['report_date']} | 03:00 İstanbul kapanışı\n"
-        f"Bütçe: {p['equity']:.2f} USDT ({p['return_pct']:+.2f}%)\n"
-        f"Nakit: {p['cash']:.2f} | Açık risk: {p['reserved']:.2f}\n"
-        f"Bugün açılan/kapanan: {payload['opened_count']}/{payload['closed_count']}\n"
-        f"Kazanan/Kaybeden: {payload['wins']}/{payload['losses']} "
-        f"(%{payload['win_rate_pct']:.1f})\n"
-        f"Günlük net: {payload['daily_net_pnl']:+.2f} USDT\n"
-        f"Toplam ücret: {p['total_fees']:.2f} USDT\n"
-        "Detay: reports/daily_crypto_profit_agent_report.md"
-    )
+def _confirm_remote_report_delivery(con, report_date):
+    """Mark delivery complete only if that exact state reaches the remote mirror."""
+    mirrored_at = iso(utcnow())
+    con.execute("""
+        UPDATE paper_agent_daily_reports SET remote_mirror_status='HEALTHY',
+            remote_mirrored_at=?,delivery_complete=1 WHERE report_date=?
+    """, (mirrored_at, report_date))
+    con.commit()
+    if con.remote_mirror_result.succeeded_for("paper_agent_daily_reports"):
+        return True
+    # The local delivery flag must never claim success when the remote write failed.
+    sqlite3.Connection.execute(con, """
+        UPDATE paper_agent_daily_reports SET remote_mirror_status='PENDING',
+            remote_mirrored_at=NULL,delivery_complete=0 WHERE report_date=?
+    """, (report_date,))
+    sqlite3.Connection.commit(con)
+    return False
 
 
 def maybe_daily_report(con, now):
@@ -567,31 +581,32 @@ def maybe_daily_report(con, now):
         return None
     report_date, start, end = window
     existing = con.execute("""
-        SELECT report_json,telegram_sent FROM paper_agent_daily_reports
+        SELECT report_json,delivery_complete FROM paper_agent_daily_reports
         WHERE report_date=?
     """, (report_date,)).fetchone()
     if existing:
-        return json.loads(existing[0])
+        payload = json.loads(existing[0])
+        payload["delivery_complete"] = bool(existing[1]) or _confirm_remote_report_delivery(
+            con, report_date
+        )
+        return payload
     payload = build_daily_report(con, report_date, start, end)
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(markdown_report(payload), encoding="utf-8")
-    sent = False
-    try:
-        from notifications.telegram_notifier import is_configured, send_message
-        if is_configured():
-            sent = bool(send_message(telegram_summary(payload)))
-    except Exception as exc:
-        payload["telegram_error"] = str(exc)
     con.execute("""
         INSERT INTO paper_agent_daily_reports(
             report_date,created_at,window_start,window_end,report_json,
             telegram_sent
-        ) VALUES(?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,0)
     """, (
         report_date, iso(now), iso(start), iso(end),
-        json.dumps(payload, ensure_ascii=False), int(sent),
+        json.dumps(payload, ensure_ascii=False),
     ))
     con.commit()
+    payload["delivery_complete"] = (
+        con.remote_mirror_result.succeeded_for("paper_agent_daily_reports")
+        and _confirm_remote_report_delivery(con, report_date)
+    )
     return payload
 
 
@@ -614,6 +629,9 @@ def render(result):
             f"03:00 raporu: {report['report_date']} | "
             f"açılan={report['opened_count']} | kapanan={report['closed_count']} | "
             f"net={report['daily_net_pnl']:+.2f} USDT"
+        )
+        print(
+            "Remote teslim: " + ("TAMAMLANDI" if report.get("delivery_complete") else "BEKLIYOR")
         )
     print("Not: Gerçek emir yoktur; LONG/SHORT işlemler 1x sanal simülasyondur.")
 
