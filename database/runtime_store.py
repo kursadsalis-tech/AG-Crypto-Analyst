@@ -15,6 +15,8 @@ import re
 import sqlite3
 import subprocess
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable
 
 
@@ -64,6 +66,16 @@ _WRITE_TABLE = re.compile(
 _retry_after = 0.0
 
 
+@dataclass(frozen=True)
+class MirrorResult:
+    attempted: frozenset[str] = frozenset()
+    succeeded: frozenset[str] = frozenset()
+    error_type: str | None = None
+
+    def succeeded_for(self, table: str) -> bool:
+        return table in self.succeeded
+
+
 def _quote(identifier: str) -> str:
     if not _IDENTIFIER.fullmatch(identifier):
         raise ValueError(f"Unsafe database identifier: {identifier!r}")
@@ -109,6 +121,7 @@ class RuntimeConnection(sqlite3.Connection):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._remote_dirty_tables: set[str] = set()
+        self.remote_mirror_result = MirrorResult()
 
     def cursor(self, factory=RuntimeCursor):
         return super().cursor(factory)
@@ -130,7 +143,10 @@ class RuntimeConnection(sqlite3.Connection):
         dirty_tables = set(self._remote_dirty_tables)
         self._remote_dirty_tables.clear()
         if dirty_tables:
-            _mirror_after_local_commit(self, dirty_tables)
+            self.remote_mirror_result = _mirror_after_local_commit(self, dirty_tables)
+            if self.remote_mirror_result.error_type:
+                # Keep failed work pending so a later commit can heal the mirror.
+                self._remote_dirty_tables.update(self.remote_mirror_result.attempted)
 
     def rollback(self):
         super().rollback()
@@ -151,34 +167,102 @@ def connect(database, *args, **kwargs):
     return sqlite3.connect(database, *args, **kwargs)
 
 
-def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> None:
+def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> MirrorResult:
     global _retry_after
     tables = tables & REMOTE_RUNTIME_TABLES
     if not tables:
-        return
+        return MirrorResult()
+    attempted = frozenset(tables)
     remote_url = _remote_url()
     if not remote_url or time.monotonic() < _retry_after:
-        return
+        return MirrorResult(attempted=attempted, error_type="not_configured_or_backoff")
 
     schema = os.getenv(REMOTE_SCHEMA_ENV, "agca_runtime").strip()
-    try:
-        _quote(schema)
-        timeout = max(1, int(os.getenv(REMOTE_TIMEOUT_ENV, "5")))
-        import psycopg
+    _quote(schema)
+    timeout = max(1, int(os.getenv(REMOTE_TIMEOUT_ENV, "5")))
+    attempts = max(1, int(os.getenv("AGCA_REMOTE_RETRY_ATTEMPTS", "3")))
+    base_delay = max(0.0, float(os.getenv("AGCA_REMOTE_RETRY_BASE_SECONDS", "0.5")))
+    import psycopg
 
-        with psycopg.connect(remote_url, connect_timeout=timeout) as remote:
-            with remote.cursor() as cursor:
-                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}")
-                for table in sorted(tables):
-                    _mirror_table(local, cursor, schema, table)
-        LOGGER.info("Remote runtime mirror updated: tables=%s", ",".join(sorted(tables)))
-    except Exception as exc:  # SQLite must remain available under every failure mode.
-        retry_seconds = max(1, int(os.getenv("AGCA_REMOTE_RETRY_SECONDS", "60")))
-        _retry_after = time.monotonic() + retry_seconds
-        LOGGER.warning(
-            "Remote runtime mirror failed; local SQLite commit is intact (error_type=%s)",
-            type(exc).__name__,
+    for attempt in range(1, attempts + 1):
+        try:
+            with psycopg.connect(remote_url, connect_timeout=timeout) as remote:
+                with remote.cursor() as cursor:
+                    cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}")
+                    for table in sorted(tables):
+                        _mirror_table(local, cursor, schema, table)
+                    _write_remote_health(cursor, schema, tables)
+            _retry_after = 0.0
+            _write_local_health(local, tables, "healthy", None)
+            LOGGER.info("Remote runtime mirror updated: tables=%s", ",".join(sorted(tables)))
+            return MirrorResult(attempted=attempted, succeeded=attempted)
+        except Exception as exc:  # SQLite must remain available under every failure mode.
+            if attempt < attempts:
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+                continue
+            retry_seconds = max(1, int(os.getenv("AGCA_REMOTE_RETRY_SECONDS", "60")))
+            _retry_after = time.monotonic() + retry_seconds
+            error_type = type(exc).__name__
+            _write_local_health(local, tables, "degraded", error_type)
+            LOGGER.warning(
+                "Remote runtime mirror failed after %s attempts; local SQLite commit is intact "
+                "(tables=%s error_type=%s)",
+                attempts, ",".join(sorted(tables)), error_type,
+            )
+            return MirrorResult(attempted=attempted, error_type=error_type)
+
+
+def _health_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_local_health(local, tables: set[str], status: str, error_type: str | None) -> None:
+    """Persist mirror health without recursively triggering another mirror."""
+    now = _health_timestamp()
+    sqlite3.Connection.execute(local, """
+        CREATE TABLE IF NOT EXISTS remote_mirror_health (
+            table_name TEXT PRIMARY KEY, status TEXT NOT NULL,
+            last_attempt_at TEXT NOT NULL, last_success_at TEXT,
+            error_type TEXT, consecutive_failures INTEGER NOT NULL DEFAULT 0
         )
+    """)
+    for table in tables:
+        sqlite3.Connection.execute(local, """
+            INSERT INTO remote_mirror_health(
+                table_name,status,last_attempt_at,last_success_at,error_type,consecutive_failures
+            ) VALUES(?,?,?,?,?,?)
+            ON CONFLICT(table_name) DO UPDATE SET
+                status=excluded.status,last_attempt_at=excluded.last_attempt_at,
+                last_success_at=CASE WHEN excluded.status='healthy' THEN excluded.last_attempt_at
+                                     ELSE remote_mirror_health.last_success_at END,
+                error_type=excluded.error_type,
+                consecutive_failures=CASE WHEN excluded.status='healthy' THEN 0
+                    ELSE remote_mirror_health.consecutive_failures+1 END
+        """, (table, status, now, now if status == "healthy" else None,
+              error_type, 0 if status == "healthy" else 1))
+    sqlite3.Connection.commit(local)
+
+
+def _write_remote_health(cursor, schema: str, tables: set[str]) -> None:
+    schema_q = _quote(schema)
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {schema_q}.remote_mirror_health (
+            table_name TEXT PRIMARY KEY, status TEXT NOT NULL,
+            last_attempt_at TEXT NOT NULL, last_success_at TEXT,
+            error_type TEXT, consecutive_failures BIGINT NOT NULL DEFAULT 0
+        )
+    """)
+    now = _health_timestamp()
+    for table in sorted(tables):
+        cursor.execute(f"""
+            INSERT INTO {schema_q}.remote_mirror_health(
+                table_name,status,last_attempt_at,last_success_at,error_type,consecutive_failures
+            ) VALUES(%s,'healthy',%s,%s,NULL,0)
+            ON CONFLICT(table_name) DO UPDATE SET status='healthy',
+                last_attempt_at=EXCLUDED.last_attempt_at,
+                last_success_at=EXCLUDED.last_success_at,error_type=NULL,
+                consecutive_failures=0
+        """, (table, now, now))
 
 
 def _remote_url() -> str:
