@@ -21,6 +21,10 @@ MIN_FORWARD_SETTLED = 30
 MIN_FORWARD_HIT_RATE = 60.0
 MIN_WILSON_LOWER = 50.0
 MIN_DIRECTIONAL_RETURN = 0.0
+# The cost-aware chronological audit found no stable edge over always-long and
+# insufficient negative/regime coverage. Re-enabling requires new independent
+# evidence plus a reviewed code change; scores alone cannot open this gate.
+NEWS_DIRECTIONAL_PRODUCTION_ELIGIBLE = False
 
 
 def utcnow():
@@ -109,6 +113,8 @@ def forward_evidence(con):
         reasons.append(f"FORWARD_WILSON_LOWER_BELOW_{MIN_WILSON_LOWER:.0f}")
     if directional_return <= MIN_DIRECTIONAL_RETURN:
         reasons.append("FORWARD_DIRECTIONAL_RETURN_NONPOSITIVE")
+    if not NEWS_DIRECTIONAL_PRODUCTION_ELIGIBLE:
+        reasons.append("NEWS_DIRECTIONAL_ROBUSTNESS_REJECTED")
 
     return {
         "state": "SHADOW_ONLY" if reasons else "PRODUCTION_ELIGIBLE",

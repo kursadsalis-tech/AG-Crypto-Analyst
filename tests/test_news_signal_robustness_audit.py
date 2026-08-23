@@ -51,6 +51,17 @@ class RobustnessAuditTests(unittest.TestCase):
         for result in report["horizons"].values():
             self.assertFalse(result["production_eligible"])
 
+    def test_imbalanced_direction_is_rejected_without_threshold_tuning(self):
+        rows = []
+        for day in range(1, 29):
+            for horizon in ("1h", "4h", "24h"):
+                rows.append(row(day, horizon=horizon, directional=0.40,
+                                regime="UP" if day % 2 else "DOWN"))
+        report = build_report(rows)
+        for result in report["horizons"].values():
+            self.assertIn("DIRECTION_IMBALANCE", result["rejection_reasons"])
+            self.assertFalse(result["paper_signal_supported"])
+
 
 if __name__ == "__main__":
     unittest.main()

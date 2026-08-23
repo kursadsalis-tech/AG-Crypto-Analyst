@@ -24,6 +24,7 @@ TOTAL_COST_PCT = (FEE_BPS + SLIPPAGE_BPS) / 100.0
 TRAIN_SHARE = 0.70
 MIN_VALIDATION_ROWS = 30
 MIN_REGIME_ROWS = 10
+MIN_DIRECTION_ROWS = 10
 REGIME_THRESHOLD_PCT = 1.0
 
 
@@ -144,26 +145,44 @@ def horizon_report(train_rows, validation_rows, horizon):
     train = [row for row in train_rows if row["horizon"] == horizon]
     validation = [row for row in validation_rows if row["horizon"] == horizon]
     validation_metrics = metrics(validation)
+    regime_metrics = slice_metrics(validation, "regime")
+    direction_metrics = slice_metrics(validation, "direction")
     supported_regimes = [
         regime
-        for regime, result in slice_metrics(validation, "regime").items()
+        for regime, result in regime_metrics.items()
         if regime != "UNKNOWN" and result["n"] >= MIN_REGIME_ROWS
     ]
-    eligible = (
-        validation_metrics["n"] >= MIN_VALIDATION_ROWS
-        and validation_metrics["net_directional_return_pct"] is not None
-        and validation_metrics["net_directional_return_pct"] > 0.0
-        and validation_metrics["net_edge_vs_always_long_pct"] > 0.0
-        and len(supported_regimes) >= 2
-    )
+    supported_directions = [
+        direction
+        for direction in ("positive", "negative")
+        if direction_metrics.get(direction, {}).get("n", 0) >= MIN_DIRECTION_ROWS
+    ]
+    train_metrics = metrics(train)
+    reasons = []
+    if validation_metrics["n"] < MIN_VALIDATION_ROWS:
+        reasons.append("VALIDATION_SAMPLE_TOO_SMALL")
+    if len(supported_directions) < 2:
+        reasons.append("DIRECTION_IMBALANCE")
+    if len(supported_regimes) < 2:
+        reasons.append("REGIME_COVERAGE_INSUFFICIENT")
+    for label, result in (("TRAIN", train_metrics), ("VALIDATION", validation_metrics)):
+        if (result["net_directional_return_pct"] is None
+                or result["net_directional_return_pct"] <= 0.0):
+            reasons.append(f"{label}_NET_RETURN_NONPOSITIVE")
+        if (result["net_edge_vs_always_long_pct"] is None
+                or result["net_edge_vs_always_long_pct"] <= 0.0):
+            reasons.append(f"{label}_EDGE_VS_ALWAYS_LONG_NONPOSITIVE")
+    eligible = not reasons
     return {
-        "train": metrics(train),
+        "train": train_metrics,
         "validation": validation_metrics,
-        "validation_by_direction": slice_metrics(validation, "direction"),
-        "validation_by_regime": slice_metrics(validation, "regime"),
+        "validation_by_direction": direction_metrics,
+        "validation_by_regime": regime_metrics,
         "validation_by_impact_score": slice_metrics(validation, "impact", score_band),
         "validation_by_confidence_score": slice_metrics(validation, "confidence", score_band),
         "supported_regimes": supported_regimes,
+        "supported_directions": supported_directions,
+        "rejection_reasons": reasons,
         "production_eligible": False,
         "paper_signal_supported": eligible,
         "decision": "PAPER_ONLY_OBSERVE" if eligible else "REJECT_NO_STABLE_NET_EDGE",
