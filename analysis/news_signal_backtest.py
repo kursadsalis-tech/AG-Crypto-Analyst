@@ -45,6 +45,41 @@ def load_signal_rows(connection):
     return cursor.fetchall()
 
 
+def get_local_spot_symbols(connection):
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT DISTINCT symbol
+        FROM market_klines
+        WHERE interval = '1h'
+          AND symbol LIKE '%USDT'
+    """)
+
+    symbols = {}
+    for (symbol,) in cursor.fetchall():
+        symbol = (symbol or "").upper()
+        base_asset = symbol[:-4]
+        if base_asset:
+            symbols[base_asset] = symbol
+    return symbols
+
+
+def resolve_backtest_spot_symbols(connection):
+    try:
+        return get_spot_symbols(), "Binance active spot USDT symbols resolved dynamically"
+    except Exception as exc:
+        local_symbols = get_local_spot_symbols(connection)
+        if not local_symbols:
+            raise RuntimeError(
+                "Binance spot sembolleri alınamadı ve yerel market_klines "
+                "verisinde kullanılabilir USDT sembolü bulunamadı"
+            ) from exc
+        print(
+            "UYARI: Binance spot sembolleri alınamadı; "
+            f"yerel market_klines sembolleri kullanılacak: {exc}"
+        )
+        return local_symbols, "local market_klines USDT symbols used as fallback"
+
+
 def get_entry_candle(connection, symbol, news_time):
     cursor = connection.cursor()
     cursor.execute("""
@@ -206,7 +241,7 @@ def main():
     connection = runtime_connect(DB_NAME)
     try:
         try:
-            spot_symbols = get_spot_symbols()
+            spot_symbols, symbol_rule = resolve_backtest_spot_symbols(connection)
         except Exception as exc:
             print(f"HATA: Binance spot sembolleri alınamadı: {exc}")
             return
@@ -242,7 +277,7 @@ def main():
 
         save_results(results)
         print("AG Crypto Analyst - News Signal Backtest")
-        print("Symbol rule: Binance active spot USDT symbols resolved dynamically")
+        print(f"Symbol rule: {symbol_rule}")
         print("Entry rule: first 1h candle OPEN at/after the news timestamp")
         print("Exit rule: first completed 1h candle CLOSE at/after each horizon")
         print("Directional return: positive keeps return; negative reverses return")
