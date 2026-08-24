@@ -48,7 +48,7 @@ ConditionPathExists={project_dir / "crypto_data.db"}
 Type=oneshot
 User={service_user}
 Group={service_group}
-WorkingDirectory={_quoted(str(project_dir))}
+WorkingDirectory={project_dir}
 EnvironmentFile=-{ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
 Environment=AGCA_CLOUD_RUNTIME=1
