@@ -77,3 +77,24 @@ mapping.
 Next product work remains PAPER trade-learning/strategy evidence accumulation.
 Do not change thresholds, grant real-order authority, or promote a challenger
 without the existing evidence gates and explicit user direction.
+
+# 2026-08-27 — Codex project mapping and closeout convention
+
+The canonical checkout is now registered in the Codex desktop app as the local
+project **AGCA**, mapped to `/Users/elifzilan/Documents/AG-Crypto-Analyst` and
+recognized as a Git repository. The separate **AGCA System** entry is a ChatGPT
+project mirror and must not be used for implementation or file diagnosis.
+
+The user phrase **“oturum bitti”** is the permanent closeout command. On receipt,
+apply the root `AGENTS.md` end-of-session procedure automatically: update this
+handoff, verify repository state and proportionate checks, leave a clean tree or
+one named checkpoint, and provide one exact next-session opening prompt. Do not
+ask the user to repeat the longer closeout instruction or perform unnecessary UI
+steps.
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış. Önce kök AGENTS.md ile
+> docs/LAST_SESSION_HANDOFF.md dosyasını oku, Git durumunu kontrol et ve NEXT
+> SESSION bölümündeki PAPER trade-learning/strategy evidence accumulation
+> işinden devam et. Kanıt eşiklerini değiştirme ve gerçek emir yetkisi verme.
