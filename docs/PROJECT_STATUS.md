@@ -35,6 +35,37 @@ Araştırma/validasyon katmanları bu yol haritasının yerine geçmez; mevcut m
 
 Proje ürün sürümü: **v1.2.1**
 
+### Truth Engine / Data Validation Gate — release-blocker kapsam uygulandı
+
+Karar taşıyan canlı ve tarihsel piyasa verileri ortak fail-closed sözleşmeden
+geçer. Şema, sonlu sayılar, pozitif ve tutarlı OHLC, hacim, saatlik süreklilik,
+kapanış, tazelik ve gelecek timestamp kontrolleri Risk Manager, Unified Forecast,
+Legacy Forward Shadow, Decision Engine teknik bağlamı, Forecast Core ve Decision
+Replay yollarına uygulanır. Geçersiz tarihsel satırlar artık sessizce elenmez.
+
+Haber, sosyal, on-chain, makro, whale ve türev kaynakları için kaynak-özel
+sözleşmeler vardır. Gözlemsel kanıtlar son kaynak cycle audit'i PASS ve tazeyse
+Decision Engine'e görünür; aksi halde MISSING/OBSERVATION_ONLY kalır. BTC piyasa
+referansı Binance ile bağımsız CoinGecko fiyatı arasında %2 azami sapmayla
+çapraz doğrulanır; kaynak yokluğu veya sapma Risk politikasını DATA_BLOCKED yapar.
+
+Her kontrol `data_validation_audit` tablosunda PASS/DATA_BLOCKED olarak saklanır
+ve remote runtime allowlist'indedir. Risk, Signal Gate, Decision Engine ve rapor
+yollarında bozuk, bayat veya gelecek timestamp'in ürün iznine dönüşmediği test
+edildi. Ethereum RPC tek-sağlayıcı bağımlılığı fallback listesiyle kaldırıldı;
+ERC-20 `eth_getLogs` fallback canlı tekrarı 2026-08-23 tarihinde geçti: yedi
+kontratın decimals değerleri zincir üstünde doğrulandı ve 40 güvenli blok kaynak
+hatası olmadan tarandı.
+
+Kaynak adımları cycle içinde izole edilir. Doğrulanmış haber yokluğu tüm süreci
+traceback ile durdurmaz; NEWS DATA_BLOCKED olarak görünür ve güvenli adımlar
+devam eder. Risk Manager ERROR/DATA_BLOCKED ise Decision Engine ile ürün alarm
+köprüsü eski snapshot kullanmadan atlanır. Remote mirror sağlık telemetrisi yerel
+disk hatası verse dahi daha önce tamamlanmış SQLite commit geçerliliğini korur.
+Ethereum collector'ları süreç içindeki son sağlıklı RPC'yi sonraki çağrıda önce
+dener ve sağlayıcı başına beklemeyi 15 saniyeyle sınırlar; başarısız sağlayıcılar
+her blok/log çağrısında yeniden uzun timeout tüketmez.
+
 Tamamlanan ana ürün modülleri:
 
 - Market Data Agent ✅
@@ -64,6 +95,33 @@ Tamamlanan ana ürün modülleri:
 - Gerçek bağlantı bilgileri repoda tutulmaz; `.env.example` ve kısa kurulum
   dokümanı eklendi.
 - Bu altyapı ürün sinyali, SHADOW politikası veya üretim izinlerini değiştirmez.
+
+### Mac-independent PAPER runtime — deployment-ready
+
+Beş dakikalık canlı ürün cycle'ı ile saatlik forecast/settlement/learning/paper
+ajanı tek bir sürekli Docker worker içinde birleştirildi. SQLite, model
+artifact'ları, raporlar ve health kaydı kalıcı volume'a taşınır; aynı volume'u
+kullanan ikinci worker özel kilit nedeniyle başlamaz. Worker yalnız
+`AGCA_EXECUTION_MODE=PAPER_ONLY` ile açılır ve gerçek borsa emir adaptörü içermez.
+
+Sanal yürütme artık kusursuz mum-fiyatı dolumu varsaymaz: açık spread, taker
+ücreti, adverse latency, hacme bağlı slippage, kapasite/kısmi dolum,
+minimum-notional, tick/step, red ve perpetual funding maliyeti uygulanır. SPOT
+modu LONG-only, USD-M perpetual modu LONG/SHORT'tur. Bu paket Mac'ten bağımsız
+çalışmaya hazırdır; fakat harici cloud provider, kalıcı volume ve Supabase
+secret kurulmadan aktif üretim süreci hâlâ Mac LaunchAgent'tir. OHLCV tabanlı
+model gerçek order-book geçmişinin birebir yeniden üretildiği iddiasını taşımaz.
+
+2026-08-23 gerçek deployment doğrulaması: önceden oluşturulmuş ücretsiz
+`agca-runtime` e2-micro VM (us-east1-b, 30 GB persistent disk) bulundu; eski
+servisin Binance bölge kısıtı nedeniyle 451 ile durduğu kanıtlandı. Spot market
+data yolu resmî `data-api.binance.vision` endpoint'ine taşındı. Güncel kod ve
+344 MB SQLite state buluta aktarıldı, 2 GB swap eklendi ve sürekli
+`agca-cloud-worker.service` etkinleştirildi. İlk doğal ürün cycle'ı Decision
+Engine SUCCESS, 13/13 Risk kapsamı ve HEALTHY worker sonucu verdi; aynı süreçte
+saatlik forecast/PAPER job SUCCESS tamamlandı. Mac LaunchAgent'leri bundan sonra
+çift yazmayı önlemek için disabled durumundadır. Eski cloud kurulumunun tarih
+damgalı geri dönüş kopyası sunucuda korunur.
 
 Forward Shadow V2, Decision Engine Shadow Validation, Social Sentiment, On-chain, Macro, Whale Tracker ve Risk Manager süreçleri ana yol haritasını bloke etmeden canlı ürün döngüsünde paralel çalışacaktır.
 
@@ -566,6 +624,27 @@ Resmi hafıza dosyaları:
 
 Yeni oturumlarda önce bu dosyalar ve mevcut GitHub kodu kontrol edilir; kullanıcıdan proje geçmişini yeniden anlatması istenmez.
 
+En güncel devir dosyası: `docs/LAST_SESSION_HANDOFF.md`.
+
+---
+
+## 13. BULUT OPERASYON DURUMU — 2026-08-24
+
+Google Cloud `agca-runtime` worker Mac'ten bağımsız ana runtime olarak aktiftir.
+Çalışma modu systemd ve uygulama başlangıç kapısında `PAPER_ONLY` olarak
+kilitlidir. Son tam döngüden sonra worker health `HEALTHY`, saatlik risk/paper
+işi `SUCCESS` ve Supabase mirror 28/28 healthy olarak doğrulandı.
+
+Supabase `agca_runtime` şemasındaki 30/30 tabloda RLS etkindir; security advisor
+açık bulmadı. Bağlantı Google Secret Manager'da tutulur; eski secret sürümleri
+devre dışıdır. Parola veya URL Git'e yazılmamıştır.
+
+Buluta `f03006d` (`Fail closed on unvalidated news direction`) dağıtıldı. Haber
+yönü kanıtı güçlü görünse bile `NEWS_DIRECTIONAL_ROBUSTNESS_REJECTED` nedeniyle
+SHADOW_ONLY kalır; robustness raporu gerçek emirleri ve production eligibility'yi
+kapalı tutar. Bulutta 10/10 hedef test geçti. Rollback hedefi ve ayrıntılı devir
+notu `docs/SESSION_HANDOFF_2026-08-24.md` içindedir.
+
 
 ---
 
@@ -619,4 +698,167 @@ tarihsel sonuç üretilmeyecek; exact-time forward veri biriktirilecektir.
 
 Exact-time Binance listing/delisting source feasibility passed, and checksum-verified targeted spot-price coverage is available for a frozen catalyst event study. The direct listing/delisting hypothesis has been implemented but its real returns have not yet been opened. Current product state remains SHADOW_ONLY; live Decision Engine, Risk Manager and alert policy are unchanged.
 
-Immediate pending step: run the committed market-data readiness v1.1 and fixed catalyst event study, then evaluate the primary 4h validation result without tuning.
+The committed market-data readiness v1.1 and fixed catalyst event study were
+already run once. The 4h PRIMARY validation was rejected because its weekly
+clustered lower bound was negative; the bounded catalyst hypothesis is closed
+without threshold or subtype search.
+
+Live market-specific exchange metadata parity is complete. The free Google
+Cloud regions are all US-based and the official USD-M endpoint returns regional
+HTTP 451 there. The existing Supabase project in `eu-west-1` can reach the same
+official endpoint with HTTP 200, so the hourly job now uses the already-secured
+Postgres connection and Supabase `http` extension as a private, fixed-URL GET
+transport. No public proxy or user-controlled URL exists.
+
+`paper_trading.exchange_metadata` pins the official endpoint, validates
+PERPETUAL/USDT status and PRICE_FILTER/LOT_SIZE/MIN_NOTIONAL, and writes an
+atomic hashed cache. Stale, tampered, wrong-market and missing-symbol metadata
+remain fail-closed. The first natural cloud cycle was `HEALTHY`, hourly status
+was `SUCCESS`, and the PAPER agent consumed 527 active symbol rules while
+remaining `PAPER_ONLY` with `may_send_real_orders=False`. Supabase security and
+performance advisors both returned zero findings.
+
+The next execution-realism item is also complete. USD-M funding settlements are
+fetched from Binance's official public funding-history endpoint through the
+same private Supabase Europe transport. Every event uses its recorded mark
+price; positive rates debit LONG and credit SHORT, with the sign reversed for
+negative rates. Missing, malformed, unordered or out-of-window events fail
+closed. The fixed funding proxy is no longer used for USD-M settlements.
+
+Liquidation is evaluated causally against each held 1h candle's low/high. The
+agent remains fixed at 1x isolated PAPER margin, uses the live symbol-level
+liquidation fee from exchangeInfo, records liquidation price/fee/reason, and
+caps recovery at zero so virtual debt cannot be created. Exact user-specific
+maintenance brackets require Binance-signed account credentials and are
+therefore intentionally excluded; the model declares and freezes a conservative
+0.5% maintenance-margin assumption instead of claiming an exchange-quoted
+liquidation price. All six existing open positions were backfilled and zero
+remain without a liquidation threshold. Local/cloud related tests pass 32/32;
+live BTC funding returned three events, and the first natural cloud cycle ended
+`HEALTHY` with hourly/PAPER `SUCCESS`; real orders remain disabled.
+
+## Clean forward PAPER restart — 2026-08-25
+
+The original PAPER cohort was found to use an hourly open that preceded the
+actual agent selection time in some cases. Its P&L is therefore not valid
+forward evidence. No row was deleted: all 14 positions are retained with
+`evidence_eligible=0` under `LEGACY_LOOKAHEAD_EXCLUDED`; the six formerly open
+positions were cancelled and no legacy position remains active. A consistent
+pre-reset SQLite backup is stored at
+`/var/lib/agca/crypto_data-pre-forward-clean-20260825T0110Z.db`.
+
+The new `FORWARD_CLEAN_V2_20260825` cohort starts from exactly 10,000 USDT.
+Every order intent commits `selected_at` first and can only use the first full
+hour open strictly after that timestamp. The resolver rejects prior-hour or
+non-exact candles. Five initial intents are now `PENDING_ENTRY` for a
+precommitted post-decision hourly open; timing violations are zero. Tests pass
+34/34, SQLite quick-check is `ok`, and the first natural worker/hourly/PAPER
+cycle is `HEALTHY`/`SUCCESS`/`SUCCESS` at exactly 10,000 USDT. Execution remains
+PAPER_ONLY and real orders remain disabled. Forecast settlement learning
+continues, and the separate clean trade-outcome review described below is now
+active; policy changes still require a measured challenger and cannot
+self-promote.
+
+## Clean forward PAPER trade learning — 2026-08-25
+
+The separate trade-outcome learning review is now part of every PAPER-agent
+cycle. It reads only closed rows from `FORWARD_CLEAN_V2_20260825` with
+`evidence_eligible=1` and scores direction, horizon, regime and
+direction+horizon groups from net P&L after fees, spread, slippage, funding and
+liquidation costs. Legacy lookahead rows cannot enter this evidence.
+
+The gate remains `COLLECTING_EVIDENCE` until at least 100 clean trades close.
+A pattern additionally needs 30 trades across three independent ISO weeks and
+negative mean net return plus sub-50% win rate before a bounded challenger can
+be opened. Single-trade updates, coin blacklists, automatic policy mutation and
+automatic champion promotion are prohibited. The initial cloud result is
+`COLLECTING_EVIDENCE` with 0 clean closed trades, 0 hypotheses and exactly
+10,000 USDT. Supabase mirror contains the same review; both new tables have RLS
+with explicit client-deny policies, and security/performance advisors are 0/0.
+
+## Unattended cloud attestation and Codex notification — 2026-08-25
+
+The Google Cloud worker now emits an append-only attestation after each new
+five-minute/hourly result. The canonical payload includes worker/product/hourly/
+PAPER status, hard PAPER_ONLY authority with real orders disabled, SQLite
+quick-check, clean-cohort position counts and portfolio accounting. Its compact
+sorted JSON is stored with a SHA-256 digest and mirrored to the private
+`agca_runtime.cloud_runtime_attestations` table. Client access is revoked; RLS
+and an explicit anon/authenticated deny policy are enabled.
+
+The daily 03:15 Codex heartbeat uses this cloud-originated evidence and the
+Supabase transaction mirror without Google Cloud SSH, interactive approvals or
+Telegram. It verifies freshness, digest, PAPER_ONLY, real-order=false,
+quick-check=ok, clean cohort and accounting agreement. Missing, stale or
+inconsistent evidence produces `BULUT DOĞRULANAMADI`, never a success claim.
+Result attestations are limited to new result windows, not the 10-second worker
+loop. A separate five-minute systemd timer independently checks service/health
+freshness and emits `STALE/DEGRADED/STOPPED` instead of claiming health when the
+main cycle is delayed. Remote PostgreSQL statements and lock waits now have
+hard timeouts, so Supabase slowness cannot indefinitely block local PAPER work.
+Attestation delivery failures are isolated from worker health, so mirror
+timeouts cannot overwrite the health of a completed forecast cycle. The Codex
+report still requires a fresh mirrored row and therefore remains fail-closed.
+
+The runtime mirror no longer re-sends a complete table after every SQLite
+commit. Row triggers coalesce inserts, updates, primary-key changes and deletes
+into a durable local outbox. PostgreSQL receives only queued keys in bounded
+batches; unsuccessful work survives restarts. Remote schema checks are cached
+by schema digest and acknowledgements are removed from the outbox only after a
+successful remote commit. This removes the write amplification that caused
+long checkpoints and connection/statement timeouts.
+Cloud runtime commits are outbox-only. A separate one-minute systemd drain
+service owns Supabase delivery, so the forecast worker never waits on remote
+I/O. Unchanged news analyses and social observations are not rewritten or
+queued. Report verification remains fail-closed until the drain confirms the
+remote evidence.
+The drain prioritizes attestation, daily report, portfolio, positions and
+trade-learning tables. Bulk history uses separate 25-row transactions on a
+two-minute cadence; one large or failed table cannot roll back critical
+evidence delivery.
+Official USD-M exchange metadata refresh now has bounded DNS/connect, HTTP,
+TCP and PostgreSQL statement timeouts. A live refresh failure can fall back
+only to the existing provenance/hash-validated cache within the unchanged
+two-hour freshness ceiling. The first natural post-fix cycle was `HEALTHY`:
+hourly and PAPER agent `SUCCESS`; its Supabase attestation was hash-valid,
+`PAPER_ONLY`, real-order disabled and SQLite `ok`.
+
+## External copy-trader research layer — 2026-08-26
+
+Public Bybit and OKX copy-trader observations now enter a separate research
+quarantine. Every snapshot and trade preserves its source URL, public trader
+and trade identifiers, raw JSON, SHA-256 digest, source update time and AGCA's
+immutable first-observed time. Only full leaderboard snapshots or a watchlist
+declared before outcomes are research-eligible; shared winner screenshots and
+other anecdotal examples are retained only as excluded evidence.
+
+Closed trades first discovered after their exits are explicitly retrospective,
+never forward signals. Trades above 5x leverage, records without disclosed fees
+and funding, incomplete cohorts and non-allowlisted HTTPS sources are excluded.
+Bybit and OKX ROI/win-rate fields remain exchange-specific and are never ranked
+against each other directly. The review remains collecting until it has at
+least 30 traders, 200 distinct closed trades and 56 days of forward coverage.
+Even after that point it can only request human research review: it cannot copy
+a trade, alter the PAPER policy, promote a challenger or send a real order.
+
+The PAPER agent reports this research state beside—but not inside—the clean
+`FORWARD_CLEAN_V2_20260825` performance evidence. Normalized evidence can be
+loaded with `scripts/ingest_external_trader_evidence.py`; undocumented/private
+exchange APIs are not scraped, so compliant public-source acquisition must
+remain source-specific and fail closed when provenance or permitted access is
+not available.
+
+The access blocker was subsequently removed without authentication or a private
+API: the cloud worker can read the unauthenticated endpoint used by OKX's own
+public copy-trading page. A persistent daily systemd timer now requires all 43
+pages to share one `dataVersion`, exactly match the advertised total and contain
+unique trader IDs before committing anything. The first verified snapshot has
+255/255 ranks from one version. It also recorded 594 currently open positions
+at their first-observed time and backfilled 1,870 disclosed closed positions
+from the first 30 accounts; 313 meet the <=5x and complete-cost research gate.
+Historical positions remain retrospective. The system is now collecting
+forward coverage and will only treat positions observed while open as causal
+forward evidence after they subsequently close.
+# Continuous improvement (2026-08-26)
+
+The PAPER agent now runs an autonomous supervised-research loop: discover hypotheses, timestamp them before evaluation, collect forward evidence, and expose review-ready candidates to the orchestrator. External trader consensus is research-only. Automatic policy mutation, automatic promotion, and real orders remain structurally disabled.

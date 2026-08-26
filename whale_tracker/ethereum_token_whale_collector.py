@@ -8,15 +8,25 @@ and buy/sell intent remain unknown.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 import requests
+from data.truth_engine import validate_whale_events
 
 
 DB_NAME = "crypto_data.db"
 ETHEREUM_RPC_URL = "https://ethereum-rpc.publicnode.com"
+DEFAULT_RPC_URLS = (
+    ETHEREUM_RPC_URL,
+    "https://eth.drpc.org",
+    "https://1rpc.io/eth",
+    "https://rpc.mevblocker.io",
+    "https://cloudflare-eth.com",
+)
+_preferred_rpc_url = None
 BINANCE_PRICE_URL = "https://data-api.binance.vision/api/v3/ticker/price"
 USER_AGENT = "AG-Crypto-Analyst/0.9.0"
 CHAIN = "Ethereum"
@@ -106,23 +116,41 @@ def utcnow_iso():
 
 
 def rpc_call(method, params, timeout=45):
-    response = requests.post(
-        ETHEREUM_RPC_URL,
-        json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
-        timeout=timeout,
-        headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+    global _preferred_rpc_url
+    configured = os.getenv("AGCA_ETHEREUM_RPC_URLS", "")
+    configured_urls = (
+        tuple(item.strip() for item in configured.split(",") if item.strip())
+        or DEFAULT_RPC_URLS
     )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("error"):
-        error = payload["error"]
-        raise RuntimeError(
-            f"Ethereum RPC {method} hatası: "
-            f"{error.get('code')} {error.get('message')}"
+    urls = configured_urls
+    if _preferred_rpc_url in configured_urls:
+        urls = (_preferred_rpc_url,) + tuple(
+            item for item in configured_urls if item != _preferred_rpc_url
         )
-    if payload.get("result") is None:
-        raise RuntimeError(f"Ethereum RPC {method} boş sonuç döndürdü")
-    return payload["result"]
+    errors = []
+    for url in urls:
+        try:
+            response = requests.post(
+                url,
+                json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
+                timeout=min(float(timeout), 15.0),
+                headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                error = payload["error"]
+                raise RuntimeError(f"RPC_{error.get('code')}")
+            if payload.get("result") is None:
+                raise RuntimeError("RPC_EMPTY_RESULT")
+            _preferred_rpc_url = url
+            return payload["result"]
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+    raise RuntimeError(
+        f"Ethereum RPC {method} tüm sağlayıcılarda başarısız: "
+        f"{','.join(errors)}"
+    )
 
 
 def fetch_safe_height():
@@ -371,6 +399,7 @@ def extract_large_transfers(logs, token_prices, block_time_cache=None):
 
 
 def save_events(con, events, observed_at):
+    validate_whale_events(events, source="ETHEREUM_TOKEN_WHALE_EVENTS")
     inserted = 0
     for event in events:
         before = con.total_changes

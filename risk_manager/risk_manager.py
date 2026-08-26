@@ -14,6 +14,11 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from data.truth_engine import (
+    audited_validation,
+    fetch_and_validate_btc_anchor,
+    validate_closed_klines,
+)
 
 
 DB_NAME = "crypto_data.db"
@@ -130,7 +135,12 @@ def fetch_closed_1h_klines(symbol):
             f"{symbol}: risk hesabı için yetersiz kapalı mum "
             f"({len(closed)}/{MIN_CLOSED_CANDLES})"
         )
-    return closed[-MIN_CLOSED_CANDLES:]
+    selected = closed[-MIN_CLOSED_CANDLES:]
+    return validate_closed_klines(
+        selected,
+        source=f"BINANCE_KLINES:{symbol}",
+        minimum_rows=MIN_CLOSED_CANDLES,
+    )
 
 
 def candle_metrics(symbol, candles):
@@ -296,7 +306,10 @@ def build_global_policy(assets, source_errors, created_at=None):
     )
     reasons = []
 
-    if "BTCUSDT" not in by_symbol:
+    if "CROSS_SOURCE_BTC" in source_errors:
+        state = "DATA_BLOCKED"
+        reasons.append("BTC_CROSS_SOURCE_VALIDATION_FAILED")
+    elif "BTCUSDT" not in by_symbol:
         state = "DATA_BLOCKED"
         reasons.append("BTC_REFERENCE_MISSING")
     elif coverage_ratio < MIN_COVERAGE_RATIO:
@@ -528,6 +541,19 @@ def main():
     created_at = iso(utcnow())
     assets = []
     source_errors = {}
+    con = runtime_connect(DB_NAME)
+    try:
+        try:
+            audited_validation(
+                con,
+                gate_name="RISK_REFERENCE_PRICE",
+                source="BINANCE_VS_COINGECKO:BTCUSD",
+                validator=fetch_and_validate_btc_anchor,
+            )
+        except Exception as exc:
+            source_errors["CROSS_SOURCE_BTC"] = str(exc)
+    finally:
+        con.close()
     for symbol in SYMBOLS:
         try:
             candles = fetch_closed_1h_klines(symbol)

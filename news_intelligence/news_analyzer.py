@@ -1,3 +1,4 @@
+import os
 import re
 
 import requests
@@ -9,7 +10,9 @@ from news_intelligence.news_repository import (
 )
 
 
-BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
+BINANCE_EXCHANGE_INFO = os.getenv(
+    "AGCA_BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision"
+) + "/api/v3/exchangeInfo"
 
 # Project-name aliases stay explicit for precision. The user's tracked universe is
 # included here, while a separate dynamic ticker detector below lets newly listed

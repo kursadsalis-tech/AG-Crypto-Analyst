@@ -1,0 +1,172 @@
+"""Tamper-evident cloud runtime attestations mirrored to Supabase."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import socket
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+from database.runtime_store import connect as runtime_connect
+from paper_trading.crypto_profit_agent import FORWARD_COHORT
+from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_authority
+
+
+DB_NAME = "crypto_data.db"
+ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V1"
+
+
+def iso(value):
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def ensure_table(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS cloud_runtime_attestations (
+            attestation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL UNIQUE,
+            attestation_version TEXT NOT NULL,
+            worker_id TEXT NOT NULL,
+            worker_status TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            may_send_real_orders INTEGER NOT NULL,
+            sqlite_quick_check TEXT NOT NULL,
+            product_cycle_status TEXT,
+            hourly_job_status TEXT,
+            paper_agent_status TEXT,
+            validation_cohort TEXT NOT NULL,
+            pending_count INTEGER NOT NULL,
+            open_count INTEGER NOT NULL,
+            closed_count INTEGER NOT NULL,
+            cancelled_count INTEGER NOT NULL,
+            initial_capital REAL NOT NULL,
+            cash REAL NOT NULL,
+            realized_pnl REAL NOT NULL,
+            total_fees REAL NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_sha256 TEXT NOT NULL
+        )
+    """)
+
+
+def _status(result):
+    return result.get("status") if isinstance(result, dict) else None
+
+
+def build(con, worker_status, last_results, now=None):
+    now = now or datetime.now(timezone.utc)
+    mode = os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY")
+    integrity = con.execute("PRAGMA quick_check").fetchone()[0]
+    counts = {row[0]: int(row[1]) for row in con.execute("""
+        SELECT status,COUNT(*) FROM paper_agent_positions
+        WHERE validation_cohort=? AND evidence_eligible=1 GROUP BY status
+    """, (FORWARD_COHORT,)).fetchall()}
+    portfolio = con.execute("""
+        SELECT initial_capital,cash,realized_pnl,total_fees,validation_cohort
+        FROM paper_agent_portfolio WHERE portfolio_id=1
+    """).fetchone()
+    if not portfolio:
+        raise RuntimeError("PAPER_PORTFOLIO_MISSING")
+    authority = validate_agent_authority(
+        execution_mode=mode,
+        policy_version=AUTHORIZED_POLICY_VERSION,
+        initial_capital=float(portfolio[0]),
+    )
+    hourly = last_results.get("hourly_job", {})
+    paper = hourly.get("paper_agent", {}) if isinstance(hourly, dict) else {}
+    payload = {
+        "attestation_version": ATTESTATION_VERSION,
+        "created_at": iso(now),
+        "worker_id": socket.gethostname(),
+        "worker_status": worker_status,
+        "execution_mode": mode,
+        "may_send_real_orders": bool(authority["may_send_real_orders"]),
+        "sqlite_quick_check": str(integrity),
+        "product_cycle_status": _status(last_results.get("product_cycle", {})),
+        "hourly_job_status": _status(hourly),
+        "paper_agent_status": _status(paper),
+        "validation_cohort": str(portfolio[4]),
+        "positions": {
+            "pending": counts.get("PENDING_ENTRY", 0),
+            "open": counts.get("OPEN", 0),
+            "closed": counts.get("CLOSED", 0),
+            "cancelled": counts.get("CANCELLED", 0),
+        },
+        "portfolio": {
+            "initial_capital": float(portfolio[0]),
+            "cash": float(portfolio[1]),
+            "realized_pnl": float(portfolio[2]),
+            "total_fees": float(portfolio[3]),
+        },
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return payload, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def record(worker_status, last_results, now=None, database=DB_NAME):
+    con = runtime_connect(database, timeout=30)
+    try:
+        con.execute("PRAGMA busy_timeout=30000")
+        ensure_table(con)
+        payload, encoded, digest = build(con, worker_status, last_results, now)
+        positions = payload["positions"]
+        portfolio = payload["portfolio"]
+        con.execute("""
+            INSERT INTO cloud_runtime_attestations(
+                created_at,attestation_version,worker_id,worker_status,
+                execution_mode,may_send_real_orders,sqlite_quick_check,
+                product_cycle_status,hourly_job_status,paper_agent_status,
+                validation_cohort,pending_count,open_count,closed_count,
+                cancelled_count,initial_capital,cash,realized_pnl,total_fees,
+                payload_json,payload_sha256
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            payload["created_at"], ATTESTATION_VERSION, payload["worker_id"],
+            payload["worker_status"], payload["execution_mode"],
+            int(payload["may_send_real_orders"]), payload["sqlite_quick_check"],
+            payload["product_cycle_status"], payload["hourly_job_status"],
+            payload["paper_agent_status"], payload["validation_cohort"],
+            positions["pending"], positions["open"], positions["closed"],
+            positions["cancelled"], portfolio["initial_capital"], portfolio["cash"],
+            portfolio["realized_pnl"], portfolio["total_fees"], encoded, digest,
+        ))
+        con.commit()
+        return {"payload": payload, "sha256": digest,
+                "mirrored": con.remote_mirror_result.succeeded_for(
+                    "cloud_runtime_attestations"
+                )}
+    finally:
+        con.close()
+
+
+def main():
+    health_path = Path(os.getenv(
+        "AGCA_WORKER_HEALTH_PATH", "/var/lib/agca/worker-health.json"
+    ))
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    service = os.getenv("AGCA_WORKER_SERVICE", "agca-cloud-worker.service")
+    active = subprocess.run(
+        ["systemctl", "is-active", "--quiet", service], check=False,
+    ).returncode == 0
+    health_status = str(health.get("status") or "DEGRADED")
+    health_at = datetime.fromisoformat(str(health.get("at")).replace("Z", "+00:00"))
+    age = (datetime.now(timezone.utc) - health_at.astimezone(timezone.utc)).total_seconds()
+    max_age = float(os.getenv("AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS", "900"))
+    if not active:
+        worker_status = "STOPPED"
+    elif age > max_age:
+        worker_status = "STALE"
+    else:
+        worker_status = health_status
+    result = record(
+        worker_status,
+        dict(health.get("last_results") or {}),
+    )
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return result
+
+
+if __name__ == "__main__":
+    main()

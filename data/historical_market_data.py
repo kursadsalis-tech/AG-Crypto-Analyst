@@ -8,8 +8,9 @@ import requests
 
 
 DB_NAME = "crypto_data.db"
-KLINES_URL = "https://api.binance.com/api/v3/klines"
-EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
+BINANCE_SPOT_BASE = os.getenv("AGCA_BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision")
+KLINES_URL = f"{BINANCE_SPOT_BASE}/api/v3/klines"
+EXCHANGE_INFO_URL = f"{BINANCE_SPOT_BASE}/api/v3/exchangeInfo"
 INTERVAL = "1h"
 LIMIT = 1000
 

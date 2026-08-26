@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AGCA cloud attestation every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Persistent=true
+Unit=agca-cloud-attestation.service
+
+[Install]
+WantedBy=timers.target

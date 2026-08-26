@@ -241,9 +241,9 @@ def evaluate_forward_candidate(
         if policy_time is None:
             reasons.append("RISK_POLICY_TIME_INVALID")
         else:
-            policy_age_minutes = max(
-                0.0, (now - policy_time).total_seconds() / 60.0
-            )
+            policy_age_minutes = (now - policy_time).total_seconds() / 60.0
+            if policy_age_minutes < -1.0:
+                reasons.append("RISK_POLICY_TIME_FUTURE")
             if policy_age_minutes > MAX_POLICY_AGE_MINUTES:
                 reasons.append("RISK_POLICY_STALE")
 

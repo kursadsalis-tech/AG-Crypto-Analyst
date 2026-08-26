@@ -4,7 +4,17 @@ __pycache__/
 .env.*
 !.env.example
 crypto_data.db
+*.db-wal
+*.db-shm
+*.db-journal
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .DS_Store
+reports/*.log
+reports/daily_crypto_profit_agent_report.md
 reports/daily_investment_committee_report.md
 reports/decision_engine_historical_replay.csv
 reports/decision_engine_historical_summary.csv

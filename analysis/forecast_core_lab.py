@@ -230,6 +230,8 @@ def ensure_historical_coverage(con, fetch_start, end):
 
 
 def load_series(con, start, end):
+    from data.truth_engine import validate_stored_candles
+
     output = {}
     for symbol in SYMBOLS:
         rows = con.execute("""
@@ -244,10 +246,6 @@ def load_series(con, start, end):
         for row in rows:
             values = [float(value) for value in row[2:7]]
             quote_volume = None if row[7] is None else float(row[7])
-            if min(values[:4]) <= 0 or values[4] < 0 or quote_volume is None:
-                continue
-            if quote_volume < 0:
-                continue
             candles.append({
                 "open_time": parse_time(row[0]),
                 "close_time": parse_time(row[1]),
@@ -258,6 +256,12 @@ def load_series(con, start, end):
                 "volume": values[4],
                 "quote_volume": quote_volume,
             })
+        validate_stored_candles(
+            candles,
+            source=f"MARKET_KLINES:{symbol}",
+            require_contiguous=True,
+            maximum_gap_ratio=0.025,
+        )
         output[symbol] = {
             "candles": candles,
             "by_close": {row["close_time"]: index for index, row in enumerate(candles)},
@@ -1311,7 +1315,20 @@ def run_lab(now=None):
     con = runtime_connect(DB_NAME)
     try:
         fetch_result = ensure_historical_coverage(con, fetch_start, end)
-        series = load_series(con, fetch_start, end)
+        from data.truth_engine import DataValidationError, record_audit
+        try:
+            series = load_series(con, fetch_start, end)
+        except DataValidationError as exc:
+            record_audit(
+                con, gate_name="FORECAST_LAB_MARKET_SERIES",
+                source=exc.source, status="DATA_BLOCKED", reasons=exc.reasons,
+            )
+            raise
+        record_audit(
+            con, gate_name="FORECAST_LAB_MARKET_SERIES",
+            source="BINANCE_MARKET_KLINES", status="PASS",
+            record_count=sum(len(item["candles"]) for item in series.values()),
+        )
         built = build_rows(series, start, end)
     finally:
         con.close()

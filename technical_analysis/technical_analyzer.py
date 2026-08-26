@@ -1,7 +1,10 @@
+import os
 import requests
 from datetime import datetime
 
-BASE_URL = "https://api.binance.com/api/v3/klines"
+BASE_URL = os.getenv(
+    "AGCA_BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision"
+) + "/api/v3/klines"
 REPORT_FILE = "reports/technical_analysis.txt"
 
 coins = [

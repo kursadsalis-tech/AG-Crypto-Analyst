@@ -7,6 +7,8 @@ from news_intelligence.news_repository import (
     save_news_batch,
     get_news_count,
 )
+from database.runtime_store import connect as runtime_connect
+from data.truth_engine import audited_validation, validate_news_articles
 
 
 RSS_SOURCES = {
@@ -62,10 +64,24 @@ def main():
     create_news_table()
 
     all_articles = []
+    errors = {}
 
     for source_name, url in RSS_SOURCES.items():
         try:
             articles = fetch_rss(source_name, url)
+            con = runtime_connect("crypto_data.db")
+            try:
+                audited_validation(
+                    con,
+                    gate_name="NEWS_SOURCE_PAYLOAD",
+                    source=source_name,
+                    validator=lambda: validate_news_articles(
+                        articles, source=source_name,
+                    ),
+                    record_count=len(articles),
+                )
+            finally:
+                con.close()
             all_articles.extend(articles)
 
             print(
@@ -74,12 +90,14 @@ def main():
             )
 
         except Exception as e:
+            errors[source_name] = str(e)
             print(
                 f"{source_name}: HATA -> {e}"
             )
 
-    if all_articles:
-        save_news_batch(all_articles)
+    if not all_articles:
+        raise RuntimeError("NEWS_DATA_BLOCKED: doğrulanmış haber kaynağı yok")
+    save_news_batch(all_articles)
 
     print()
     print("=" * 70)
@@ -95,6 +113,7 @@ def main():
         print(f"Başlık   : {article['title']}")
         print(f"Tarih    : {article['published_at']}")
         print(f"Link     : {article['link']}")
+    return {"status": "PARTIAL" if errors else "SUCCESS", "collected": len(all_articles), "errors": errors}
 
 
 if __name__ == "__main__":

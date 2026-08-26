@@ -12,6 +12,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 import requests
+from data.truth_engine import validate_macro_series
 
 
 DB_NAME = "crypto_data.db"
@@ -129,6 +130,7 @@ def main():
     for series_id, meta in SERIES.items():
         try:
             rows = fetch_series(series_id, start_date)
+            validate_macro_series(rows, source=f"FRED:{series_id}")
             fetched[series_id] = rows
             latest_date, latest_value = rows[-1]
             print(

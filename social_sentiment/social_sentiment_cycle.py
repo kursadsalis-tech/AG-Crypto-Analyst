@@ -6,6 +6,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from social_sentiment import social_sentiment_agent, social_sentiment_analyzer
+from data.truth_engine import record_cycle_validation
 
 
 DB_NAME = "crypto_data.db"
@@ -86,11 +87,13 @@ def main(force=False):
                 f"coin_signals={len(results)}"
             )
             save_state(con, "SUCCESS", message, now)
+            record_cycle_validation(con, AGENT_NAME, "SUCCESS", message, now)
             print(f"Social Sentiment cycle: SUCCESS | {message}")
             return {"status": "SUCCESS", "message": message}
         except Exception as exc:
             message = str(exc)
             save_state(con, "ERROR", message)
+            record_cycle_validation(con, AGENT_NAME, "ERROR", message, now)
             print(f"Social Sentiment cycle: HATA -> {message}")
             return {"status": "ERROR", "message": message}
     finally:

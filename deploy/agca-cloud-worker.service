@@ -1,0 +1,27 @@
+[Unit]
+Description=AGCA Mac-independent PAPER_ONLY cloud worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_PROJECT_DIR=/home/kursadsalis/AG-Crypto-Analyst-cloud
+Environment=AGCA_STATE_DIR=/var/lib/agca
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+Environment=AGCA_BINANCE_SPOT_BASE_URL=https://data-api.binance.vision
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.cloud_worker
+Restart=always
+RestartSec=20
+TimeoutStopSec=60
+UMask=0077
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

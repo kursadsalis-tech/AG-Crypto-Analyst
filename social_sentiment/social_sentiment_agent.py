@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import requests
+from data.truth_engine import validate_social_records
 
 from news_intelligence.news_analyzer import (
     COIN_KEYWORDS,
@@ -180,6 +181,16 @@ def save_rows(con, rows, dynamic_assets):
                 positive_hits=excluded.positive_hits,
                 negative_hits=excluded.negative_hits,
                 content_text=excluded.content_text
+            WHERE social_sentiment_observations.source IS NOT excluded.source
+               OR social_sentiment_observations.title IS NOT excluded.title
+               OR social_sentiment_observations.link IS NOT excluded.link
+               OR social_sentiment_observations.published_at IS NOT excluded.published_at
+               OR social_sentiment_observations.coins IS NOT excluded.coins
+               OR social_sentiment_observations.sentiment IS NOT excluded.sentiment
+               OR social_sentiment_observations.sentiment_score IS NOT excluded.sentiment_score
+               OR social_sentiment_observations.positive_hits IS NOT excluded.positive_hits
+               OR social_sentiment_observations.negative_hits IS NOT excluded.negative_hits
+               OR social_sentiment_observations.content_text IS NOT excluded.content_text
         """, (
             row["source"], external_id, row["title"], row["link"],
             row["published_at"], collected_at, ",".join(coins) if coins else "MARKET",
@@ -209,6 +220,7 @@ def main():
     for source, url in SOURCE_URLS.items():
         try:
             rows = fetch_feed(source, url)
+            validate_social_records(rows, source=source)
             collected.extend(rows)
             print(f"{source}: {len(rows)} paylaşım alındı")
         except Exception as exc:

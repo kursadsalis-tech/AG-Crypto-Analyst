@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect full public OKX copy-trader cohort daily
+
+[Timer]
+OnCalendar=*-*-* 00:25:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=agca-okx-copy-trader-collector.service
+
+[Install]
+WantedBy=timers.target

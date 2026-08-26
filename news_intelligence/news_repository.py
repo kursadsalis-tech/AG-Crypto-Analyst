@@ -96,7 +96,7 @@ def save_news_analysis(analysis):
     cursor = connection.cursor()
 
     cursor.execute("""
-        INSERT OR REPLACE INTO crypto_news_analysis (
+        INSERT INTO crypto_news_analysis (
             news_id,
             coins,
             event_type,
@@ -106,6 +106,18 @@ def save_news_analysis(analysis):
             matched_keywords
         )
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(news_id) DO UPDATE SET
+            coins=excluded.coins,event_type=excluded.event_type,
+            direction=excluded.direction,impact_score=excluded.impact_score,
+            confidence_score=excluded.confidence_score,
+            matched_keywords=excluded.matched_keywords,
+            analyzed_at=CURRENT_TIMESTAMP
+        WHERE crypto_news_analysis.coins IS NOT excluded.coins
+           OR crypto_news_analysis.event_type IS NOT excluded.event_type
+           OR crypto_news_analysis.direction IS NOT excluded.direction
+           OR crypto_news_analysis.impact_score IS NOT excluded.impact_score
+           OR crypto_news_analysis.confidence_score IS NOT excluded.confidence_score
+           OR crypto_news_analysis.matched_keywords IS NOT excluded.matched_keywords
     """, (
         analysis["news_id"],
         analysis["coins"],
@@ -125,7 +137,7 @@ def save_news_analysis_batch(analyses):
     cursor = connection.cursor()
 
     cursor.executemany("""
-        INSERT OR REPLACE INTO crypto_news_analysis (
+        INSERT INTO crypto_news_analysis (
             news_id,
             coins,
             event_type,
@@ -135,6 +147,18 @@ def save_news_analysis_batch(analyses):
             matched_keywords
         )
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(news_id) DO UPDATE SET
+            coins=excluded.coins,event_type=excluded.event_type,
+            direction=excluded.direction,impact_score=excluded.impact_score,
+            confidence_score=excluded.confidence_score,
+            matched_keywords=excluded.matched_keywords,
+            analyzed_at=CURRENT_TIMESTAMP
+        WHERE crypto_news_analysis.coins IS NOT excluded.coins
+           OR crypto_news_analysis.event_type IS NOT excluded.event_type
+           OR crypto_news_analysis.direction IS NOT excluded.direction
+           OR crypto_news_analysis.impact_score IS NOT excluded.impact_score
+           OR crypto_news_analysis.confidence_score IS NOT excluded.confidence_score
+           OR crypto_news_analysis.matched_keywords IS NOT excluded.matched_keywords
     """, [
         (
             analysis["news_id"],

@@ -1,0 +1,18 @@
+[Unit]
+Description=AGCA durable Supabase mirror outbox drain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=/etc/agca/agca.env
+EnvironmentFile=/etc/agca/remote-database.env
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+Environment=AGCA_REMOTE_BATCH_SIZE=25
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.remote_mirror_drain /var/lib/agca/crypto_data.db
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

@@ -14,15 +14,17 @@ pre-committed due timestamp. No outcome changes weights or cutoff.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 import time
 from datetime import datetime, timedelta, timezone
 
 import requests
+from data.truth_engine import DataValidationError, validate_closed_klines
 
 DB_NAME = "crypto_data.db"
-BINANCE = "https://api.binance.com"
+BINANCE = os.getenv("AGCA_BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision")
 HORIZON_HOURS = 1
 LOCKED_CUTOFF = 0.249
 LOCKED_WEIGHTS = {
@@ -85,7 +87,12 @@ def current_price(symbol):
 def closed_1h_klines(symbol, limit=100):
     raw = get_json("/api/v3/klines", {"symbol": symbol, "interval": "1h", "limit": limit})
     now_ms = int(time.time() * 1000)
-    return [x for x in raw if int(x[6]) < now_ms]
+    closed = [x for x in raw if len(x) >= 8 and int(x[6]) < now_ms]
+    return validate_closed_klines(
+        closed,
+        source=f"BINANCE_KLINES:{symbol}",
+        minimum_rows=min(limit - 1, 60),
+    )
 
 
 def ema_series(values, period):
@@ -335,7 +342,17 @@ def price_at_due(symbol, due):
         "limit": 5,
     })
     if not raw:
-        return None, None
+        raise DataValidationError(
+            f"BINANCE_SETTLEMENT:{symbol}", ("EMPTY_SETTLEMENT_PAYLOAD",)
+        )
+    validate_closed_klines(
+        raw,
+        source=f"BINANCE_SETTLEMENT:{symbol}",
+        now=due + timedelta(minutes=6),
+        minimum_rows=1,
+        interval=timedelta(minutes=1),
+        maximum_staleness=timedelta(minutes=7),
+    )
     return float(raw[0][1]), datetime.fromtimestamp(int(raw[0][0]) / 1000.0, tz=timezone.utc)
 
 
@@ -409,6 +426,12 @@ def main():
         created, skipped = record_new_predictions(con, started_at)
         print(f"\nBu çalıştırma: yeni tahmin={created} | sonuçlanan={settled} | spot eşleşmeyen={skipped}")
         summary(con)
+        return {
+            "status": "SUCCESS" if skipped == 0 else "PARTIAL",
+            "created": created,
+            "settled": settled,
+            "skipped": skipped,
+        }
     finally:
         con.close()
 

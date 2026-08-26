@@ -11,6 +11,7 @@ from whale_tracker import (
     ethereum_whale_collector,
     whale_evidence_analyzer,
 )
+from data.truth_engine import record_cycle_validation
 
 
 DB_NAME = "crypto_data.db"
@@ -129,6 +130,7 @@ def main(force=False):
                     "analysis=UNCHANGED"
                 )
                 save_state(con, cycle_status, message, now)
+                record_cycle_validation(con, AGENT_NAME, cycle_status, message, now)
                 print(f"Whale Tracker cycle: {cycle_status} | {message}")
                 return {"status": cycle_status, "message": message}
 
@@ -146,11 +148,13 @@ def main(force=False):
                 f"analysis={analysis['status']}"
             )
             save_state(con, cycle_status, message, now)
+            record_cycle_validation(con, AGENT_NAME, cycle_status, message, now)
             print(f"Whale Tracker cycle: {cycle_status} | {message}")
             return {"status": cycle_status, "message": message}
         except Exception as exc:
             message = str(exc)
             save_state(con, "ERROR", message)
+            record_cycle_validation(con, AGENT_NAME, "ERROR", message, now)
             print(f"Whale Tracker cycle: HATA -> {message}")
             return {"status": "ERROR", "message": message}
     finally:

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sudo systemctl disable --now agca-live-cycle.timer agca-hourly-forecast.timer 2>/dev/null || true
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+stage=/home/kursadsalis/AG-Crypto-Analyst-cloud-new
+backup="/home/kursadsalis/AG-Crypto-Analyst-cloud-backup-${stamp}"
+
+if [[ -e "$stage" ]]; then
+  echo "Refusing to overwrite existing staging path: $stage" >&2
+  exit 2
+fi
+mkdir -p "$stage"
+tar -xzf /home/kursadsalis/agca-code.tar.gz -C "$stage"
+gzip -dc /home/kursadsalis/crypto_data.db.gz > "$stage/crypto_data.db"
+
+if [[ -d /home/kursadsalis/AG-Crypto-Analyst-cloud ]]; then
+  mv /home/kursadsalis/AG-Crypto-Analyst-cloud "$backup"
+fi
+mv "$stage" /home/kursadsalis/AG-Crypto-Analyst-cloud
+cd /home/kursadsalis/AG-Crypto-Analyst-cloud
+
+python3.12 -m venv .venv
+.venv/bin/pip install --no-cache-dir -r requirements-runtime.txt -r requirements-forecast-v3.txt
+sudo install -d -o kursadsalis -g kursadsalis -m 700 /var/lib/agca
+
+if ! swapon --show | grep -q .; then
+  sudo fallocate -l 2G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+fi
+
+sudo install -m 644 deploy/agca-cloud-worker.service /etc/systemd/system/agca-cloud-worker.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now agca-cloud-worker.service
+echo "BACKUP=$backup"

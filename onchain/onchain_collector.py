@@ -11,6 +11,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 import requests
+from data.truth_engine import validate_metric_rows
 
 
 DB_NAME = "crypto_data.db"
@@ -138,6 +139,7 @@ def main():
     try:
         ensure_table(con)
         if metrics:
+            validate_metric_rows(metrics, source="ONCHAIN_METRICS")
             save_metrics(con, collected_at, metrics)
     finally:
         con.close()

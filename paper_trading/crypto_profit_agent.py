@@ -17,11 +17,22 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
+from paper_trading.execution_model import PAPER_MARKET, simulated_fill
+from paper_trading.exchange_metadata import (
+    ExchangeMetadataError, load_cache, rules_for,
+)
+from paper_trading.governance import validate_agent_authority
+from paper_trading.futures_costs import (
+    directional_funding_payment, fetch_funding_history_via_postgres,
+    liquidation_breached, liquidation_price,
+)
+from paper_trading import trade_learning
+from paper_trading import strategy_allocator
 
 
 DB_NAME = forecast_engine.DB_NAME
 AGENT_VERSION = "CRYPTO_PROFIT_AGENT_V1"
-POLICY_VERSION = "PAPER_OPPORTUNITY_POLICY_V1_FIXED"
+POLICY_VERSION = "PAPER_OPPORTUNITY_POLICY_V2_EXECUTION_REALISM"
 INITIAL_CAPITAL = float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000"))
 FEE_BPS = float(os.getenv("AGCA_PAPER_FEE_BPS", "10"))
 FEE_RATE = FEE_BPS / 10000.0
@@ -34,6 +45,7 @@ MIN_PROBABILITY_GAP = 0.05
 TRADE_HORIZONS = (4, 24)
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 REPORT_PATH = Path("reports/daily_crypto_profit_agent_report.md")
+FORWARD_COHORT = "FORWARD_CLEAN_V2_20260825"
 
 
 def utcnow():
@@ -49,6 +61,12 @@ def parse_time(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def next_tradable_hour_open(decision_time):
+    """First full hourly open strictly after the decision was committed."""
+    decision_time = parse_time(decision_time)
+    return decision_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
 
 def connect():
@@ -102,7 +120,14 @@ def ensure_tables(con):
             model_version TEXT NOT NULL,
             artifact_hash TEXT NOT NULL,
             selection_reason TEXT NOT NULL,
-            cancel_reason TEXT
+            cancel_reason TEXT,
+            market_type TEXT NOT NULL DEFAULT 'USD_M_PERPETUAL',
+            entry_spread_cost REAL NOT NULL DEFAULT 0,
+            entry_slippage_cost REAL NOT NULL DEFAULT 0,
+            exit_spread_cost REAL NOT NULL DEFAULT 0,
+            exit_slippage_cost REAL NOT NULL DEFAULT 0,
+            funding_cost REAL NOT NULL DEFAULT 0,
+            partial_fill INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_paper_positions_status_due
@@ -130,6 +155,48 @@ def ensure_tables(con):
     ):
         if name not in columns:
             con.execute(f"ALTER TABLE paper_agent_daily_reports ADD COLUMN {name} {definition}")
+    position_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_positions)")}
+    for name, definition in (
+        ("market_type", "TEXT NOT NULL DEFAULT 'USD_M_PERPETUAL'"),
+        ("entry_spread_cost", "REAL NOT NULL DEFAULT 0"),
+        ("entry_slippage_cost", "REAL NOT NULL DEFAULT 0"),
+        ("exit_spread_cost", "REAL NOT NULL DEFAULT 0"),
+        ("exit_slippage_cost", "REAL NOT NULL DEFAULT 0"),
+        ("funding_cost", "REAL NOT NULL DEFAULT 0"),
+        ("funding_event_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("funding_source", "TEXT"),
+        ("liquidation_price", "REAL"),
+        ("liquidation_fee", "REAL NOT NULL DEFAULT 0"),
+        ("liquidated", "INTEGER NOT NULL DEFAULT 0"),
+        ("close_reason", "TEXT"),
+        ("validation_cohort", "TEXT"),
+        ("evidence_eligible", "INTEGER NOT NULL DEFAULT 0"),
+        ("partial_fill", "INTEGER NOT NULL DEFAULT 0"),
+        ("strategy_id", "TEXT NOT NULL DEFAULT 'CHAMPION_BASELINE'"),
+    ):
+        if name not in position_columns:
+            con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
+    portfolio_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_portfolio)")}
+    for name, definition in (
+        ("validation_cohort", "TEXT"),
+        ("evidence_start_at", "TEXT"),
+    ):
+        if name not in portfolio_columns:
+            con.execute(f"ALTER TABLE paper_agent_portfolio ADD COLUMN {name} {definition}")
+    if PAPER_MARKET == "USD_M_PERPETUAL":
+        maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
+        rows = con.execute("""
+            SELECT position_id,entry_price,direction FROM paper_agent_positions
+            WHERE status='OPEN' AND liquidation_price IS NULL AND entry_price IS NOT NULL
+        """).fetchall()
+        for position_id, entry_price, direction in rows:
+            con.execute(
+                "UPDATE paper_agent_positions SET liquidation_price=? WHERE position_id=?",
+                (liquidation_price(
+                    entry_price=float(entry_price), direction=direction, leverage=1.0,
+                    maintenance_margin_rate=maintenance_rate,
+                ), position_id),
+            )
     con.execute("""
         INSERT OR IGNORE INTO paper_agent_portfolio(
             portfolio_id,created_at,agent_version,policy_version,
@@ -139,13 +206,31 @@ def ensure_tables(con):
         iso(utcnow()), AGENT_VERSION, POLICY_VERSION,
         INITIAL_CAPITAL, INITIAL_CAPITAL, 0.0, 0.0,
     ))
+    current_cohort = con.execute(
+        "SELECT validation_cohort FROM paper_agent_portfolio WHERE portfolio_id=1"
+    ).fetchone()[0]
+    if current_cohort != FORWARD_COHORT:
+        reset_at = iso(utcnow())
+        con.execute("""
+            UPDATE paper_agent_positions SET
+                evidence_eligible=0,
+                validation_cohort=COALESCE(validation_cohort,'LEGACY_LOOKAHEAD_EXCLUDED'),
+                status=CASE WHEN status IN ('PENDING_ENTRY','OPEN') THEN 'CANCELLED' ELSE status END,
+                cancel_reason=CASE WHEN status IN ('PENDING_ENTRY','OPEN')
+                    THEN 'LOOKAHEAD_COHORT_QUARANTINED' ELSE cancel_reason END
+        """)
+        con.execute("""
+            UPDATE paper_agent_portfolio SET created_at=?,initial_capital=?,cash=?,
+                realized_pnl=0,total_fees=0,validation_cohort=?,evidence_start_at=?
+            WHERE portfolio_id=1
+        """, (reset_at, INITIAL_CAPITAL, INITIAL_CAPITAL, FORWARD_COHORT, reset_at))
     con.commit()
 
 
 def exact_open(con, symbol, as_of):
     expected = parse_time(as_of) + timedelta(milliseconds=1)
     rows = con.execute("""
-        SELECT open_time,open FROM market_klines
+        SELECT open_time,open,quote_volume FROM market_klines
         WHERE symbol=? AND interval='1h'
           AND open_time>=? AND open_time<=?
         ORDER BY open_time LIMIT 3
@@ -154,16 +239,32 @@ def exact_open(con, symbol, as_of):
         iso(expected - timedelta(seconds=2)),
         iso(expected + timedelta(seconds=2)),
     )).fetchall()
-    for stamp, price in rows:
+    for stamp, price, quote_volume in rows:
         if abs((parse_time(stamp) - expected).total_seconds()) <= 1.0:
-            return parse_time(stamp), float(price)
+            return parse_time(stamp), float(price), (float(quote_volume) if quote_volume else None)
+    return None
+
+
+def exact_planned_open(con, symbol, planned_entry_time):
+    """Resolve only the open committed before that timestamp; never a prior price."""
+    expected = parse_time(planned_entry_time)
+    rows = con.execute("""
+        SELECT open_time,open,quote_volume FROM market_klines
+        WHERE symbol=? AND interval='1h' AND open_time>=? AND open_time<=?
+        ORDER BY open_time LIMIT 3
+    """, (
+        symbol, iso(expected - timedelta(seconds=1)), iso(expected + timedelta(seconds=1)),
+    )).fetchall()
+    for stamp, price, quote_volume in rows:
+        if abs((parse_time(stamp) - expected).total_seconds()) <= 1.0:
+            return parse_time(stamp), float(price), (float(quote_volume) if quote_volume else None)
     return None
 
 
 def exact_close(con, symbol, due_time):
     expected = parse_time(due_time)
     rows = con.execute("""
-        SELECT close_time,close FROM market_klines
+        SELECT close_time,close,quote_volume FROM market_klines
         WHERE symbol=? AND interval='1h'
           AND close_time>=? AND close_time<=?
         ORDER BY close_time LIMIT 3
@@ -172,9 +273,9 @@ def exact_close(con, symbol, due_time):
         iso(expected - timedelta(seconds=2)),
         iso(expected + timedelta(seconds=2)),
     )).fetchall()
-    for stamp, price in rows:
+    for stamp, price, quote_volume in rows:
         if abs((parse_time(stamp) - expected).total_seconds()) <= 1.0:
-            return parse_time(stamp), float(price)
+            return parse_time(stamp), float(price), (float(quote_volume) if quote_volume else None)
     return None
 
 
@@ -184,6 +285,21 @@ def directional_pnl(direction, entry_price, exit_price, quantity):
     if direction == "SHORT":
         return (entry_price - exit_price) * quantity
     raise ValueError("UNKNOWN_DIRECTION")
+
+
+def first_liquidation_event(con, symbol, entry_time, due_time, direction, threshold):
+    rows = con.execute("""
+        SELECT close_time,low,high FROM market_klines
+        WHERE symbol=? AND interval='1h' AND close_time>? AND close_time<=?
+        ORDER BY close_time
+    """, (symbol, iso(parse_time(entry_time)), iso(parse_time(due_time)))).fetchall()
+    for close_time, low, high in rows:
+        if liquidation_breached(
+            direction=direction, threshold=threshold,
+            low=float(low), high=float(high),
+        ):
+            return parse_time(close_time)
+    return None
 
 
 def latest_mark(con, symbol):
@@ -197,7 +313,8 @@ def latest_mark(con, symbol):
 
 def portfolio_snapshot(con):
     portfolio = con.execute("""
-        SELECT initial_capital,cash,realized_pnl,total_fees
+        SELECT initial_capital,cash,realized_pnl,total_fees,
+               validation_cohort,evidence_start_at
         FROM paper_agent_portfolio WHERE portfolio_id=1
     """).fetchone()
     open_rows = con.execute("""
@@ -213,7 +330,7 @@ def portfolio_snapshot(con):
             unrealized += directional_pnl(
                 direction, float(entry), mark, float(quantity)
             )
-    initial, cash, realized, fees = map(float, portfolio)
+    initial, cash, realized, fees = map(float, portfolio[:4])
     equity = cash + reserved + unrealized
     return {
         "initial_capital": initial,
@@ -225,22 +342,24 @@ def portfolio_snapshot(con):
         "equity": equity,
         "return_pct": (equity / initial - 1.0) * 100.0,
         "open_positions": len(open_rows),
+        "validation_cohort": portfolio[4],
+        "evidence_start_at": portfolio[5],
     }
 
 
-def fill_pending(con, now):
+def fill_pending(con, now, exchange_metadata=None):
     rows = con.execute("""
-        SELECT position_id,symbol,as_of,notional,direction
+        SELECT position_id,symbol,planned_entry_time,notional,direction
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
         ORDER BY selected_at,position_id
     """).fetchall()
     filled = 0
     cancelled = 0
-    for position_id, symbol, as_of, notional, direction in rows:
-        result = exact_open(con, symbol, as_of)
+    for position_id, symbol, planned_entry_time, notional, direction in rows:
+        result = exact_planned_open(con, symbol, planned_entry_time)
         if result is None:
-            if now - parse_time(as_of) > timedelta(hours=2):
+            if now - parse_time(planned_entry_time) > timedelta(hours=2):
                 con.execute("""
                     UPDATE paper_agent_positions
                     SET status='CANCELLED',cancel_reason=?
@@ -248,13 +367,42 @@ def fill_pending(con, now):
                 """, ("EXACT_NEXT_OPEN_UNAVAILABLE", position_id))
                 cancelled += 1
             continue
-        entry_time, entry_price = result
+        entry_time, reference_price, quote_volume = result
         notional = float(notional)
-        fee = notional * FEE_RATE
+        side = "BUY" if direction == "LONG" else "SELL"
+        try:
+            rules = rules_for(exchange_metadata, symbol) if exchange_metadata else None
+        except ExchangeMetadataError:
+            rules = None
+        if exchange_metadata is not None and rules is None:
+            con.execute("""
+                UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'
+            """, ("LIVE_SYMBOL_RULES_UNAVAILABLE", position_id))
+            cancelled += 1
+            continue
+        fill = simulated_fill(
+            reference_price=reference_price, requested_notional=notional,
+            side=side, available_quote_volume=quote_volume,
+            require_liquidity=True,
+            symbol=symbol,
+            quantity_step=rules.quantity_step if rules else 1e-8,
+            price_tick=rules.price_tick if rules else 1e-8,
+            min_notional=rules.min_notional if rules else 5.0,
+        )
+        if fill is None:
+            con.execute("""
+                UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'
+            """, ("SIMULATED_EXCHANGE_REJECTION", position_id))
+            cancelled += 1
+            continue
+        entry_price, fee = fill.price, fill.fee
+        actual_notional = fill.quantity * fill.price
         cash = float(con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0])
-        if cash + 1e-9 < notional + fee:
+        if cash + 1e-9 < actual_notional + fee:
             con.execute("""
                 UPDATE paper_agent_positions
                 SET status='CANCELLED',cancel_reason=?
@@ -262,59 +410,123 @@ def fill_pending(con, now):
             """, ("INSUFFICIENT_VIRTUAL_CASH", position_id))
             cancelled += 1
             continue
-        quantity = notional / entry_price
+        quantity = fill.quantity
+        maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
+        liquidation_threshold = liquidation_price(
+            entry_price=entry_price, direction=direction, leverage=1.0,
+            maintenance_margin_rate=maintenance_rate,
+        ) if PAPER_MARKET == "USD_M_PERPETUAL" else None
         con.execute("""
             UPDATE paper_agent_positions SET
-                status='OPEN',entry_time=?,entry_price=?,quantity=?,entry_fee=?
+                status='OPEN',entry_time=?,entry_price=?,quantity=?,notional=?,entry_fee=?,
+                market_type=?,entry_spread_cost=?,entry_slippage_cost=?,partial_fill=?,
+                liquidation_price=?
             WHERE position_id=? AND status='PENDING_ENTRY'
-        """, (iso(entry_time), entry_price, quantity, fee, position_id))
+        """, (iso(entry_time), entry_price, quantity, actual_notional, fee,
+              PAPER_MARKET, fill.spread_cost, fill.slippage_cost,
+              int(fill.partial), liquidation_threshold, position_id))
         con.execute("""
             UPDATE paper_agent_portfolio
             SET cash=cash-?,total_fees=total_fees+?
             WHERE portfolio_id=1
-        """, (notional + fee, fee))
+        """, (actual_notional + fee, fee))
         filled += 1
     con.commit()
     return filled, cancelled
 
 
-def settle_open(con, now):
+def settle_open(con, now, exchange_metadata=None):
     rows = con.execute("""
-        SELECT position_id,symbol,direction,due_time,entry_price,quantity,
-               notional,entry_fee
+        SELECT position_id,symbol,direction,due_time,entry_time,entry_price,quantity,
+               notional,entry_fee,liquidation_price
         FROM paper_agent_positions
         WHERE status='OPEN' AND due_time<=?
         ORDER BY due_time,position_id
     """, (iso(now),)).fetchall()
     closed = 0
     for row in rows:
-        position_id, symbol, direction, due, entry, quantity, notional, entry_fee = row
+        position_id, symbol, direction, due, entry_time, entry, quantity, notional, entry_fee, liq_price = row
         result = exact_close(con, symbol, due)
         if result is None:
             continue
-        exit_time, exit_price = result
+        exit_time, reference_price, quote_volume = result
         entry = float(entry)
         quantity = float(quantity)
         notional = float(notional)
         entry_fee = float(entry_fee)
+        exit_side = "SELL" if direction == "LONG" else "BUY"
+        try:
+            rules = rules_for(exchange_metadata, symbol) if exchange_metadata else None
+        except ExchangeMetadataError:
+            rules = None
+        if exchange_metadata is not None and rules is None:
+            continue
+        liquidation_time = None
+        if PAPER_MARKET == "USD_M_PERPETUAL" and liq_price is not None:
+            liquidation_time = first_liquidation_event(
+                con, symbol, entry_time, due, direction, float(liq_price),
+            )
+        if liquidation_time is not None:
+            exit_time = liquidation_time
+            exit_price = float(liq_price)
+            exit_fee = quantity * exit_price * rules.liquidation_fee_rate
+            exit_spread_cost = 0.0
+            exit_slippage_cost = 0.0
+            liquidated = 1
+            close_reason = "CONSERVATIVE_1X_LIQUIDATION"
+        else:
+            fill = simulated_fill(
+                reference_price=reference_price,
+                requested_notional=quantity * reference_price,
+                side=exit_side,
+                available_quote_volume=quote_volume,
+                require_liquidity=True,
+                symbol=symbol,
+                quantity_step=rules.quantity_step if rules else 1e-8,
+                price_tick=rules.price_tick if rules else 1e-8,
+                min_notional=rules.min_notional if rules else 5.0,
+            )
+            if fill is None:
+                continue
+            exit_price = fill.price
+            exit_fee = quantity * exit_price * (fill.fee / (fill.quantity * fill.price))
+            exit_spread_cost = fill.spread_cost
+            exit_slippage_cost = fill.slippage_cost
+            liquidated = 0
+            close_reason = "HORIZON_DUE_CLOSE"
         gross = directional_pnl(direction, entry, exit_price, quantity)
-        exit_value = quantity * exit_price
-        exit_fee = exit_value * FEE_RATE
-        net = gross - entry_fee - exit_fee
+        if PAPER_MARKET == "USD_M_PERPETUAL":
+            funding_events = fetch_funding_history_via_postgres(
+                database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
+                symbol=symbol, start=parse_time(entry_time), end=exit_time,
+            )
+            funding = directional_funding_payment(
+                direction=direction, quantity=quantity, events=funding_events,
+            )
+            funding_source = "BINANCE_USD_M_FUNDING_HISTORY"
+        else:
+            funding_events = []
+            funding = 0.0
+            funding_source = "SPOT_NOT_APPLICABLE"
+        recovery = max(0.0, notional + gross - exit_fee - funding)
+        net = recovery - notional - entry_fee
         con.execute("""
             UPDATE paper_agent_positions SET
                 status='CLOSED',exit_time=?,exit_price=?,exit_fee=?,
-                gross_pnl=?,net_pnl=?
+                gross_pnl=?,net_pnl=?,exit_spread_cost=?,exit_slippage_cost=?,funding_cost=?,
+                funding_event_count=?,funding_source=?,liquidation_fee=?,liquidated=?,close_reason=?
             WHERE position_id=? AND status='OPEN'
         """, (
-            iso(exit_time), exit_price, exit_fee, gross, net, position_id,
+            iso(exit_time), exit_price, exit_fee, gross, net,
+            exit_spread_cost, exit_slippage_cost, funding, len(funding_events), funding_source,
+            exit_fee if liquidated else 0.0, liquidated, close_reason, position_id,
         ))
         con.execute("""
             UPDATE paper_agent_portfolio SET
                 cash=cash+?,realized_pnl=realized_pnl+?,
                 total_fees=total_fees+?
             WHERE portfolio_id=1
-        """, (notional + gross - exit_fee, net, exit_fee))
+        """, (recovery, net, exit_fee))
         closed += 1
     con.commit()
     return closed
@@ -330,6 +542,8 @@ def candidate_direction(row):
         confidence = p_up
         aligned = target > current
     else:
+        if PAPER_MARKET == "SPOT":
+            return None
         direction = "SHORT"
         confidence = p_down
         aligned = target < current
@@ -341,7 +555,8 @@ def candidate_direction(row):
     return direction, confidence, gap
 
 
-def latest_candidates(con):
+def latest_candidates(con, now=None):
+    now = now or utcnow()
     latest = con.execute(
         "SELECT MAX(as_of) FROM forecast_engine_predictions"
     ).fetchone()[0]
@@ -363,6 +578,8 @@ def latest_candidates(con):
     candidates = []
     for raw in rows:
         row = dict(zip(keys, raw))
+        if parse_time(row["as_of"]) > now or parse_time(row["due_time"]) <= now:
+            continue
         if not bool(row["risk_eligible"]):
             continue
         decision = candidate_direction(row)
@@ -385,12 +602,17 @@ def latest_candidates(con):
 
 
 def select_new_positions(con, now):
+    weights = strategy_allocator.rebalance(con, now)
     snapshot = portfolio_snapshot(con)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
     """).fetchall()
     active_symbols = {row[0] for row in active}
+    strategy_exposure = dict(con.execute("""
+        SELECT strategy_id,coalesce(sum(notional),0) FROM paper_agent_positions
+        WHERE status IN ('PENDING_ENTRY','OPEN') GROUP BY strategy_id
+    """).fetchall())
     capacity = max(0, MAX_OPEN_POSITIONS - len(active))
     if capacity <= 0:
         return 0
@@ -399,12 +621,28 @@ def select_new_positions(con, now):
     available_exposure = max(0.0, max_exposure - snapshot["reserved"])
     base_notional = snapshot["equity"] * POSITION_FRACTION
     selected = 0
-    for row in latest_candidates(con):
+    planned_entry = next_tradable_hour_open(now)
+    for row in latest_candidates(con, now):
         if selected >= max_new or row["symbol"] in active_symbols:
             continue
+        if planned_entry >= parse_time(row["due_time"]):
+            continue
+        matches = strategy_allocator.matching_strategies(con, row["direction"])
+        if not matches:
+            continue
+        strategy_id, strategy_weight = min(
+            matches,
+            key=lambda item: float(strategy_exposure.get(item[0], 0.0)) /
+            max(snapshot["equity"] * item[1], 1e-9),
+        )
+        sleeve_room = max(
+            0.0, snapshot["equity"] * strategy_weight -
+            float(strategy_exposure.get(strategy_id, 0.0))
+        )
         notional = min(
             base_notional,
             available_exposure,
+            sleeve_room,
             snapshot["cash"] / (1.0 + FEE_RATE),
         )
         if notional < max(10.0, snapshot["equity"] * 0.01):
@@ -414,28 +652,32 @@ def select_new_positions(con, now):
             f"p={100*row['confidence']:.1f}% | "
             f"gap={100*row['gap']:.1f}pp | "
             f"q50_move={row['predicted_move_pct']:.3f}%"
+            f" | strategy={strategy_id} | virtual_weight={100*strategy_weight:.1f}%"
         )
-        planned_entry = parse_time(row["as_of"]) + timedelta(milliseconds=1)
         cursor = con.execute("""
             INSERT OR IGNORE INTO paper_agent_positions(
                 forecast_id,agent_version,policy_version,symbol,horizon_hours,
                 direction,status,selected_at,as_of,planned_entry_time,due_time,
                 notional,confidence,p_up,p_down,target_price,model_version,
-                artifact_hash,selection_reason
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                artifact_hash,selection_reason,market_type,validation_cohort,evidence_eligible,
+                strategy_id
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             row["forecast_id"], AGENT_VERSION, POLICY_VERSION, row["symbol"],
             row["horizon"], row["direction"], "PENDING_ENTRY", iso(now),
             row["as_of"], iso(planned_entry), row["due_time"], notional,
             row["confidence"], row["p_up"], row["p_down"],
             row["target_price"], row["model_version"], row["artifact_hash"],
-            reason,
+            reason, PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
         ))
         if cursor.rowcount == 1:
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
             snapshot["cash"] -= notional * (1.0 + FEE_RATE)
+            strategy_exposure[strategy_id] = (
+                float(strategy_exposure.get(strategy_id, 0.0)) + notional
+            )
     con.commit()
     return selected
 
@@ -458,30 +700,74 @@ def report_window(now):
 
 def build_daily_report(con, report_date, start, end):
     snapshot = portfolio_snapshot(con)
+    status_counts = dict(con.execute("""
+        SELECT status,COUNT(*) FROM paper_agent_positions
+        WHERE validation_cohort=? AND evidence_eligible=1 GROUP BY status
+    """, (FORWARD_COHORT,)).fetchall())
+    lifetime_rows = con.execute("""
+        SELECT net_pnl,gross_pnl,entry_fee,exit_fee,entry_spread_cost,
+               entry_slippage_cost,exit_spread_cost,exit_slippage_cost,
+               funding_cost,liquidation_fee,liquidated
+        FROM paper_agent_positions
+        WHERE validation_cohort=? AND evidence_eligible=1 AND status='CLOSED'
+        ORDER BY exit_time,position_id
+    """, (FORWARD_COHORT,)).fetchall()
+    lifetime_wins = sum(float(row[0]) > 0 for row in lifetime_rows)
+    lifetime_losses = sum(float(row[0]) < 0 for row in lifetime_rows)
+    lifetime_breakeven = len(lifetime_rows) - lifetime_wins - lifetime_losses
+    accountability = {
+        "selected_total": sum(status_counts.values()),
+        "pending_entries": int(status_counts.get("PENDING_ENTRY", 0)),
+        "open_positions": int(status_counts.get("OPEN", 0)),
+        "closed_total": len(lifetime_rows),
+        "cancelled_total": int(status_counts.get("CANCELLED", 0)),
+        "wins": lifetime_wins,
+        "losses": lifetime_losses,
+        "breakeven": lifetime_breakeven,
+        "win_rate_pct": (
+            100.0 * lifetime_wins / len(lifetime_rows) if lifetime_rows else 0.0
+        ),
+        "gross_pnl": sum(float(row[1] or 0) for row in lifetime_rows),
+        "net_pnl": sum(float(row[0] or 0) for row in lifetime_rows),
+        "fees": sum(float(row[2] or 0) + float(row[3] or 0) for row in lifetime_rows),
+        "spread_cost": sum(float(row[4] or 0) + float(row[6] or 0) for row in lifetime_rows),
+        "slippage_cost": sum(float(row[5] or 0) + float(row[7] or 0) for row in lifetime_rows),
+        "funding_cost": sum(float(row[8] or 0) for row in lifetime_rows),
+        "liquidation_fees": sum(float(row[9] or 0) for row in lifetime_rows),
+        "liquidations": sum(int(row[10] or 0) for row in lifetime_rows),
+    }
     opened = con.execute("""
         SELECT position_id,symbol,direction,horizon_hours,selected_at,entry_time,
-               entry_price,notional,entry_fee,confidence,selection_reason,status
+               entry_price,notional,entry_fee,confidence,selection_reason,status,
+               liquidation_price
         FROM paper_agent_positions
         WHERE selected_at>=? AND selected_at<?
+          AND validation_cohort=? AND evidence_eligible=1
         ORDER BY selected_at,position_id
-    """, (iso(start), iso(end))).fetchall()
+    """, (iso(start), iso(end), FORWARD_COHORT)).fetchall()
     closed = con.execute("""
         SELECT position_id,symbol,direction,horizon_hours,entry_time,entry_price,
                exit_time,exit_price,notional,entry_fee,exit_fee,gross_pnl,
-               net_pnl,selection_reason
+               net_pnl,selection_reason,funding_cost,funding_event_count,
+               funding_source,liquidation_fee,liquidated,close_reason
         FROM paper_agent_positions
         WHERE exit_time>=? AND exit_time<?
+          AND validation_cohort=? AND evidence_eligible=1
         ORDER BY exit_time,position_id
-    """, (iso(start), iso(end))).fetchall()
+    """, (iso(start), iso(end), FORWARD_COHORT)).fetchall()
     wins = sum(1 for row in closed if float(row[12]) > 0)
     daily_net = sum(float(row[12]) for row in closed)
     daily_fees = sum(float(row[9]) + float(row[10]) for row in closed)
+    daily_funding = sum(float(row[14] or 0) for row in closed)
+    liquidations = sum(int(row[18] or 0) for row in closed)
     payload = {
         "schema": "CRYPTO_PROFIT_AGENT_DAILY_REPORT_V1",
         "report_date": report_date,
+        "validation_cohort": FORWARD_COHORT,
         "window_start": iso(start),
         "window_end": iso(end),
         "portfolio": snapshot,
+        "orchestrator_accountability": accountability,
         "opened_count": len(opened),
         "closed_count": len(closed),
         "wins": wins,
@@ -489,6 +775,8 @@ def build_daily_report(con, report_date, start, end):
         "win_rate_pct": (100.0 * wins / len(closed)) if closed else 0.0,
         "daily_net_pnl": daily_net,
         "daily_fees": daily_fees,
+        "daily_funding": daily_funding,
+        "liquidations": liquidations,
         "opened": opened,
         "closed": closed,
     }
@@ -497,6 +785,7 @@ def build_daily_report(con, report_date, start, end):
 
 def markdown_report(payload):
     p = payload["portfolio"]
+    a = payload["orchestrator_accountability"]
     lines = [
         "# AG Crypto Analyst — Kripto Kazanç Ajanı",
         "",
@@ -514,6 +803,19 @@ def markdown_report(payload):
         f"- Toplam ücret: {p['total_fees']:.2f} USDT",
         f"- Açık pozisyon: {p['open_positions']}",
         "",
+        "## Ana orkestratör hesap özeti — temiz kohort, başlangıçtan bugüne",
+        "",
+        f"- Seçilen toplam: {a['selected_total']} | bekleyen: {a['pending_entries']} | "
+        f"açık: {a['open_positions']} | kapanan: {a['closed_total']} | "
+        f"iptal: {a['cancelled_total']}",
+        f"- Kazanan/Kaybeden/Başabaş: {a['wins']}/{a['losses']}/{a['breakeven']} | "
+        f"başarı: {a['win_rate_pct']:.1f}%",
+        f"- Kümülatif brüt/net P&L: {a['gross_pnl']:+.2f} / {a['net_pnl']:+.2f} USDT",
+        f"- Maliyetler: ücret={a['fees']:.2f}, spread={a['spread_cost']:.2f}, "
+        f"slippage={a['slippage_cost']:.2f}, funding={a['funding_cost']:+.4f}, "
+        f"liquidation_fee={a['liquidation_fees']:.2f} USDT",
+        f"- Liquidation sayısı: {a['liquidations']}",
+        "",
         "## Günlük sonuç",
         "",
         f"- Açılan işlem: {payload['opened_count']}",
@@ -522,6 +824,8 @@ def markdown_report(payload):
         f"- Başarı oranı: {payload['win_rate_pct']:.1f}%",
         f"- Günlük net P&L: {payload['daily_net_pnl']:+.2f} USDT",
         f"- Kapanan işlemlerin ücretleri: {payload['daily_fees']:.2f} USDT",
+        f"- Gerçek funding (pozitif=ödendi, negatif=alındı): {payload['daily_funding']:+.4f} USDT",
+        f"- Liquidation: {payload['liquidations']}",
         "",
         "## Açılan işlemler",
         "",
@@ -535,6 +839,7 @@ def markdown_report(payload):
             f"{(format(float(row[6]), '.8g') if row[6] is not None else 'N/A')} | "
             f"notional={float(row[7]):.2f} | ücret={float(row[8]):.2f} | "
             f"confidence={100*float(row[9]):.1f}% | status={row[11]} | {row[10]}"
+            f" | liquidation={format(float(row[12]), '.8g') if row[12] is not None else 'N/A'}"
         )
     lines.extend(["", "## Kapanan işlemler", ""])
     if not payload["closed"]:
@@ -547,7 +852,8 @@ def markdown_report(payload):
             f"notional={float(row[8]):.2f} | "
             f"ücret={float(row[9])+float(row[10]):.2f} | "
             f"brüt={float(row[11]):+.2f} | net={float(row[12]):+.2f} USDT | "
-            f"{row[13]}"
+            f"funding={float(row[14] or 0):+.4f} ({int(row[15] or 0)} olay) | "
+            f"liquidated={bool(row[18])} | close={row[19]} | {row[13]}"
         )
     lines.extend([
         "",
@@ -634,16 +940,45 @@ def render(result):
             "Remote teslim: " + ("TAMAMLANDI" if report.get("delivery_complete") else "BEKLIYOR")
         )
     print("Not: Gerçek emir yoktur; LONG/SHORT işlemler 1x sanal simülasyondur.")
+    authority = result["authority"]
+    print(
+        "Yetki: öneri=EVET | gerçek_emir=HAYIR | "
+        f"terfi={authority['promotion_authority']}"
+    )
+    learning = result["trade_learning"]
+    print(
+        f"Trade learning: {learning['status']} | temiz_kapanan={learning['closed']} | "
+        f"hafta={learning['weeks']} | otomatik_terfi=HAYIR"
+    )
+    external = learning["external_research"]
+    print(
+        f"Dış trader araştırması: {external['status']} | "
+        f"trader={external['traders']} | kapanan={external['closed_trades']} | "
+        "otomatik_kopya=HAYIR"
+    )
 
 
 def run(now=None):
     now = now or utcnow()
+    authority = validate_agent_authority(
+        execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
+        policy_version=POLICY_VERSION,
+        initial_capital=INITIAL_CAPITAL,
+    )
+    exchange_metadata = None
+    if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
+        exchange_metadata = load_cache(
+            os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
+            PAPER_MARKET,
+            max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
+        )
     con = connect()
     try:
         ensure_tables(con)
-        filled, cancelled = fill_pending(con, now)
-        closed = settle_open(con, now)
+        filled, cancelled = fill_pending(con, now, exchange_metadata)
+        closed = settle_open(con, now, exchange_metadata)
         selected = select_new_positions(con, now)
+        learning = trade_learning.run(con, FORWARD_COHORT, now)
         daily = maybe_daily_report(con, now)
         snapshot = portfolio_snapshot(con)
         return {
@@ -652,8 +987,15 @@ def run(now=None):
             "cancelled": cancelled,
             "closed": closed,
             "selected": selected,
+            "trade_learning": learning,
             "portfolio": snapshot,
             "daily_report": daily,
+            "authority": authority,
+            "exchange_metadata": ({
+                "market": exchange_metadata.market,
+                "symbols": len(exchange_metadata.symbols),
+                "fetched_at": exchange_metadata.fetched_at,
+            } if exchange_metadata else None),
         }
     finally:
         con.close()

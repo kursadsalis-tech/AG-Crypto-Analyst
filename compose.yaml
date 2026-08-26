@@ -1,0 +1,14 @@
+services:
+  agca-paper-worker:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AGCA_EXECUTION_MODE: PAPER_ONLY
+      AGCA_STATE_DIR: /var/lib/agca
+    volumes:
+      - agca-state:/var/lib/agca
+
+volumes:
+  agca-state:

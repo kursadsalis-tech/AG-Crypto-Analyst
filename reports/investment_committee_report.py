@@ -340,7 +340,9 @@ def policy_status(policy, now):
     if policy_time is None:
         reasons.append("RISK_POLICY_TIME_INVALID")
     else:
-        age_minutes = max(0.0, (now - policy_time).total_seconds() / 60.0)
+        age_minutes = (now - policy_time).total_seconds() / 60.0
+        if age_minutes < -1.0:
+            reasons.append("RISK_POLICY_TIME_FUTURE")
         if age_minutes > signal_risk_gate.MAX_POLICY_AGE_MINUTES:
             reasons.append("RISK_POLICY_STALE")
     if policy.get("market_state") in {"LOCKDOWN", "DATA_BLOCKED"}:
@@ -369,8 +371,10 @@ def decision_run_status(latest_run, now):
             "fresh": False,
             "reasons": ["DECISION_SNAPSHOT_TIME_INVALID"],
         }
-    age_minutes = max(0.0, (now - created_at).total_seconds() / 60.0)
+    age_minutes = (now - created_at).total_seconds() / 60.0
     reasons = []
+    if age_minutes < -1.0:
+        reasons.append("DECISION_SNAPSHOT_TIME_FUTURE")
     if age_minutes > MAX_DECISION_AGE_MINUTES:
         reasons.append("DECISION_SNAPSHOT_STALE")
     return {

@@ -11,6 +11,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
 
 import requests
+from data.truth_engine import validate_whale_events
 
 
 DB_NAME = "crypto_data.db"
@@ -169,6 +170,7 @@ def extract_large_outputs(block, btc_usd):
 
 
 def save_events(con, events, observed_at):
+    validate_whale_events(events, source="BITCOIN_WHALE_EVENTS")
     inserted = 0
     for event in events:
         before = con.total_changes

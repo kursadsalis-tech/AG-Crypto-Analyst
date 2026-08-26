@@ -4,10 +4,17 @@ from __future__ import annotations
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 
 from analysis import forecast_learning_cycle
 from decision_engine import forecast_cycle
 from paper_trading import crypto_profit_agent
+from paper_trading.exchange_metadata import (
+    ExchangeMetadataError,
+    load_cache,
+    refresh_cache_via_postgres,
+)
 from risk_manager import risk_cycle
 
 
@@ -35,6 +42,20 @@ def forecast_succeeded_this_hour(now):
         con.close()
 
 
+def _refresh_exchange_metadata(cache_path):
+    """Prefer live official metadata; accept only a still-fresh verified cache."""
+    max_age = float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200"))
+    try:
+        return refresh_cache_via_postgres(
+            cache_path, "USD_M_PERPETUAL",
+            os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
+        ), "LIVE_REFRESH"
+    except ExchangeMetadataError:
+        return load_cache(
+            cache_path, "USD_M_PERPETUAL", max_age_seconds=max_age,
+        ), "FRESH_VERIFIED_CACHE"
+
+
 def main():
     now = utcnow()
     print("AG Crypto Analyst - Hourly Forecast Job")
@@ -47,6 +68,19 @@ def main():
     else:
         forecast_result = forecast_cycle.main(force=True)
 
+    metadata_result = None
+    if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
+        cache_path = Path(os.getenv(
+            "AGCA_EXCHANGE_METADATA_CACHE",
+            "/var/lib/agca/exchange-info-usdm.json",
+        ))
+        metadata, metadata_transport = _refresh_exchange_metadata(cache_path)
+        metadata_result = {
+            "status": "SUCCESS", "market": metadata.market,
+            "symbols": len(metadata.symbols), "fetched_at": metadata.fetched_at,
+            "source_url": metadata.source_url,
+            "transport": metadata_transport,
+        }
     paper_result = crypto_profit_agent.main()
     learning_result = forecast_learning_cycle.main()
     blocking = [
@@ -68,6 +102,7 @@ def main():
         "risk": risk_result,
         "forecast": forecast_result,
         "paper_agent": paper_result,
+        "exchange_metadata": metadata_result,
         "learning": learning_result,
     }
 

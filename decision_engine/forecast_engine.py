@@ -18,6 +18,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from data.truth_engine import DataValidationError, record_audit
+
 
 DB_NAME = "crypto_data.db"
 ENGINE_VERSION = "UNIFIED_FORECAST_ENGINE_V1"
@@ -695,7 +697,24 @@ def run(now=None, force_retrain=False):
                   if value["status"] not in {"READY", "FETCHED_READY"}}
         if errors:
             raise RuntimeError("MARKET_DATA_NOT_READY: " + json.dumps(errors, ensure_ascii=False))
-        series = core.load_series(con, fetch_start, end)
+        try:
+            series = core.load_series(con, fetch_start, end)
+        except DataValidationError as exc:
+            record_audit(
+                con,
+                gate_name="UNIFIED_FORECAST_MARKET_SERIES",
+                source=exc.source,
+                status="DATA_BLOCKED",
+                reasons=exc.reasons,
+            )
+            raise
+        record_audit(
+            con,
+            gate_name="UNIFIED_FORECAST_MARKET_SERIES",
+            source="BINANCE_MARKET_KLINES",
+            status="PASS",
+            record_count=sum(len(item["candles"]) for item in series.values()),
+        )
         model = None if force_retrain else load_cached_model(now)
         if model is None:
             model = train_model(series, start, end, now)

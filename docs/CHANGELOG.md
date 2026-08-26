@@ -1,3 +1,170 @@
+# Unreleased — Truth Engine / Data Validation Gate
+
+## 2026-08-26 external copy-trader research quarantine
+
+- Added a public copy-trader research layer for allowlisted Bybit and OKX
+  evidence. It stores immutable raw payloads and hashes with the exact time at
+  which AGCA first observed them.
+- Quarantined winner-only anecdotes, incomplete leaderboard samples,
+  non-allowlisted provenance, extreme leverage and trades whose costs are not
+  disclosed. Retrospective closed trades can inform research but can never be
+  represented as forward signals.
+- Kept exchange-specific ROI definitions separate and prohibited automatic
+  copying, PAPER-policy mutation, champion promotion and real orders.
+- Integrated the evidence-sufficiency review into every PAPER trade-learning
+  cycle. External evidence remains separate from clean-cohort P&L and requires
+  at least 30 traders, 200 distinct closed trades and 56 forward observation
+  days before human research review.
+- Added normalized JSON ingestion and SQLite/Supabase outbox coverage for all
+  three external-research tables. Authenticated, private and order-capable
+  exchange endpoints are never used.
+- Added a daily Google Cloud collector using the same unauthenticated public
+  OKX web endpoints as OKX's own copy-trading page. It atomically snapshots all
+  43 pages/255 traders, observes every public open position with a first-seen
+  timestamp, and backfills 30 traders' disclosed closed histories per run.
+- The first live run stored 594 open observations and 1,870 historical closed
+  observations. Of the latter, 313 passed provenance, cost, notional and <=5x
+  leverage gates; all historical rows remain explicitly retrospective. The
+  review advanced to `COLLECTING_FORWARD_TIME_COVERAGE`, never promotion.
+
+## 2026-08-25 unattended cloud attestation
+
+- Added append-only, canonical SHA-256 cloud runtime attestations covering
+  worker/product/hourly/PAPER status, PAPER_ONLY authority, disabled real
+  orders, SQLite integrity, clean-cohort counts and portfolio accounting.
+- Mirrored cloud evidence to a private Supabase table with revoked client
+  grants, RLS and explicit deny policies.
+- Updated the daily Codex notification to verify attestation freshness/hash and
+  mirror agreement without Google Cloud SSH, interactive approval or Telegram;
+  missing or inconsistent evidence fails closed.
+- Limited attestations to new result windows instead of the worker's 10-second
+  internal loop.
+- Added an independent five-minute systemd attestation timer with stale/service
+  checks, plus hard PostgreSQL statement and lock timeouts so remote mirror
+  slowness cannot hang the authoritative SQLite worker indefinitely.
+- Separated attestation transport failures from forecast-worker health: a slow
+  mirror cannot relabel a completed forecast cycle as degraded, while the
+  reporting side still fails closed without fresh mirrored evidence.
+- Paused the older repeated 03:20--06:20 delivery heartbeat; the single 03:15
+  Codex orchestrator summary is now the unattended notification path.
+- Replaced full-table PostgreSQL mirroring with a durable SQLite outbox and
+  primary-key incremental upserts/deletes. Schema DDL is signature-cached,
+  batches are bounded, failed deliveries remain queued across process restarts,
+  and remote acknowledgement happens only after the PostgreSQL transaction
+  commits.
+- Moved outbox delivery out of the forecast process into the independent
+  `agca-remote-mirror-drain.timer`; Supabase latency can no longer block PAPER
+  forecasting or trade learning. Suppressed no-op news/social upserts so
+  unchanged observations never enter the outbox.
+- Prioritized cloud/PAPER evidence ahead of bulk history, isolated each table
+  in its own remote transaction, and throttled backlog recovery to 25 rows per
+  batch every two minutes so historical repair cannot starve live metadata.
+- Hardened official exchangeInfo refresh with bounded DNS/connect, HTTP, TCP
+  and PostgreSQL statement timeouts. Hourly PAPER work may use only a
+  provenance/hash-validated cache younger than two hours when live refresh is
+  unavailable; stale or invalid cache remains fail-closed.
+
+## 2026-08-25 clean forward PAPER trade learning
+
+- Added an evidence-gated review to every PAPER-agent cycle using only eligible,
+  closed clean-forward trades and net P&L after all simulated costs.
+- Added direction, horizon, regime and direction+horizon scorecards with gates
+  of 100 total closed trades, 30 trades per pattern and three independent weeks.
+- Prohibited single-trade updates, coin blacklists, automatic policy mutation
+  and automatic champion promotion; current cloud state is
+  `COLLECTING_EVIDENCE` with zero clean closed trades and zero hypotheses.
+- Mirrored immutable reviews and bounded hypotheses to Supabase; enabled RLS
+  with explicit client-deny policies. Security and performance advisors are
+  both clear.
+- Expanded the 03:00 PAPER report with an orchestrator-accountability section:
+  cumulative clean-cohort selections, pending/open/closed/cancelled counts,
+  wins/losses/breakevens, win rate, gross/net P&L and each execution-cost class.
+
+## 2026-08-24 cloud deployment and news fail-closed gate
+
+- Deployed GitHub branch state through `f03006d` to the existing Google Cloud
+  worker with a file-level rollback snapshot and without resetting persistent data.
+- Preserved the cloud runtime's future-risk-policy timestamp rejection while
+  adding the news-direction robustness rejection.
+- Verified 10/10 targeted cloud tests, hard `PAPER_ONLY`, disabled real orders,
+  `SHADOW_ONLY` under artificially strong forward evidence, and no
+  production-eligible news-direction horizon.
+- Connected the worker to Supabase through Google Secret Manager, disabled stale
+  secret versions, and verified continuously advancing remote mirror health.
+- Enabled RLS on all 30 `agca_runtime` tables; Supabase security advisor returned
+  no findings.
+- Recovered the runtime from a healthy SQLite backup after preserving the corrupt
+  database for forensic recovery; full integrity check returned `ok`.
+
+## Mac-independent PAPER runtime and execution realism
+
+- Added a provider-neutral Docker worker for the five-minute product cycle and
+  hourly forecast/settlement/learning/paper-agent job.
+- Persisted SQLite, model artifacts, reports, worker health, and the exclusive
+  process lock on a mounted state volume.
+- Added a hard `PAPER_ONLY` startup gate; no live exchange order adapter or
+  credential path exists.
+- Replaced perfect candle-price fills with adverse spread, taker fee, latency,
+  volume-aware slippage, capacity/partial-fill, minimum-notional, tick/step,
+  rejection, and perpetual-funding simulation.
+- Added explicit SPOT (LONG-only) and USD-M perpetual (LONG/SHORT) semantics,
+  deterministic execution tests, Compose packaging, and cloud runbook.
+- Added a market-pinned, atomic exchangeInfo metadata cache with strict
+  perpetual/USDT filter parsing, freshness, provenance, digest and missing-symbol
+  rejection. The existing Supabase `eu-west-1` Postgres connection now provides
+  a private fixed-URL GET transport to Binance's official USD-M endpoint; no
+  public proxy is exposed. Local 25/25 and cloud 27/27 related tests passed.
+  The first natural worker cycle was `HEALTHY`, hourly status was `SUCCESS`, and
+  the PAPER agent consumed 527 active symbol rules with real orders still false.
+- Replaced the fixed USD-M funding proxy with official Binance funding-history
+  events fetched through the private Supabase Europe transport. Funding uses
+  event mark prices and correct LONG/SHORT debit-credit signs, with malformed or
+  missing histories rejected fail-closed.
+- Added causal 1x isolated PAPER liquidation checks over held hourly candle
+  lows/highs, live symbol liquidation fees, explicit conservative 0.5%
+  maintenance-margin assumption, zero-floor recovery, audit columns, legacy
+  open-position backfill and daily-report disclosure. No signed Binance account
+  endpoint or credential path was added. Local/cloud tests pass 32/32; six open
+  positions were backfilled with none missing a threshold. The first natural
+  worker cycle was `HEALTHY` with hourly/PAPER `SUCCESS` and real orders false.
+- Fixed a real PAPER-entry lookahead defect: historical hourly opens can no
+  longer be used when they precede the agent decision. New intents commit to
+  the first exact full-hour open strictly after selection, and prior/non-exact
+  candles are rejected. Preserved all 14 legacy rows as evidence-ineligible,
+  cancelled six legacy active positions, backed up SQLite, and restarted a
+  clean 10,000 USDT `FORWARD_CLEAN_V2_20260825` cohort. Its first five pending
+  intents have zero timing violations. Related tests pass 34/34; the first
+  natural worker/hourly/PAPER result is `HEALTHY`/`SUCCESS`/`SUCCESS`, SQLite
+  quick-check is `ok`, and the real-order prohibition is unchanged.
+
+- Added a shared fail-closed validation contract for decision-bearing market data.
+- Block malformed, non-finite, non-positive, OHLC-inconsistent, negative-volume,
+  non-contiguous, open/future and stale Binance 1h candles.
+- Routed Risk Manager and Legacy Forward Shadow candle inputs through the gate.
+- Added deterministic regression tests for valid, stale, inconsistent, gapped and
+  still-open candle payloads.
+- Added source-specific contracts for news, social, on-chain, macro, whale and
+  derivative data; invalid historical rows can no longer disappear silently.
+- Added persistent PASS/DATA_BLOCKED audit evidence and remote runtime mirroring.
+- Added independent Binance/CoinGecko BTC reference validation with a fixed 2%
+  maximum deviation; failure forces the market risk policy to DATA_BLOCKED.
+- Exclude social/on-chain/macro/whale evidence from Decision Engine when its most
+  recent source-cycle validation is missing, failed or stale.
+- Reject future-dated risk policies and Decision snapshots in Signal Gate,
+  Decision Engine and committee reporting paths.
+- Added multi-provider Ethereum JSON-RPC fallback after a live 403 rate-limit;
+  fallback ordering is unit-tested and a live ERC-20 run verified seven contract
+  decimals plus 40 safe blocks without source errors on 2026-08-23.
+- Isolated every live product-cycle step so a missing news source is recorded as
+  DATA_BLOCKED instead of terminating the entire scheduler process.
+- Skip Decision Engine and product alert delivery when the current Risk step is
+  ERROR/DATA_BLOCKED, preventing accidental reuse of a stale policy snapshot.
+- Made remote mirror health telemetry best-effort so a telemetry disk I/O error
+  cannot invalidate an already successful SQLite-first commit.
+- Cache the last healthy Ethereum RPC for the rest of the collector process and
+  cap each provider attempt at 15 seconds to prevent fallback latency from
+  blocking the five-minute scheduler cadence.
+
 # v1.2.1
 
 ## Remote Runtime Store
@@ -11,6 +178,70 @@
 - Ortak runtime connection entegrasyonu, birim testleri ve kullanım dokümanı
 
 # AG Crypto Analyst - Changelog
+
+## 2026-08-24 — Cloud natural-cycle verification and health serialization fix
+
+- Verified the deployed `f03006d` news-direction fail-closed gate, mandatory
+  `PAPER_ONLY` runtime mode and `real_orders_allowed=False` on the live VM.
+- Verified SQLite `quick_check=ok` and the direct Supabase mirror at 28/28
+  healthy tables with zero consecutive failures.
+- Verified the first natural Istanbul 03:00 paper report and 11:00 investment
+  committee report; remote delivery completed and the committee output stayed
+  `SHADOW_ONLY` / `BEKLE`.
+- Diagnosed `legacy_forward=PARTIAL` as the persistent non-Spot-USDT `CRO`
+  mention in news #2716; no model, threshold or policy was changed.
+- Fixed worker health JSON serialization for nested runtime datetimes while
+  preserving fail-fast behavior for unsupported types. Added regression tests;
+  16/16 related tests passed locally and in cloud, followed by a natural
+  `HEALTHY` worker result.
+
+## 2026-08-24 — PAPER execution input fail-closed hardening
+
+- Reject non-finite price/liquidity, missing required quote liquidity and
+  invalid tick/step/min-notional inputs instead of simulating an optimistic fill.
+- Apply exact candle quote-volume capacity to exit fills as well as entries.
+- Add exact-timestamp, missing-liquidity and database-outage regression tests.
+- Pass 22/22 related cloud tests and the Profit Agent self-test, then verify a
+  natural `HEALTHY` worker cycle with 13/13 Risk coverage and zero source errors.
+- Keep live USD-M metadata and funding parity open because the official endpoint
+  is region-blocked from cloud and unavailable from the Mac; Spot/testnet rules
+  are not substituted.
+
+## 2026-08-24 — PAPER agent authority contract
+
+- Add an explicit fail-closed authority contract that permits recommendations
+  but denies real orders, model/policy promotion, Risk override and capital
+  changes.
+- Reject non-PAPER mode, unreviewed policy versions and changes to the locked
+  10,000 USDT virtual capital before the agent opens its database.
+- Expose the authority contract in every hourly PAPER result and operational
+  log for auditability.
+- Pass 26/26 related tests in cloud, prove `LIVE` is rejected, and verify a
+  natural `HEALTHY` worker cycle with hourly `SUCCESS`.
+
+## 2026-08-24 — Common execution contract and PAPER parity
+
+- Add provider-neutral order intent, market snapshot, exchange rules, decision,
+  fill and adapter protocol types without adding a live order adapter.
+- Route the existing conservative PAPER simulator through that shared contract
+  while preserving the backward-compatible fill API.
+- Prove identical wrapper/contract fills and fail-closed rejections with parity
+  tests; keep credentials and exchange order endpoints outside the contract.
+- Pass 29/29 related cloud tests and the Profit Agent self-test, followed by a
+  natural `HEALTHY` worker result with hourly and PAPER `SUCCESS`.
+
+## 2026-08-24 — Real-capital reconciliation and approval gate
+
+- Add ordered PAPER-versus-dry-run execution trace reconciliation across
+  decision, price, quantity and fee fields with explicit tolerances.
+- Fail closed on empty traces, count differences, decision mismatches or
+  non-finite/numerically divergent execution results.
+- Require independent user approval and primary-orchestrator attestation records
+  in addition to a passing reconciliation.
+- Keep a separate reviewed-code gate hard-coded closed, so approvals and runtime
+  configuration still cannot activate real capital or orders.
+- Pass 33/33 related cloud tests and self-test, then verify a natural `HEALTHY`
+  worker result with hourly/PAPER `SUCCESS` and real-order authority false.
 
 ## Unreleased - Historical Decision Validation
 
@@ -570,3 +801,19 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Integrated paper execution into the existing hourly Forecast LaunchAgent.
 - Added Europe/Istanbul 03:00 detailed Markdown report and Telegram summary.
 - Added deterministic policy/P&L/time-window self-test.
+# 2026-08-26 — Autonomous PAPER research challengers
+
+- Added a continuous improvement loop that creates trader-balanced research candidates from quarantined public evidence.
+- Added immutable forward-start timestamps and forward-only evaluations; retrospective results cannot validate a candidate.
+- Added one-trader/one-vote open-position consensus snapshots with conflict exclusion.
+- Research candidates cannot mutate policy, promote themselves, execute orders, or bypass PAPER_ONLY.
+- Integrated the loop into both daily OKX collection and the PAPER trade-learning review.
+- Added manipulation, lookahead, concentration, and execution-authority tests; full suite passes (98/98).
+# 2026-08-26 — Learned strategies now trade virtual capital
+
+- Added PAPER-only strategy sleeves sharing the existing 10,000 USDT portfolio.
+- Learned LONG/SHORT challengers now apply their filters to eligible AGCA forward forecasts instead of remaining report-only hypotheses.
+- Allocation is based only on closed, evidence-eligible, net-after-cost results; fewer than 10 closed trades cannot change a sleeve's weight.
+- Bounded exploration prevents immediate winner-take-all allocation. Real-order authority remains structurally zero.
+- Full test suite passes (102/102).
+- Extended only the hash-verified PAPER exchange-rule cache window from 2h to 24h so temporary Binance 451/Supabase transport failures do not halt virtual learning; unknown symbols still fail closed.

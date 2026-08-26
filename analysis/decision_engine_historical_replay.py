@@ -191,6 +191,8 @@ def ensure_historical_coverage(con, fetch_start, replay_end):
 
 
 def load_candles(con, symbol, start, end):
+    from data.truth_engine import validate_stored_candles
+
     rows = con.execute("""
         SELECT open_time, close_time, open, high, low, close, volume,
                quote_volume
@@ -215,15 +217,13 @@ def load_candles(con, symbol, start, end):
                 float(row[7]) if row[7] is not None else None
             ),
         }
-        if (
-            candle["open"] > 0
-            and candle["high"] > 0
-            and candle["low"] > 0
-            and candle["close"] > 0
-            and candle["volume"] >= 0
-        ):
-            candles.append(candle)
-    return candles
+        candles.append(candle)
+    return validate_stored_candles(
+        candles,
+        source=f"HISTORICAL_REPLAY:{symbol}",
+        require_contiguous=True,
+        maximum_gap_ratio=0.025,
+    )
 
 
 def build_series(con, fetch_start, replay_end):
@@ -752,7 +752,20 @@ def main():
             fetch_start,
             replay_end,
         )
-        series = build_series(con, fetch_start, replay_end)
+        from data.truth_engine import DataValidationError, record_audit
+        try:
+            series = build_series(con, fetch_start, replay_end)
+        except DataValidationError as exc:
+            record_audit(
+                con, gate_name="DECISION_REPLAY_MARKET_SERIES",
+                source=exc.source, status="DATA_BLOCKED", reasons=exc.reasons,
+            )
+            raise
+        record_audit(
+            con, gate_name="DECISION_REPLAY_MARKET_SERIES",
+            source="BINANCE_MARKET_KLINES", status="PASS",
+            record_count=sum(len(item["candles"]) for item in series.values()),
+        )
         coverage = coverage_summary(series)
         result = replay(series, replay_start, replay_end)
         boundaries = assign_splits(

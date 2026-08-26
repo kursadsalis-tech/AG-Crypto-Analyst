@@ -1,3 +1,4 @@
+import os
 import requests
 from database.repository import save_price
 
@@ -17,7 +18,9 @@ coins = [
     "BIOUSDT"
 ]
 
-BASE_URL = "https://api.binance.com/api/v3/ticker/24hr"
+BASE_URL = os.getenv(
+    "AGCA_BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision"
+) + "/api/v3/ticker/24hr"
 
 for coin in coins:
     try:

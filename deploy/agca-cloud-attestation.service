@@ -1,0 +1,19 @@
+[Unit]
+Description=AGCA unattended cloud runtime attestation
+After=network-online.target agca-cloud-worker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
+Environment=HOME=/home/kursadsalis
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_WORKER_SERVICE=agca-cloud-worker.service
+Environment=AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS=900
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.cloud_attestation
+UMask=0077

@@ -662,6 +662,8 @@ def derivative_readiness(con, requested_end):
 
 
 def load_derivatives(con, start, end, symbols):
+    from data.truth_engine import DataValidationError, validate_stored_candles
+
     result = {}
     for symbol in symbols:
         market_rows = con.execute("""
@@ -675,12 +677,18 @@ def load_derivatives(con, start, end, symbols):
         market = []
         for source in market_rows:
             if any(value is None for value in source[2:]):
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_MARKET:{symbol}", ("NULL_REQUIRED_FIELD",)
+                )
             values = [float(value) for value in source[2:]]
             if any(not math.isfinite(value) for value in values):
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_MARKET:{symbol}", ("NON_FINITE_FIELD",)
+                )
             if min(values[:4]) <= 0.0 or values[5] < 0.0 or values[6] < 0.0:
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_MARKET:{symbol}", ("INVALID_PRICE_VOLUME",)
+                )
             market.append({
                 "open_time": parse_time(source[0]),
                 "close_time": parse_time(source[1]),
@@ -691,6 +699,12 @@ def load_derivatives(con, start, end, symbols):
                 "premium_open": values[8], "premium_high": values[9],
                 "premium_low": values[10], "premium_close": values[11],
             })
+        validate_stored_candles(
+            market,
+            source=f"DERIVATIVES_MARKET:{symbol}",
+            require_contiguous=True,
+            maximum_gap_ratio=0.025,
+        )
 
         positioning_rows = con.execute("""
             SELECT hour_close_time, source_max_time, open_interest_contracts,
@@ -709,15 +723,21 @@ def load_derivatives(con, start, end, symbols):
             # V2.1 excludes those optional ratios instead of discarding valid
             # OI/basis/funding/taker-flow contexts.
             if any(value is None for value in source[2:4]):
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_POSITIONING:{symbol}", ("OI_REQUIRED_FIELD_NULL",)
+                )
             oi_contracts = float(source[2])
             oi_value = float(source[3])
             if source_max >= hour_close or any(
                 not math.isfinite(value) for value in (oi_contracts, oi_value)
             ):
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_POSITIONING:{symbol}", ("INVALID_AVAILABILITY_OR_VALUE",)
+                )
             if oi_value <= 0.0:
-                continue
+                raise DataValidationError(
+                    f"DERIVATIVES_POSITIONING:{symbol}", ("NON_POSITIVE_OI_VALUE",)
+                )
             positioning.append({
                 "hour_close_time": hour_close,
                 "source_max_time": source_max,
@@ -735,14 +755,17 @@ def load_derivatives(con, start, end, symbols):
         for source in funding_rows:
             rate = float(source[1])
             mark = None if source[2] is None else float(source[2])
-            if math.isfinite(rate) and (
-                mark is None or (math.isfinite(mark) and mark > 0.0)
+            if not math.isfinite(rate) or (
+                mark is not None and (not math.isfinite(mark) or mark <= 0.0)
             ):
-                funding.append({
-                    "funding_time": parse_time(source[0]),
-                    "funding_rate": rate,
-                    "mark_price": mark,
-                })
+                raise DataValidationError(
+                    f"DERIVATIVES_FUNDING:{symbol}", ("INVALID_FUNDING_VALUE",)
+                )
+            funding.append({
+                "funding_time": parse_time(source[0]),
+                "funding_rate": rate,
+                "mark_price": mark,
+            })
         result[symbol] = {
             "market": market,
             "market_by_close": {row["close_time"]: index for index, row in enumerate(market)},

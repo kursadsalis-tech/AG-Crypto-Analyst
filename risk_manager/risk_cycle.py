@@ -82,7 +82,10 @@ def main(force=False):
         try:
             result = risk_manager.main()
             source_errors = result.get("source_errors") or {}
-            status = "PARTIAL" if source_errors else "SUCCESS"
+            if result.get("market_state") == "DATA_BLOCKED":
+                status = "DATA_BLOCKED"
+            else:
+                status = "PARTIAL" if source_errors else "SUCCESS"
             message = (
                 f"snapshot={result['snapshot_id']} | "
                 f"market_state={result['market_state']} | "
@@ -91,7 +94,7 @@ def main(force=False):
                 f"asset_blocks={result['asset_block_count']} | "
                 f"source_errors={len(source_errors)}"
             )
-            save_state(con, status, message, now)
+            save_state(con, status, message, now if status == "SUCCESS" else None)
             print(f"Risk Manager cycle: {status} | {message}")
             return {"status": status, "message": message, "result": result}
         except Exception as exc:

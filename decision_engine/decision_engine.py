@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from database.runtime_store import connect as runtime_connect
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from analysis import forward_shadow_validator
 from onchain import onchain_analyzer
@@ -36,6 +36,32 @@ NETWORK_CONTEXT = {
     "BTCUSDT": "Bitcoin",
     "ETHUSDT": "Ethereum",
 }
+
+
+def source_cycle_valid(con, source):
+    if not table_exists(con, "data_validation_audit"):
+        return False
+    row = con.execute("""
+        SELECT status,checked_at FROM data_validation_audit
+        WHERE gate_name='SOURCE_CYCLE' AND source=?
+        ORDER BY id DESC LIMIT 1
+    """, (source,)).fetchone()
+    if not row or row[0] != "PASS":
+        return False
+    limits = {
+        "social_sentiment": timedelta(minutes=30),
+        "onchain": timedelta(minutes=30),
+        "macro": timedelta(hours=12),
+        "whale_tracker": timedelta(minutes=20),
+    }
+    try:
+        checked = datetime.fromisoformat(str(row[1]).replace("Z", "+00:00"))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    age = utcnow() - checked.astimezone(timezone.utc)
+    return timedelta(0) <= age <= limits[source]
 
 
 def utcnow():
@@ -192,10 +218,9 @@ def risk_guard(policy, asset, now):
         if policy_time is None:
             reasons.append("RISK_POLICY_TIME_INVALID")
         else:
-            age_minutes = max(
-                0.0,
-                (now - policy_time).total_seconds() / 60.0,
-            )
+            age_minutes = (now - policy_time).total_seconds() / 60.0
+            if age_minutes < -1.0:
+                reasons.append("RISK_POLICY_TIME_FUTURE")
             if age_minutes > MAX_RISK_AGE_MINUTES:
                 reasons.append("RISK_POLICY_STALE")
         if policy.get("market_state") in {"LOCKDOWN", "DATA_BLOCKED"}:
@@ -487,9 +512,11 @@ def main():
         ensure_tables(con)
         policy = signal_risk_gate.latest_policy(con)
         forward_evidence = signal_risk_gate.forward_evidence(con)
-        macro = latest_macro_context(con)
-        whale = latest_whale_context(con)
-        onchain_by_chain = load_onchain_context(con)
+        macro = latest_macro_context(con) if source_cycle_valid(con, "macro") else None
+        whale = latest_whale_context(con) if source_cycle_valid(con, "whale_tracker") else None
+        onchain_by_chain = (
+            load_onchain_context(con) if source_cycle_valid(con, "onchain") else {}
+        )
 
         decisions = []
         technical_errors = {}
@@ -500,7 +527,10 @@ def main():
                 int(policy["id"]) if policy else 0,
                 symbol,
             )
-            social = latest_social_context(con, coin)
+            social = (
+                latest_social_context(con, coin)
+                if source_cycle_valid(con, "social_sentiment") else None
+            )
             onchain = onchain_evidence_for_symbol(symbol, onchain_by_chain)
             candidate = latest_open_forward_candidate(con, symbol)
             gate = None

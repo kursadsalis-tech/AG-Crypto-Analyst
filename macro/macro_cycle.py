@@ -6,6 +6,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from macro import macro_analyzer, macro_collector
+from data.truth_engine import record_cycle_validation
 
 
 DB_NAME = "crypto_data.db"
@@ -88,12 +89,15 @@ def main(force=False):
                 f"regime={analysis['regime']} | score={analysis['score']:+d} | "
                 f"coverage={analysis['coverage']}/5 | provisional=1"
             )
-            save_state(con, "SUCCESS", message, now)
-            print(f"Macro cycle: SUCCESS | {message}")
-            return {"status": "SUCCESS", "message": message}
+            status = "PARTIAL" if collection["errors"] else "SUCCESS"
+            save_state(con, status, message, now if status == "SUCCESS" else None)
+            record_cycle_validation(con, AGENT_NAME, status, message, now)
+            print(f"Macro cycle: {status} | {message}")
+            return {"status": status, "message": message}
         except Exception as exc:
             message = str(exc)
             save_state(con, "ERROR", message)
+            record_cycle_validation(con, AGENT_NAME, "ERROR", message, now)
             print(f"Macro cycle: HATA -> {message}")
             return {"status": "ERROR", "message": message}
     finally:
