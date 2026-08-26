@@ -263,6 +263,8 @@
 - [x] %0 kesin tarihsel timestamp nedeniyle provisional multifactor Champion ve ROBUST_B tarihsel kredi etiketlerini geri çek
 - [ ] Yalnız değişmemiş forward kapıları gerçek veride geçilirse modeli sıfırdan ürün adayı olarak yeniden değerlendir
 - [ ] Forward Signal Risk Gate koşullarını kanıt biriktikçe değiştirmeden izle
+- [x] OKX'te önceden açık gözlenen pozisyon sahiplerini sınırlı günlük history
+  bütçesinde döndürerek forward kapanışların yeniden gözlenmesini sağla
 - [ ] SHADOW_ONLY sinyallerin ürün alarmı üretemediğini izlemeye devam et
 - [ ] Risk policy snapshot'larını ve coin bazlı blokları Decision Engine gölge doğrulamasıyla birlikte biriktir
 - [ ] Decision Engine 1h gölge AL/SAT sonuçlarını örneklem büyüdükçe izle

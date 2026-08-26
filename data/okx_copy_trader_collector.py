@@ -100,6 +100,59 @@ def _stable_trade_id(trader_id, row, direction):
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
 
 
+def _rotated(values, offset):
+    if not values:
+        return []
+    start = offset % len(values)
+    return values[start:] + values[:start]
+
+
+def _history_profiles_for_run(con, ranks, now):
+    """Prioritize causal closure checks without starving cohort backfill.
+
+    A public position that AGCA previously observed open can become forward
+    evidence only after a later history response discloses its close. Rotate
+    that bounded priority set daily so more than one batch of open traders is
+    eventually revisited. Any remaining capacity continues the one-time
+    retrospective cohort backfill.
+    """
+    latest_open_traders = {
+        str(row[0]) for row in con.execute("""
+            SELECT DISTINCT o.source_trader_id
+            FROM external_trader_trade_observations o
+            JOIN (
+              SELECT exchange,source_trader_id,source_trade_id,
+                     max(observation_id) AS latest_id
+              FROM external_trader_trade_observations
+              GROUP BY exchange,source_trader_id,source_trade_id
+            ) latest ON latest.latest_id=o.observation_id
+            WHERE o.exchange='OKX' AND o.status='OPEN'
+        """)
+        if str(row[0]) in ranks
+    }
+    priority = sorted(latest_open_traders, key=lambda trader: ranks[trader])
+    priority = _rotated(priority, now.date().toordinal() * MAX_HISTORY_PROFILES_PER_RUN)
+    selected = priority[:MAX_HISTORY_PROFILES_PER_RUN]
+
+    if len(selected) < MAX_HISTORY_PROFILES_PER_RUN:
+        backfilled = {
+            str(row[0]) for row in con.execute("""
+                SELECT DISTINCT source_trader_id
+                FROM external_trader_trade_observations
+                WHERE exchange='OKX' AND status='CLOSED'
+            """)
+        }
+        selected_set = set(selected)
+        for trader in sorted(ranks, key=lambda value: ranks[value]):
+            if trader in selected_set or trader in backfilled:
+                continue
+            selected.append(trader)
+            selected_set.add(trader)
+            if len(selected) == MAX_HISTORY_PROFILES_PER_RUN:
+                break
+    return [(trader, ranks[trader]) for trader in selected]
+
+
 def _history_payload(trader, row, rank, total):
     direction = str(row.get("posSide", "")).upper()
     entry_price = _number(row.get("openAvgPx"))
@@ -225,14 +278,8 @@ def collect(database="crypto_data.db", now=None):
             except Exception as exc:
                 profile_errors.append({"trader": trader, "kind": "CURRENT", "error": type(exc).__name__})
 
-        backfilled = {
-            row[0] for row in con.execute(
-                "SELECT DISTINCT source_trader_id FROM external_trader_trade_observations "
-                "WHERE status='CLOSED'"
-            )
-        }
-        candidates = [(trader, rank) for trader, rank in ranks.items() if trader not in backfilled]
-        for trader, rank in candidates[:MAX_HISTORY_PROFILES_PER_RUN]:
+        history_profiles = _history_profiles_for_run(con, ranks, now)
+        for trader, rank in history_profiles:
             time.sleep(PROFILE_DELAY_SECONDS)
             try:
                 for row in _fetch_profile(HISTORY_ENDPOINT, trader):

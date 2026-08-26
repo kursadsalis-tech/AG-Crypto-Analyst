@@ -1,5 +1,16 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 forward copy-trader closure accumulation
+
+- Fixed the bounded OKX history refresh so traders with positions previously
+  observed open are revisited after they already have retrospective history.
+- Rotate more than 30 known-open traders across daily batches, preventing a
+  fixed rank subset from starving while keeping the existing 30-profile request
+  ceiling and using spare capacity for untouched cohort backfill.
+- Preserved immutable first-observed timestamps, all evidence thresholds,
+  research quarantine, disabled promotion and disabled real-order authority.
+- Full local suite passes 105/105.
+
 ## 2026-08-26 external copy-trader research quarantine
 
 - Added a public copy-trader research layer for allowlisted Bybit and OKX

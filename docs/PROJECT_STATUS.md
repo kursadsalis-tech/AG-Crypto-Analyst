@@ -862,3 +862,10 @@ forward evidence after they subsequently close.
 # Continuous improvement (2026-08-26)
 
 The PAPER agent now runs an autonomous supervised-research loop: discover hypotheses, timestamp them before evaluation, collect forward evidence, and expose review-ready candidates to the orchestrator. External trader consensus is research-only. Automatic policy mutation, automatic promotion, and real orders remain structurally disabled.
+
+On 2026-08-27 the daily collector's bounded history selection was corrected to
+revisit traders whose positions were previously observed open, even when those
+traders already had retrospective closed history. Known-open profiles rotate
+across days when they exceed the unchanged 30-profile batch, and unused slots
+continue cohort backfill. This allows later public closures to become causal
+forward observations without changing any sufficiency or promotion gate.

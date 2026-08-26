@@ -1,11 +1,76 @@
 import sqlite3
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from data import okx_copy_trader_collector as collector
+from paper_trading import external_trader_learning as external
 
 
 class OkxCopyTraderCollectorTests(unittest.TestCase):
+    def test_history_refresh_prioritizes_known_open_traders(self):
+        con = sqlite3.connect(":memory:")
+        external.ensure_tables(con)
+        ranks = {f"trader-{index}": index + 1 for index in range(40)}
+        for index in range(35):
+            external.ingest_trade(con, {
+                "exchange": "OKX", "source_url": collector.SOURCE_URL,
+                "source_trader_id": f"trader-{index}",
+                "source_trade_id": f"open-{index}",
+                "sampling_frame": "FULL_LEADERBOARD",
+                "leaderboard_rank": index + 1, "leaderboard_size": 40,
+                "symbol": "BTCUSDT", "direction": "LONG", "status": "OPEN",
+                "entry_time": "2026-08-25T00:00:00+00:00",
+                "entry_price": 100.0, "notional": 100.0, "leverage": 2.0,
+                "reported_pnl": 0.0, "fees": 0.1, "funding": 0.0,
+            }, first_observed_at="2026-08-26T00:00:00+00:00")
+            # Existing retrospective history must not suppress closure refresh.
+            external.ingest_trade(con, {
+                "exchange": "OKX", "source_url": collector.SOURCE_URL,
+                "source_trader_id": f"trader-{index}",
+                "source_trade_id": f"old-{index}",
+                "sampling_frame": "FULL_LEADERBOARD",
+                "leaderboard_rank": index + 1, "leaderboard_size": 40,
+                "symbol": "ETHUSDT", "direction": "LONG", "status": "CLOSED",
+                "entry_time": "2026-08-20T00:00:00+00:00",
+                "exit_time": "2026-08-21T00:00:00+00:00",
+                "entry_price": 100.0, "exit_price": 101.0, "notional": 100.0,
+                "leverage": 2.0, "reported_pnl": 1.0,
+                "fees": 0.1, "funding": 0.0,
+            }, first_observed_at="2026-08-26T00:00:00+00:00")
+        selected = collector._history_profiles_for_run(
+            con, ranks, datetime(2026, 8, 27, tzinfo=timezone.utc)
+        )
+        next_day = collector._history_profiles_for_run(
+            con, ranks, datetime(2026, 8, 28, tzinfo=timezone.utc)
+        )
+        con.close()
+        self.assertEqual(len(selected), collector.MAX_HISTORY_PROFILES_PER_RUN)
+        self.assertTrue(all(int(trader.split("-")[1]) < 35 for trader, _ in selected))
+        self.assertEqual(
+            {trader for trader, _ in selected + next_day},
+            {f"trader-{index}" for index in range(35)},
+        )
+
+    def test_history_refresh_uses_remaining_capacity_for_new_backfill(self):
+        con = sqlite3.connect(":memory:")
+        external.ensure_tables(con)
+        ranks = {"open": 1, "new-a": 2, "new-b": 3}
+        external.ingest_trade(con, {
+            "exchange": "OKX", "source_url": collector.SOURCE_URL,
+            "source_trader_id": "open", "source_trade_id": "position",
+            "sampling_frame": "FULL_LEADERBOARD", "leaderboard_rank": 1,
+            "leaderboard_size": 3, "symbol": "BTCUSDT", "direction": "LONG",
+            "status": "OPEN", "entry_time": "2026-08-25T00:00:00+00:00",
+            "entry_price": 100.0, "notional": 100.0, "leverage": 2.0,
+            "reported_pnl": 0.0, "fees": 0.1, "funding": 0.0,
+        }, first_observed_at="2026-08-26T00:00:00+00:00")
+        selected = collector._history_profiles_for_run(
+            con, ranks, datetime(2026, 8, 27, tzinfo=timezone.utc)
+        )
+        con.close()
+        self.assertEqual({trader for trader, _ in selected}, set(ranks))
+
     def page(self, number, *, version="v1", total=7):
         start = (number - 1) * collector.PAGE_SIZE
         count = min(collector.PAGE_SIZE, total - start)

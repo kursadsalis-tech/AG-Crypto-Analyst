@@ -98,3 +98,37 @@ Exact next-session opening prompt:
 > docs/LAST_SESSION_HANDOFF.md dosyasını oku, Git durumunu kontrol et ve NEXT
 > SESSION bölümündeki PAPER trade-learning/strategy evidence accumulation
 > işinden devam et. Kanıt eşiklerini değiştirme ve gerçek emir yetkisi verme.
+
+# 2026-08-27 — forward closure accumulation checkpoint
+
+PAPER external-trader evidence accumulation içinde operasyonel bir boşluk
+düzeltildi. OKX collector daha önce history endpoint'ini yalnız hiç CLOSED kaydı
+olmayan trader'lar için çağırıyordu. Bu, retrospektif geçmişi daha önce alınmış
+bir trader'ın AGCA tarafından açıkken gözlenen pozisyonu sonradan kapandığında
+kapanışın yeniden görülememesine ve forward kanıtın birikmemesine yol
+açabiliyordu.
+
+Collector artık bilinen açık pozisyon sahiplerini değişmeyen günlük 30-profile
+history bütçesinde önceliklendiriyor. Açık trader sayısı bütçeyi aşarsa günlük
+deterministik rotasyon hepsini günlere yayıyor; boş kapasite ilk retrospektif
+cohort backfill'ine devam ediyor. İlk-görülme zamanı, <=5x/maliyet/notional
+kapıları, 30 trader/200 kapanış/56 gün dış-kanıt eşiği, forward candidate kapıları
+ve PAPER allocation eşiği değiştirilmedi. Otomatik terfi/politika mutasyonu ve
+gerçek emir yetkisi hâlâ yoktur.
+
+Doğrulama: tam yerel suite 105/105 geçti. Bulut dağıtımı bu yerel oturumda
+yapılmadı; sıradaki tek öncelik bu checkpoint'i mevcut rollback prosedürüyle
+`agca-runtime` üzerine dağıtmak, collector timer'ının başarılı koşusunu ve
+forward kapanış sayacının zaman içinde ilerleyebildiğini doğrulamaktır. Mevcut
+bulut/Supabase sağlık durumu bu oturumda yeniden sorgulanmadı; son doğrulanmış
+durum önceki CLEAN CHECKPOINT bölümündeki gibidir.
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış. Önce kök AGENTS.md ile
+> docs/LAST_SESSION_HANDOFF.md dosyasını oku ve Git durumunu kontrol et. Son
+> forward-closure accumulation checkpoint'ini rollback korumasıyla buluta dağıt;
+> OKX collector timer, PAPER_ONLY, gerçek emir kapalı durumu ve forward kanıt
+> sayaçlarını doğrula. Kanıt eşiklerini veya strateji politikasını değiştirme.
