@@ -132,3 +132,53 @@ Exact next-session opening prompt:
 > forward-closure accumulation checkpoint'ini rollback korumasıyla buluta dağıt;
 > OKX collector timer, PAPER_ONLY, gerçek emir kapalı durumu ve forward kanıt
 > sayaçlarını doğrula. Kanıt eşiklerini veya strateji politikasını değiştirme.
+
+# 2026-08-27 — forward closure collector deployed and verified
+
+Checkpoint `8552eac` içindeki OKX forward-closure collector düzeltmesi mevcut
+Google Cloud `agca-runtime` VM'ine dosya-seviyesinde ve geri alınabilir biçimde
+dağıtıldı. Yerel ve bulut kaynak SHA-256 değeri eşleşti:
+`cb59cbfb6f9f8cd7261fbe6ca4358e1b8d59a112c6f760ccbb335495c079cc45`.
+Bulut derleme kontrolü geçti. Rollback kopyası:
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-forward-closure-rollback-8552eac`.
+
+Kontrollü collector koşusu `SUCCESS` tamamlandı: tek data version ile 259/259
+trader, 585 açık gözlem, 2.487 history gözlemi ve sıfır profil hatası. Düzeltme
+amacına ulaştı; forward değerlendirme 0'dan LONG için 1 işlem/1 trader ve SHORT
+için 9 işlem/3 trader seviyesine ilerledi. İki aday da hâlâ
+`FORWARD_COLLECTING`; promotion=0, policy mutation=0 ve real orders=false.
+Dış araştırma `COLLECTING_FORWARD_TIME_COVERAGE` durumunda; 264 gözlenmiş trader,
+1.694 uygun kapanış ve henüz 0 tam gün coverage kaydetti. Hiçbir eşik değişmedi.
+
+Dağıtım sonrası bağımsız attestation 2026-08-26T22:30:12Z zamanında `HEALTHY`,
+`PAPER_ONLY`, `may_send_real_orders=0`, SQLite `ok`, hourly `SUCCESS` ve PAPER
+agent `SUCCESS` kaydetti. Canonical payload SHA-256 yerelde yeniden hesaplanarak
+geçerli bulundu. Temiz kohort portföyü: 1 pending, 2 open, 7 closed, 0 cancelled;
+10.000 USDT başlangıç sermayesi, 8.319,56 USDT nakit, +122,02 USDT gerçekleşmiş
+net P&L ve 7,23 USDT toplam ücret. Strateji allocation tablolarında gerçek emir
+bayrağı toplamı 0.
+
+Supabase audit mirror aynı taze attestation zamanını/hash'ini ve aynı güvenlik
+durumunu gösterdi; 2 candidate ve 2 forward evaluation kritik kayıtları aynaya
+ulaştı. Yeni toplu veriden 7.417 trade observation ve 1.167 consensus snapshot
+SQLite outbox'ta bekliyor. Bu arıza değildir: büyük tarihsel/araştırma tabloları
+kritik kanıtı bloke etmemek için mevcut iki dakikalık timer ile düşük öncelikli,
+sınırlı paketlerde drain edilir. Drain timer aktiftir; batch/evidence eşikleri
+değiştirilmemelidir.
+
+Bulut servis durumu: worker active, OKX collector timer active+enabled; sıradaki
+doğal koşu günlük timer tarafından yürütülecek. Sıradaki ürün işi yeni politika
+aramak değil, mevcut PAPER işlemleri ve forward dış-trader kapanışları doğal
+olarak birikirken net-after-cost P&L, equity, return, trader diversity ve forward
+coverage sayaçlarını değişmeyen kapılarla izlemektir.
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış. Önce kök AGENTS.md ile
+> docs/LAST_SESSION_HANDOFF.md dosyasını oku ve Git durumunu kontrol et. Dağıtılmış
+> PAPER trade-learning/strategy evidence pipeline'ında doğal işlem ve forward
+> kapanış birikimini doğrula; portföy net P&L/equity/return, trader diversity,
+> forward coverage, worker/timer ve Supabase kritik kanıt tazeliğini raporla.
+> Kanıt eşiklerini, strateji politikasını veya gerçek emir yetkisini değiştirme.
