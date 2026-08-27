@@ -26,8 +26,17 @@ Every row has `production_eligible=0` and `action_authority=0`. Full local suite
 119/119. Candidate artifact:
 `reports/forecast_feature_challenger_candidate.json`; model hash:
 `523bb8e1669f48f4830b1c0ada5ccb951e8c0eb1bbdee8a3ddad2b0ae7d3f4fd`.
-Cloud deployment and the first natural 39-row feature bundle remain to be
-completed with rollback protection.
+Checkpoint `b7b2a97` was deployed to `agca-runtime` with rollback copy
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-feature-challenger-rollback-b7b2a97`.
+The deployed model hash exactly matches the local artifact and reports
+`production_eligible=False`, `action_authority=False`. The worker returned
+active under `AGCA_EXECUTION_MODE=PAPER_ONLY`. Cloud SQLite has 26 valid closed
+flow candles for every one of the 13 symbols and the new forward table contract
+was created successfully. The already-issued 20:00 forecast bundle was not
+backfilled after deployment because that would be a retrospective seed. The
+first causally valid 39-row feature bundle must be created by the next natural
+hourly forecast cycle; then verify its SQLite rows, zero authority flags,
+settlement metrics when due, and Supabase mirror/outbox state.
 
 # 2026-08-27 — Unified Forecast direction-collapse correction started
 

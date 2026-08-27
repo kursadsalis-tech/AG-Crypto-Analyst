@@ -14,6 +14,10 @@
   maliyet sonrası utility'yi saklar. `production_eligible=0` ve
   `action_authority=0` değişmezdir.
 - Tam yerel suite 119/119 geçti.
+- Checkpoint `b7b2a97` rollback korumasıyla buluta dağıtıldı; frozen model hash'i
+  doğrulandı ve worker `PAPER_ONLY`/active döndü. Bulutta 13/13 coin için 26'şar
+  kapalı flow mumu hazırdır. Retrospektif seed yapılmadı; ilk kayıt sıradaki
+  doğal saatlik tahmin paketinde oluşacaktır.
 
 ## 2026-08-27 lookahead-safe direction-drift challenger
 
