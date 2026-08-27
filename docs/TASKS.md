@@ -189,6 +189,7 @@
 - [x] Money-flow'u 400 günlük point-in-time Spot tarihçesiyle Feature Challenger V1'e al
 - [x] Feature Challenger'ı direction/Brier/net-after-cost utility ile ayrı forward tabloda izle
 - [ ] Geliştirmede reddedilen genel flow modelini promote etme; forward ablation sonrası rejim-seçici V2 tasarla
+- [x] Üç-sınıf model isabetini PAPER trader ekonomik başarısından ayır; aksiyon utility/profit factor'ı birincil KPI yap
 
 ### Dış trader trade-learning araştırması
 

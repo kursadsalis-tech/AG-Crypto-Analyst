@@ -1,5 +1,17 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 trader KPI correction
+
+- Temiz PAPER kohortu doğrudan denetlendi: 9 kapanmış 24h SHORT işlem,
+  5 kazanan, +108.50 USDT net P&L ve 3.80 profit factor. Düşük üç-sınıf
+  direction-hit değerinin çalışan PAPER trade yolunu yanlış temsil ettiği
+  kanıtlandı.
+- Committee Forecast Performansı tablosunda aksiyon hit, net-after-cost utility
+  ve profit factor birincil sütunlara taşındı; UP/DOWN/NEUTRAL isabeti yalnız
+  model teşhisi olarak etiketlendi.
+- PAPER günlük raporuna profit factor ve kapanmış-işlem max drawdown eklendi.
+- Strateji, allocation eşiği ve emir yetkisi değiştirilmedi. Tam suite 120/120.
+
 ## 2026-08-27 point-in-time Spot Flow Feature Challenger V1
 
 - Sabit 13 coin için resmî Binance Spot kaynağından 405 günlük kapalı saatlik

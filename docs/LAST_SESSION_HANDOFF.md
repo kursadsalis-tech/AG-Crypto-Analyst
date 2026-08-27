@@ -1,5 +1,21 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-27 — Trader success KPI corrected from class accuracy to economics
+
+A read-only audit found that the alarming low three-class direction scores were
+not the PAPER trader's realized performance. The clean evidence cohort currently
+has 9 closed trades, all 24h SHORT: 5 winners, +108.5039 USDT net P&L,
+147.2592 USDT positive net versus 38.7553 USDT negative net, profit factor 3.80.
+This is promising but still one trade below the unchanged 10-closed-trade
+allocation evidence gate.
+
+The committee report now leads with action count/hit, net-after-cost action
+utility and profit factor. UP/DOWN/NEUTRAL direction hit remains visible only as
+a model diagnostic and is explicitly not labeled trader success. The PAPER
+daily report also records lifetime profit factor and closed-trade maximum
+drawdown. No model, selection rule, evidence threshold, allocation policy or
+order authority changed. Full local suite: 120/120.
+
 # 2026-08-27 — Spot Flow Feature Challenger V1 implemented
 
 The next product step was implemented: collected money-flow evidence is now a

@@ -20,7 +20,7 @@ from whale_tracker.ethereum_token_whale_collector import TOKEN_CONFIGS
 
 
 DB_NAME = "crypto_data.db"
-REPORT_VERSION = "1.5.0"
+REPORT_VERSION = "1.6.0"
 REPORT_POLICY = "INVESTMENT_COMMITTEE_REPORT_V2_FORECAST"
 DECISION_ENGINE_VERSION = "1.1.0"
 DECISION_POLICY_VERSION = "DECISION_POLICY_V1_SHADOW"
@@ -251,7 +251,8 @@ def unified_forecast_performance(con):
     empty = {
         "settled": 0, "open": 0, "direction_hit_rate": 0.0,
         "mae_pct": 0.0, "interval_hit_rate": 0.0,
-        "actions": 0, "action_hit_rate": 0.0,
+        "actions": 0, "action_hit_rate": 0.0, "action_net_utility_pct": 0.0,
+        "profit_factor": 0.0,
     }
     if not table_exists(con, "forecast_engine_predictions"):
         return {horizon: dict(empty) for horizon in (1, 4, 24)}
@@ -265,7 +266,12 @@ def unified_forecast_performance(con):
             WHERE status='SETTLED' AND horizon_hours=?
         """, (horizon,)).fetchone()
         actions = con.execute("""
-            SELECT COUNT(*), COALESCE(AVG(action_hit),0)
+            SELECT COUNT(*), COALESCE(AVG(action_hit),0),
+                   COALESCE(AVG(action_net_utility_pct),0),
+                   COALESCE(SUM(CASE WHEN action_net_utility_pct>0
+                                     THEN action_net_utility_pct ELSE 0 END),0),
+                   ABS(COALESCE(SUM(CASE WHEN action_net_utility_pct<0
+                                         THEN action_net_utility_pct ELSE 0 END),0))
             FROM forecast_engine_predictions
             WHERE status='SETTLED' AND horizon_hours=?
               AND action_hit IS NOT NULL
@@ -274,6 +280,10 @@ def unified_forecast_performance(con):
             SELECT COUNT(*) FROM forecast_engine_predictions
             WHERE status='OPEN' AND horizon_hours=?
         """, (horizon,)).fetchone()[0]
+        profit_factor = (
+            float(actions[3]) / float(actions[4]) if float(actions[4]) > 0
+            else (float("inf") if float(actions[3]) > 0 else 0.0)
+        )
         result[horizon] = {
             "settled": int(settled[0] or 0),
             "open": int(open_count or 0),
@@ -282,6 +292,8 @@ def unified_forecast_performance(con):
             "interval_hit_rate": float(settled[3] or 0.0) * 100.0,
             "actions": int(actions[0] or 0),
             "action_hit_rate": float(actions[1] or 0.0) * 100.0,
+            "action_net_utility_pct": float(actions[2] or 0.0),
+            "profit_factor": profit_factor,
         }
     return result
 
@@ -704,19 +716,21 @@ def build_report(
         "",
         "### Forecast Performansı",
         "",
-        "| Ufuk | Sonuçlanan | Açık | Sınıf başarısı | MAE | Aralık başarısı | Aksiyon | Aksiyon başarısı |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Ufuk | Aksiyon | Aksiyon başarısı | Net utility | Profit factor | Sonuçlanan sınıf | Sınıf başarısı | MAE | Aralık |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for horizon in (1, 4, 24):
         score = forecast_scores[horizon]
         lines.append(
-            f"| {horizon}h | {score['settled']} | {score['open']} | "
+            f"| {horizon}h | {score['actions']} | %{score['action_hit_rate']:.1f} | "
+            f"{score['action_net_utility_pct']:+.3f}% | "
+            f"{score['profit_factor']:.2f} | {score['settled']} (+{score['open']} açık) | "
             f"%{score['direction_hit_rate']:.1f} | "
             f"%{score['mae_pct']:.3f} | "
-            f"%{score['interval_hit_rate']:.1f} | "
-            f"{score['actions']} | %{score['action_hit_rate']:.1f} |"
+            f"%{score['interval_hit_rate']:.1f} |"
         )
-    lines.extend(["", "Sınıf başarısı, **UP/DOWN/NEUTRAL** üç sınıfının toplam isabetidir; yalnız yönlü işlem başarısı değildir."])
+    lines.extend(["", "Birincil başarı KPI'ı maliyet sonrası aksiyon utility/profit factor'dır. "
+                  "Sınıf başarısı yalnız **UP/DOWN/NEUTRAL** model teşhisidir ve PAPER trader başarısı değildir."])
     if diagnosis_counts:
         lines.extend(["", "### Biriken Hata Nedenleri", ""])
         for code, count in diagnosis_counts.items():

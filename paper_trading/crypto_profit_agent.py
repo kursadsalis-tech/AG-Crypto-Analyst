@@ -715,6 +715,16 @@ def build_daily_report(con, report_date, start, end):
     lifetime_wins = sum(float(row[0]) > 0 for row in lifetime_rows)
     lifetime_losses = sum(float(row[0]) < 0 for row in lifetime_rows)
     lifetime_breakeven = len(lifetime_rows) - lifetime_wins - lifetime_losses
+    positive_net = sum(max(0.0, float(row[0])) for row in lifetime_rows)
+    negative_net = abs(sum(min(0.0, float(row[0])) for row in lifetime_rows))
+    profit_factor = positive_net / negative_net if negative_net else (
+        float("inf") if positive_net else 0.0
+    )
+    cumulative = peak = max_drawdown = 0.0
+    for row in lifetime_rows:
+        cumulative += float(row[0])
+        peak = max(peak, cumulative)
+        max_drawdown = max(max_drawdown, peak - cumulative)
     accountability = {
         "selected_total": sum(status_counts.values()),
         "pending_entries": int(status_counts.get("PENDING_ENTRY", 0)),
@@ -729,6 +739,8 @@ def build_daily_report(con, report_date, start, end):
         ),
         "gross_pnl": sum(float(row[1] or 0) for row in lifetime_rows),
         "net_pnl": sum(float(row[0] or 0) for row in lifetime_rows),
+        "profit_factor": profit_factor,
+        "max_closed_trade_drawdown": max_drawdown,
         "fees": sum(float(row[2] or 0) + float(row[3] or 0) for row in lifetime_rows),
         "spread_cost": sum(float(row[4] or 0) + float(row[6] or 0) for row in lifetime_rows),
         "slippage_cost": sum(float(row[5] or 0) + float(row[7] or 0) for row in lifetime_rows),
@@ -811,6 +823,8 @@ def markdown_report(payload):
         f"- Kazanan/Kaybeden/Başabaş: {a['wins']}/{a['losses']}/{a['breakeven']} | "
         f"başarı: {a['win_rate_pct']:.1f}%",
         f"- Kümülatif brüt/net P&L: {a['gross_pnl']:+.2f} / {a['net_pnl']:+.2f} USDT",
+        f"- Profit factor: {a['profit_factor']:.2f} | kapanmış-işlem max drawdown: "
+        f"{a['max_closed_trade_drawdown']:.2f} USDT",
         f"- Maliyetler: ücret={a['fees']:.2f}, spread={a['spread_cost']:.2f}, "
         f"slippage={a['slippage_cost']:.2f}, funding={a['funding_cost']:+.4f}, "
         f"liquidation_fee={a['liquidation_fees']:.2f} USDT",
