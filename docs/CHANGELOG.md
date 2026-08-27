@@ -1,5 +1,19 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 runtime freshness and disabled-Data-API recovery
+
+- Fixed historical coverage readiness to require the exact final closed hourly
+  candle. The earlier two-hour tolerance is now limited to a symbol's listing
+  boundary and can no longer allow a stale trailing candle into forecasting.
+- Added regression tests for both stale-tail repair and the no-refetch case;
+  the full local suite passes 107/107 and the deployed target tests pass 2/2.
+- Kept Supabase Data API disabled while applying Supabase's documented
+  `pgrst_no_exposed_schemas` sentinel configuration. Client roles have no usage
+  on that schema, AGCA schemas were not exposed, and PostgreSQL remains writable
+  for the private audit mirror.
+- Reset the stale failed state of the already-disabled legacy live-cycle unit;
+  the active cloud worker and all enabled timers remain unchanged.
+
 ## 2026-08-27 forward copy-trader closure accumulation
 
 - Fixed the bounded OKX history refresh so traders with positions previously

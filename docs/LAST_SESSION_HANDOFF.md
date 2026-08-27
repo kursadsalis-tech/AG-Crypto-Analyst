@@ -182,3 +182,55 @@ Exact next-session opening prompt:
 > kapanış birikimini doğrula; portföy net P&L/equity/return, trader diversity,
 > forward coverage, worker/timer ve Supabase kritik kanıt tazeliğini raporla.
 > Kanıt eşiklerini, strateji politikasını veya gerçek emir yetkisini değiştirme.
+
+# 2026-08-27 — runtime freshness and Supabase log incident closed
+
+The active runtime incidents reported during the day were reproduced and
+closed. `forecast_core_lab.ensure_historical_coverage` previously accepted a
+trailing candle up to two hours old, conflicting with the unchanged 15-minute
+forecast freshness gate. Coverage now requires the exact final closed hourly
+candle; the listing/start boundary alone retains its existing tolerance. Full
+local suite: 107/107. Cloud target regression tests: 2/2.
+
+The code was deployed to `agca-runtime` with rollback copy
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-freshness-rollback-20260827`.
+The restarted worker completed the natural hourly job with `SUCCESS`: all 13
+active symbols had the closed candle `2026-08-26T22:59:59.999Z`, and 39
+forecasts were created at `2026-08-26T23:00:27Z` from that common close.
+The stale `STALE_COMMON_CANDLE` condition is no longer active.
+
+Supabase remained `ACTIVE_HEALTHY` and writable. The repeated
+`pg_pgrst_no_exposed_schemas` error was Supabase's known disabled-Data-API
+PostgREST behavior. The documented empty sentinel schema and authenticator role
+setting were applied with all access revoked from public/client/service roles.
+Data API remains disabled, `agca_runtime` was not exposed, and the last schema
+error occurred before the change at `2026-08-26T22:58:08Z`; none followed.
+Reversal instructions are recorded in `docs/CLOUD_PAPER_RUNTIME.md`.
+
+Fresh attestation `2026-08-26T23:03:59Z` is present in both authoritative
+SQLite and the Supabase audit mirror with SHA-256
+`ba9f117d0f041071f0cbcdb0a8e541bc6ff9717012df6b3523ec1259e4a710f5`:
+worker `HEALTHY`, `PAPER_ONLY`, `may_send_real_orders=0`, SQLite `ok`, hourly
+and PAPER agent `SUCCESS`. Portfolio evidence: 10,000 USDT initial capital,
+7,307.81 USDT cash, +122.02 USDT realized net P&L, 7.73 USDT fees, 3 open and
+7 closed virtual positions. The product's remaining `PARTIAL` label is the
+existing quarantined legacy news-forward shadow's one unmatched spot item; it
+does not block the unified forecast or PAPER trader and grants no authority.
+The old disabled `agca-live-cycle.timer` remained disabled; only its week-old
+systemd failed-state marker was cleared to prevent a false active-incident
+interpretation.
+
+No evidence threshold, strategy policy, allocation gate, or real-order
+authority changed. Next product work is continued natural PAPER trade and
+forward external-trader closure accumulation under the existing gates.
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış. Önce kök AGENTS.md ile
+> docs/LAST_SESSION_HANDOFF.md dosyasını oku ve Git durumunu kontrol et. Sağlıklı
+> PAPER_ONLY runtime üzerinde doğal PAPER işlem ve forward dış-trader kapanış
+> birikimini doğrula; net P&L/equity/return, trader diversity, forward coverage,
+> worker/timer ve Supabase kritik kanıt tazeliğini raporla. Kanıt eşiklerini,
+> strateji politikasını veya gerçek emir yetkisini değiştirme.

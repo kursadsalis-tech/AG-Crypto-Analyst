@@ -38,6 +38,26 @@ latency, slippage, volume participation, partial fills, minimum notional, and
 perpetual funding conservatively; venue metadata should be refreshed before a
 claim of exchange-grade parity.
 
+### Supabase with Data API disabled
+
+Supabase may keep PostgREST alive after the Data API is disabled and repeatedly
+log `schema "pg_pgrst_no_exposed_schemas" does not exist`. The documented
+fail-closed sentinel configuration is:
+
+```sql
+create schema pgrst_no_exposed_schemas;
+revoke all on schema pgrst_no_exposed_schemas
+  from public, anon, authenticated, service_role;
+alter role authenticator
+  set pgrst.db_schemas = 'pgrst_no_exposed_schemas';
+notify pgrst, 'reload config';
+```
+
+This does not make PostgreSQL read-only and does not expose `agca_runtime`.
+Before applying it, confirm the Data API is intentionally disabled. To reverse
+the role override, run `alter role authenticator reset pgrst.db_schemas;` and
+reload PostgREST; drop the empty sentinel schema only after the reset is active.
+
 ## Operational limitation
 
 This package makes the runtime Mac-independent, but a provider deployment and

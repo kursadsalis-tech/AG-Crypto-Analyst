@@ -160,6 +160,17 @@ def stored_coverage(con, symbol, start, end):
     }
 
 
+def coverage_ready(coverage, fetch_start, end):
+    """Require the complete last closed candle while tolerating listing starts."""
+    expected_last_close = end - timedelta(milliseconds=1)
+    return bool(
+        coverage
+        and coverage["start"] <= fetch_start + timedelta(hours=2)
+        and coverage["end"] >= expected_last_close
+        and coverage["missing_quote_volume"] == 0
+    )
+
+
 def ensure_historical_coverage(con, fetch_start, end):
     from data import historical_market_data
 
@@ -168,12 +179,7 @@ def ensure_historical_coverage(con, fetch_start, end):
     result = {}
     for symbol in SYMBOLS:
         coverage = stored_coverage(con, symbol, fetch_start, end)
-        ready = bool(
-            coverage
-            and coverage["start"] <= fetch_start + timedelta(hours=2)
-            and coverage["end"] >= end - timedelta(hours=2)
-            and coverage["missing_quote_volume"] == 0
-        )
+        ready = coverage_ready(coverage, fetch_start, end)
         if ready:
             result[symbol] = {"status": "READY", "fetched": 0}
             continue
@@ -183,12 +189,16 @@ def ensure_historical_coverage(con, fetch_start, end):
         try:
             ranges = []
             if coverage is None:
-                ranges.append((fetch_start, end))
+                ranges.append((fetch_start, end - timedelta(milliseconds=1)))
             else:
                 if coverage["start"] > fetch_start + timedelta(hours=2):
                     ranges.append((fetch_start, coverage["start"] - timedelta(milliseconds=1)))
-                if coverage["end"] < end - timedelta(hours=2):
-                    ranges.append((coverage["end"] + timedelta(milliseconds=1), end))
+                expected_last_close = end - timedelta(milliseconds=1)
+                if coverage["end"] < expected_last_close:
+                    ranges.append((
+                        coverage["end"] + timedelta(milliseconds=1),
+                        expected_last_close,
+                    ))
                 if coverage["missing_quote_volume"]:
                     missing = con.execute("""
                         SELECT MIN(open_time), MAX(close_time)
@@ -210,12 +220,7 @@ def ensure_historical_coverage(con, fetch_start, end):
                 )
             con.commit()
             refreshed = stored_coverage(con, symbol, fetch_start, end)
-            refreshed_ready = bool(
-                refreshed
-                and refreshed["start"] <= fetch_start + timedelta(hours=2)
-                and refreshed["end"] >= end - timedelta(hours=2)
-                and refreshed["missing_quote_volume"] == 0
-            )
+            refreshed_ready = coverage_ready(refreshed, fetch_start, end)
             result[symbol] = {
                 "status": "FETCHED_READY" if refreshed_ready else "INCOMPLETE",
                 "fetched": fetched,
