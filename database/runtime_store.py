@@ -45,6 +45,7 @@ REMOTE_RUNTIME_TABLES = frozenset(
         "data_validation_audit",
         "forecast_engine_predictions",
         "forecast_engine_runs",
+        "forecast_drift_challenger_predictions",
         "forecast_learning_hypotheses",
         "forecast_learning_reviews",
         "external_trader_source_snapshots",

@@ -1,5 +1,36 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-27 — Unified Forecast direction-collapse correction started
+
+The repeated 0/11 and 1/11 direction batches were traced to a product/model
+gap, not an infrastructure outage. The live Unified Forecast still uses the
+old price-only pooled-ridge artifact; decision-agent context is captured for
+diagnosis with `used_by_model=false`. Its latest rolling class predictions had
+collapsed toward DOWN (especially 4h and 24h), while the live actual class mix
+had drifted. The 13 symbols in a common hourly batch are correlated and must not
+be treated as 13 independent votes.
+
+`analysis/forecast_drift_challenger.py` now records a separate, lookahead-safe
+class-prior drift challenger. It uses only settlements available before issue
+time, requires 10 hourly batches, caps the window at 24 batches, and gives each
+batch one vote. Its probabilities, class hit and Brier are stored separately in
+`forecast_drift_challenger_predictions` and included in the Supabase runtime
+audit allowlist. Unified Forecast output reports incumbent and challenger
+performance separately.
+
+A reconstructible read-only audit indicated that this fixed correction would
+have improved the observed 1h slice from 43.6% to 48.7% and 24h from 35.6% to
+43.9%, but reduced 4h from 52.0% to 49.2%. These are diagnostic results, not
+promotion evidence. The implementation therefore remains
+`FORWARD_SHADOW_ONLY`, `production_eligible=0`, `action_authority=0`; no evidence
+threshold, strategy allocation policy, PAPER gate, or real-order authority was
+changed. New money-flow and other agent features still require sufficient
+point-in-time history before a separate feature challenger may use them.
+
+Verification: full local suite 117/117 passed; `git diff --check` passed before
+documentation closeout. Cloud deployment and the first natural forward
+challenger bundle remain to be completed from this checkpoint.
+
 Aktif devam dosyası: [SESSION_HANDOFF_2026-08-24.md](SESSION_HANDOFF_2026-08-24.md)
 
 Yeni oturum önce bu dosyayı, sonra `PROJECT_STATUS.md`, `TASKS.md` ve

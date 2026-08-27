@@ -138,6 +138,9 @@ def ensure_tables(con):
                 f"ADD COLUMN {column} {definition}"
             )
     con.commit()
+    from analysis import forecast_drift_challenger
+    forecast_drift_challenger.ensure_table(con)
+    con.commit()
 
 
 def table_exists(con, table_name):
@@ -437,6 +440,20 @@ def create_forecasts(con, model_payload, series, decision_time, now):
                 values["calibration_state"], 0, json.dumps(reasons, ensure_ascii=False),
                 row["regime"], json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
             ))
+            stored_row = con.execute("""
+                SELECT forecast_id FROM forecast_engine_predictions
+                WHERE model_version=? AND artifact_hash=? AND symbol=?
+                  AND as_of=? AND horizon_hours=?
+            """, (MODEL_VERSION, model_payload["artifact_hash"], row["symbol"],
+                  iso(row["as_of"]), int(row["horizon"]))).fetchone()
+            if stored_row:
+                from analysis import forecast_drift_challenger
+                forecast_drift_challenger.record(
+                    con, stored_row[0], iso(now), row["horizon"],
+                    {"UP": prediction["p_up"], "DOWN": prediction["p_down"],
+                     "NEUTRAL": prediction["p_neutral"]},
+                    model_payload["models"][row["horizon"]]["base_probabilities"],
+                )
             forecasts.append({**prediction, "reasons": reasons})
         except Exception as exc:
             no_forecast.append({"symbol": row["symbol"], "horizon": row["horizon"], "reason": str(exc)})
@@ -631,6 +648,8 @@ def settle_due(con, now):
               brier, int(predicted_class == actual_class), action_hit, utility,
               diagnosis_code, json.dumps(diagnosis, ensure_ascii=False, sort_keys=True),
               iso(now), row[0]))
+        from analysis import forecast_drift_challenger
+        forecast_drift_challenger.settle(con, row[0], actual_class, iso(now))
         settled += 1
     con.commit()
     return settled
@@ -646,6 +665,11 @@ def performance(con, artifact):
             WHERE status='SETTLED' AND horizon_hours=? AND artifact_hash=?
         """, (horizon, artifact)).fetchall()
         actions = [row for row in rows if row[4] is not None]
+        challenger_rows = con.execute("""
+            SELECT direction_hit, brier_score
+            FROM forecast_drift_challenger_predictions
+            WHERE status='SETTLED' AND horizon_hours=?
+        """, (horizon,)).fetchall()
         output[horizon] = {
             "settled": len(rows),
             "mae_pct": statistics.fmean(row[0] for row in rows) if rows else 0.0,
@@ -655,6 +679,19 @@ def performance(con, artifact):
             "actions": len(actions),
             "action_hit_pct": 100 * statistics.fmean(row[4] for row in actions) if actions else 0.0,
             "utility_pct": statistics.fmean(row[5] for row in actions) if actions else 0.0,
+            "drift_challenger": {
+                "settled": len(challenger_rows),
+                "direction_hit_pct": (
+                    100 * statistics.fmean(row[0] for row in challenger_rows)
+                    if challenger_rows else 0.0
+                ),
+                "brier": (
+                    statistics.fmean(row[1] for row in challenger_rows)
+                    if challenger_rows else 0.0
+                ),
+                "state": "FORWARD_SHADOW_ONLY",
+                "production_eligible": False,
+            },
         }
     return output
 
@@ -680,6 +717,10 @@ def render(result):
         print(f"{horizon:>2}h | settled={score['settled']} | class_hit={score['direction_hit_pct']:.1f}% | "
               f"MAE={score['mae_pct']:.3f}% | interval={score['interval_hit_pct']:.1f}% | "
               f"actions={score['actions']} | action_hit={score['action_hit_pct']:.1f}% | utility={score['utility_pct']:+.3f}%")
+        challenger = score["drift_challenger"]
+        print(f"    drift_challenger | settled={challenger['settled']} | "
+              f"class_hit={challenger['direction_hit_pct']:.1f}% | "
+              f"Brier={challenger['brier']:.3f} | FORWARD_SHADOW_ONLY")
     print("Not: class_hit, UP/DOWN/NEUTRAL üç sınıfının isabetidir; yalnız yönlü işlem başarısı değildir.")
     print("BEN_OLSAM gölge görüştür; ürün alarmı veya otomatik işlem değildir. SAT=spot azalt/çık/kaçın, short değildir.")
 

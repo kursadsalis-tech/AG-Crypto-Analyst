@@ -1,5 +1,19 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 lookahead-safe direction-drift challenger
+
+- Birleşik Forecast Core'un canlı sınıf dağılımındaki DOWN çöküşü doğrulandı;
+  ek ajan kanıtlarının mevcut modele girdi olmadığı açıkça korundu.
+- Tahmin anından önce sonuçlanmış son 24 saatlik paketi kullanan, en az 10 paket
+  isteyen ve her `as_of` paketine tek ağırlık veren sınıf-prior drift challenger'ı
+  eklendi. Böylece 13 korelasyonlu coin 13 bağımsız piyasa oyu gibi sayılmıyor.
+- Challenger olasılıkları, actual class, direction hit ve Brier ayrı tabloda
+  tutuluyor ve Supabase operasyonel audit mirror kapsamına alındı.
+- Challenger `FORWARD_SHADOW_ONLY`, `production_eligible=0` ve
+  `action_authority=0`; PAPER allocation, kanıt eşikleri ve gerçek emir yetkisi
+  değişmedi.
+- Yerel tam suite 117/117 geçti.
+
 ## 2026-08-27 live spot money-flow evidence
 
 - Persist Binance closed-candle taker-buy quote volume in `market_klines` and

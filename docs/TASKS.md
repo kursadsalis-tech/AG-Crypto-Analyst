@@ -179,6 +179,15 @@
 
 ## AKTİF GÖREVLER
 
+### Unified Forecast yön çöküşü
+
+- [x] Canlı 1h/4h/24h tahminlerde sınıf dağılımını ve çoğunluk baseline'ını denetle
+- [x] Eski fiyat-only modelin DOWN sınıfına çöküşünü ve ajan bağlamının `used_by_model=false` kaldığını kanıtla
+- [x] Korelasyonlu 13 coini bağımsız örnek saymayan, lookahead-safe sınıf-drift challenger'ını ekle
+- [x] Challenger sonuçlarını incumbent'tan ayrı direction-hit ve Brier ile kalıcı kaydet
+- [ ] Yeni forward paketlerde ufuk bazında incumbent üstünlüğü kanıtlanmadan hiçbir promotion/politika değişikliği yapma
+- [ ] Money-flow ve diğer ajan özelliklerini yalnız point-in-time tarihçesi yeterli olduğunda yeni feature challenger'a al
+
 ### Dış trader trade-learning araştırması
 
 - [x] Bybit ve OKX kamuya açık trader kanıtları için ayrı araştırma karantinası kur
