@@ -28,8 +28,26 @@ changed. New money-flow and other agent features still require sufficient
 point-in-time history before a separate feature challenger may use them.
 
 Verification: full local suite 117/117 passed; `git diff --check` passed before
-documentation closeout. Cloud deployment and the first natural forward
-challenger bundle remain to be completed from this checkpoint.
+documentation closeout. Checkpoint `de7ba57` was deployed to `agca-runtime`
+with rollback copy
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-direction-drift-rollback-de7ba57`.
+The worker restarted active with `AGCA_EXECUTION_MODE=PAPER_ONLY`. Its first
+natural hourly run completed `SUCCESS`, created 39/39 forecasts and settled 39
+older forecasts. The first challenger bundle contains 13 rows per horizon, each
+using 24 prior hourly batches, with zero production eligibility and zero action
+authority. The class collapse was absent in that bundle: 1h emitted 10 UP and
+3 NEUTRAL, while 4h and 24h emitted 13 UP each. These predictions are still
+unsettled and therefore are not evidence of improved accuracy.
+
+The Supabase drain completed with the challenger table marked succeeded and a
+zero local outbox backlog for that table. A direct read-only Supabase query
+returned 13 rows for each of 1h/4h/24h, all with summed
+`production_eligible=0` and `action_authority=0`, latest creation time
+2026-08-27T20:02:39.098816+00:00. Next product work is to compare the new
+challenger against the unchanged incumbent on naturally settled forward
+batches, horizon by horizon, and to build separately validated point-in-time
+feature challengers for money-flow/agent evidence. Do not promote from the
+reconstructed diagnostic or from one live bundle.
 
 Aktif devam dosyası: [SESSION_HANDOFF_2026-08-24.md](SESSION_HANDOFF_2026-08-24.md)
 

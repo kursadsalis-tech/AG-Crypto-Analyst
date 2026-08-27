@@ -13,6 +13,9 @@
   `action_authority=0`; PAPER allocation, kanıt eşikleri ve gerçek emir yetkisi
   değişmedi.
 - Yerel tam suite 117/117 geçti.
+- Checkpoint `de7ba57` rollback korumasıyla `agca-runtime` üzerine dağıtıldı.
+  İlk doğal cycle 39/39 forecast ve 39 settlement ile `SUCCESS` tamamlandı;
+  39 challenger satırının tamamı Supabase aynasında doğrudan sorgulandı.
 
 ## 2026-08-27 live spot money-flow evidence
 
