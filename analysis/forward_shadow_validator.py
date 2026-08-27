@@ -424,13 +424,21 @@ def main():
 
         settled = settle_due(con)
         created, skipped = record_new_predictions(con, started_at)
-        print(f"\nBu çalıştırma: yeni tahmin={created} | sonuçlanan={settled} | spot eşleşmeyen={skipped}")
+        print(
+            f"\nBu çalıştırma: yeni tahmin={created} | sonuçlanan={settled} | "
+            f"desteklenmeyen varlık karantinası={skipped}"
+        )
         summary(con)
         return {
-            "status": "SUCCESS" if skipped == 0 else "PARTIAL",
+            # A news tag without an active Binance USDT spot market is an
+            # expected fail-closed quarantine, not a failed runtime step. It
+            # must remain visible in telemetry without degrading the complete
+            # product cycle on every retry.
+            "status": "SUCCESS",
             "created": created,
             "settled": settled,
             "skipped": skipped,
+            "unsupported_asset_quarantined": skipped,
         }
     finally:
         con.close()

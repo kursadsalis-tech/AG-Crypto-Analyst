@@ -1,5 +1,16 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 legacy forward quarantine status
+
+- Stopped an expected fail-closed unsupported-asset quarantine in the legacy
+  news forward shadow from degrading every otherwise healthy product cycle to
+  `PARTIAL`.
+- Preserved the skip and exposed it as
+  `unsupported_asset_quarantined`; no symbol mapping, evidence threshold,
+  model rule, or execution permission was relaxed.
+- Full local suite passes 108/108; the deployed target test passes and the
+  first natural cloud product cycle completed `SUCCESS`.
+
 ## 2026-08-27 runtime freshness and disabled-Data-API recovery
 
 - Fixed historical coverage readiness to require the exact final closed hourly

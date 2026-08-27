@@ -234,3 +234,41 @@ Exact next-session opening prompt:
 > birikimini doğrula; net P&L/equity/return, trader diversity, forward coverage,
 > worker/timer ve Supabase kritik kanıt tazeliğini raporla. Kanıt eşiklerini,
 > strateji politikasını veya gerçek emir yetkisini değiştirme.
+
+# 2026-08-27 — legacy product PARTIAL closed
+
+The final persistent `product_cycle_status=PARTIAL` was traced to one expected
+fail-closed unsupported Binance Spot asset tag in the quarantined legacy news
+forward shadow. It was not a collector, forecast, learning, PAPER, or execution
+failure. The unsupported asset is still skipped; the result now reports the
+explicit `unsupported_asset_quarantined` count without classifying the entire
+runtime step as failed.
+
+Full local suite passes 108/108 and the cloud target test passes 1/1. The change
+was deployed with rollback copy
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-legacy-status-rollback-20260827`.
+The first natural worker product cycle at `2026-08-27T07:29:55Z` completed
+`SUCCESS` while retaining `desteklenmeyen varlık karantinası=1`; the following
+hourly/PAPER job also completed `SUCCESS`. Worker remains active, risk coverage
+is 13/13, forecast count is 39 for the current hour, and PAPER authority remains
+`may_send_real_orders=0`.
+
+Fresh post-change attestation `2026-08-27T07:31:11Z` is identical in SQLite and
+the Supabase audit mirror: worker `HEALTHY`, product/hourly/PAPER all `SUCCESS`,
+SQLite `ok`, `PAPER_ONLY`, real orders disabled, canonical SHA-256
+`5fc9579a9577679f6ddf926851a0612ee765f2f1276525658f4290d43f538b1b`.
+
+No evidence threshold, symbol substitution, strategy policy, allocation gate,
+or real-order authority changed. Continue natural PAPER trade and forward
+external-trader closure evidence accumulation.
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış. Önce kök AGENTS.md ile
+> docs/LAST_SESSION_HANDOFF.md dosyasını oku ve Git durumunu kontrol et. Başarılı
+> PAPER_ONLY runtime üzerinde doğal PAPER işlem ve forward dış-trader kapanış
+> birikimini doğrula; net P&L/equity/return, trader diversity, forward coverage,
+> worker/timer ve Supabase kritik kanıt tazeliğini raporla. Kanıt eşiklerini,
+> strateji politikasını veya gerçek emir yetkisini değiştirme.
