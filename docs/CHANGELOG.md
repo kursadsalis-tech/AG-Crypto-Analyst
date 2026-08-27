@@ -1,5 +1,18 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 live spot money-flow evidence
+
+- Persist Binance closed-candle taker-buy quote volume in `market_klines` and
+  validate it fail-closed against total quote volume.
+- Added 1h/4h/24h aggressor-flow analysis: taker buy/sell USDT, net flow, buy
+  ratio, price return and price-direction confirmation.
+- Committee report v1.5 presents the 4h flow table for all 13 symbols and labels
+  it `OBSERVATION_ONLY`; it is not exchange deposit flow or execution authority.
+- Backfilled 26 hours from the official Binance Spot endpoint for all 13 symbols.
+  Open candles are explicitly excluded from analysis.
+- Full local suite: 114/114; cloud target tests: 3/3.
+
+
 ## 2026-08-27 on-chain and whale report coverage diagnosis
 
 - Daily committee report v1.4 now distinguishes actual source failure/staleness

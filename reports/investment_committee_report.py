@@ -15,11 +15,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from risk_manager import signal_risk_gate
+from analysis import money_flow
 from whale_tracker.ethereum_token_whale_collector import TOKEN_CONFIGS
 
 
 DB_NAME = "crypto_data.db"
-REPORT_VERSION = "1.4.0"
+REPORT_VERSION = "1.5.0"
 REPORT_POLICY = "INVESTMENT_COMMITTEE_REPORT_V2_FORECAST"
 DECISION_ENGINE_VERSION = "1.1.0"
 DECISION_POLICY_VERSION = "DECISION_POLICY_V1_SHADOW"
@@ -528,6 +529,26 @@ def supporting_evidence_coverage(con, decisions, now):
     }
 
 
+def money_flow_coverage(con, decisions, now):
+    rows = []
+    for decision in decisions:
+        symbol = str(decision["symbol"])
+        flow = money_flow.analyze_symbol(con, symbol, now)
+        window = flow.get("windows", {}).get(4, {})
+        rows.append({
+            "symbol": symbol,
+            "state": flow["state"],
+            "latest_at": flow.get("latest_at"),
+            "direction": window.get("direction", "BELIRLENEMEDI"),
+            "net_quote": window.get("net_quote"),
+            "buy_ratio_pct": window.get("buy_ratio_pct"),
+            "price_return_pct": window.get("price_return_pct"),
+            "price_confirms": window.get("price_confirms"),
+            "reason": flow.get("reason"),
+        })
+    return rows
+
+
 def riskiest_asset(assets):
     if not assets:
         return None
@@ -585,6 +606,7 @@ def build_report(
     latest_outcomes,
     diagnosis_counts,
     supporting_coverage,
+    flow_coverage,
 ):
     local_now = now.astimezone(ISTANBUL)
     decision_state = decision_run_status(latest_run, now)
@@ -815,6 +837,29 @@ def build_report(
         )
     lines.extend([
         "",
+        "### Gerçekleşmiş Spot Para Akışı — 4 Saat",
+        "",
+        "Bu tablo kapalı Binance Spot mumlarındaki agresif alıcı/satıcı hacmini "
+        "ölçer. Borsa yatırma/çekme akışı değildir ve tek başına işlem yetkisi vermez.",
+        "",
+        "| Coin | Durum | Akış yönü | Net akış | Alım oranı | Fiyat 4s | Teyit |",
+        "|---|---|---|---:|---:|---:|---|",
+    ])
+    for row in flow_coverage:
+        if row["net_quote"] is None:
+            lines.append(
+                f"| {row['symbol']} | {row['state']} | BELIRLENEMEDI | — | — | — | "
+                f"{row['reason'] or 'HAYIR'} |"
+            )
+            continue
+        lines.append(
+            f"| {row['symbol']} | {row['state']} | {row['direction']} | "
+            f"{row['net_quote']:+,.0f} USDT | %{row['buy_ratio_pct']:.1f} | "
+            f"{row['price_return_pct']:+.2f}% | "
+            f"{'EVET' if row['price_confirms'] else 'HAYIR'} |"
+        )
+    lines.extend([
+        "",
         "## Komite Sonucu",
         "",
     ])
@@ -850,6 +895,7 @@ def build_report(
         ),
         "forecast_diagnoses": diagnosis_counts,
         "supporting_evidence_coverage": supporting_coverage,
+        "money_flow_coverage": flow_coverage,
     }
     return "\n".join(lines) + "\n", summary
 
@@ -922,6 +968,7 @@ def generate(now=None, persist=True, write_file=True):
         forecast_scores = unified_forecast_performance(con)
         diagnosis_counts = forecast_diagnosis_counts(con)
         supporting_coverage = supporting_evidence_coverage(con, decisions, now)
+        flow_coverage = money_flow_coverage(con, decisions, now)
         content, summary = build_report(
             now,
             latest_run,
@@ -937,6 +984,7 @@ def generate(now=None, persist=True, write_file=True):
             latest_outcomes,
             diagnosis_counts,
             supporting_coverage,
+            flow_coverage,
         )
         if persist:
             save_report(con, now, content, summary, policy)

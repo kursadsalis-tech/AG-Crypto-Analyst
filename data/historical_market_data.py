@@ -36,6 +36,7 @@ def create_market_klines_table():
             close REAL NOT NULL,
             volume REAL NOT NULL,
             quote_volume REAL,
+            taker_buy_quote_volume REAL,
             UNIQUE(symbol, interval, open_time)
         )
     """)
@@ -46,6 +47,10 @@ def create_market_klines_table():
     if "quote_volume" not in columns:
         cursor.execute(
             "ALTER TABLE market_klines ADD COLUMN quote_volume REAL"
+        )
+    if "taker_buy_quote_volume" not in columns:
+        cursor.execute(
+            "ALTER TABLE market_klines ADD COLUMN taker_buy_quote_volume REAL"
         )
     connection.commit()
     connection.close()
@@ -150,8 +155,9 @@ def save_klines(symbol, klines):
         INSERT INTO market_klines (
             symbol, interval, open_time, close_time,
             open, high, low, close, volume, quote_volume
+            , taker_buy_quote_volume
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
             close_time=excluded.close_time,
             open=excluded.open,
@@ -159,7 +165,8 @@ def save_klines(symbol, klines):
             low=excluded.low,
             close=excluded.close,
             volume=excluded.volume,
-            quote_volume=excluded.quote_volume
+            quote_volume=excluded.quote_volume,
+            taker_buy_quote_volume=excluded.taker_buy_quote_volume
     """, [
         (
             symbol,
@@ -167,7 +174,7 @@ def save_klines(symbol, klines):
             datetime.fromtimestamp(row[0] / 1000, tz=timezone.utc).isoformat(),
             datetime.fromtimestamp(row[6] / 1000, tz=timezone.utc).isoformat(),
             float(row[1]), float(row[2]), float(row[3]), float(row[4]),
-            float(row[5]), float(row[7]),
+            float(row[5]), float(row[7]), float(row[10]),
         )
         for row in klines
     ])

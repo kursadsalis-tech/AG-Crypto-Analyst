@@ -42,6 +42,34 @@ The user's intended learning contract is now explicit: learned strategies must b
 # NEXT SESSION — CLEAN CHECKPOINT
 
 Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+
+# 2026-08-27 — live spot money-flow observation enabled
+
+The first fast money-flow layer is deployed. Binance Spot klines already expose
+taker-buy quote volume, but AGCA previously discarded it. `market_klines` now
+persists that field and `analysis/money_flow.py` computes closed-candle 1h/4h/24h
+aggressor buy quote, sell quote, net USDT flow, buy ratio, price return and
+price-direction confirmation. Incomplete, invalid, future-close or stale data
+fails closed.
+
+Committee report v1.5 shows the 4h flow table for all 13 tracked symbols. A
+controlled 26-hour official Binance Spot backfill populated every symbol. The
+first live report showed price-confirmed sell pressure in BTC/ETH/ETHFI and
+price-confirmed buy pressure in ARKM/WLD/TIA/LQTY; conflicting cases such as
+FIDA/BIO/IO were explicitly unconfirmed. These are point-in-time observations,
+not claims of predictive edge.
+
+This layer measures executed spot aggressor flow, not on-chain exchange deposits
+or withdrawals. Verified on-chain exchange direction still requires trusted
+address ownership evidence. The new flow evidence remains `OBSERVATION_ONLY` and
+cannot change strategy weights, promote a model or send orders until its
+lookahead-safe forward contribution is measured.
+
+Deployment rollback:
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-money-flow-rollback-20260827`.
+Full local suite passed 114/114 and cloud target tests passed 3/3. No existing
+evidence threshold, strategy policy, allocation gate or real-order authority
+changed.
 Do not develop in the ChatGPT project mirror. Read the root `AGENTS.md` and
 `docs/REPOSITORY_HYGIENE.md` before changing files.
 
