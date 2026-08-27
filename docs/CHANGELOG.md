@@ -1,5 +1,21 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 on-chain and whale report coverage diagnosis
+
+- Daily committee report v1.4 now distinguishes actual source failure/staleness
+  (`VERI_EKSIK`) from unsupported coin coverage, supported assets with no event,
+  and observed whale events whose exchange direction is unverified.
+- Added per-symbol on-chain network mapping, whale coverage, 24-hour event count,
+  and verified-direction fields; BTC unknown-direction outputs are no longer
+  described as missing data.
+- Added direct Celestia network context for TIA while keeping its current zero-TVL
+  observation fail-closed as `NO_DATA`.
+- Increased the verified Ethereum ERC-20 scanner's bounded catch-up capacity from
+  40 to 2,000 blocks per run with 500-block log chunks. The cloud backlog was
+  drained to the current safe head without skipping blocks; no threshold changed.
+- Full local suite: 111/111. Cloud target tests: 3/3. Live report v1.4 and its
+  Supabase audit-mirror row match exactly; critical mirror outbox is empty.
+
 ## 2026-08-27 legacy forward quarantine status
 
 - Stopped an expected fail-closed unsupported-asset quarantine in the legacy

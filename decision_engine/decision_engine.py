@@ -35,6 +35,7 @@ COIN_BY_SYMBOL = {
 NETWORK_CONTEXT = {
     "BTCUSDT": "Bitcoin",
     "ETHUSDT": "Ethereum",
+    "TIAUSDT": "Celestia",
 }
 
 

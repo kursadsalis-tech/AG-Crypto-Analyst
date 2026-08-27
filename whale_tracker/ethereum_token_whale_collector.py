@@ -32,8 +32,12 @@ USER_AGENT = "AG-Crypto-Analyst/0.9.0"
 CHAIN = "Ethereum"
 SCAN_KEY = "EthereumERC20"
 USD_THRESHOLD = 10_000_000.0
-MAX_BLOCKS_PER_RUN = 40
-LOG_BLOCK_CHUNK = 20
+# A five-minute cycle normally advances by roughly 25 Ethereum blocks. The
+# original 40-block ceiling could never promptly heal a large deployment gap,
+# leaving token evidence days behind while the cycle still reported SUCCESS.
+# Bounded catch-up keeps RPC work finite and uses modest log ranges.
+MAX_BLOCKS_PER_RUN = 2_000
+LOG_BLOCK_CHUNK = 500
 TOKEN_OUTPUT_INDEX_BASE = 1_000_000
 TRANSFER_TOPIC = (
     "0xddf252ad1be2c89b69c2b068fc378daa"

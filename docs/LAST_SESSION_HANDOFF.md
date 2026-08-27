@@ -235,6 +235,39 @@ Exact next-session opening prompt:
 > worker/timer ve Supabase kritik kanıt tazeliğini raporla. Kanıt eşiklerini,
 > strateji politikasını veya gerçek emir yetkisini değiştirme.
 
+# 2026-08-27 — on-chain/whale committee-report gaps resolved
+
+The daily committee report's supporting-evidence labels were corrected at the
+data-contract boundary. Live diagnosis showed that on-chain and whale collectors
+were healthy, but the report language collapsed four different cases into
+"missing data": unsupported token-level coverage, covered assets with no event,
+observed events with unverified direction, and genuine source failure/staleness.
+
+Report v1.4 now emits a per-symbol coverage table and reserves `VERI_EKSIK` only
+for a failed, stale or unverifiable source cycle. BTC's large UTXO outputs are
+shown as observed with `UNKNOWN` direction, not missing; supported ETH/ERC-20
+assets with no qualifying event are `KAPSAMDA_OLAY_YOK`; unsupported assets are
+`KAPSAM_DISI`. TIA now receives direct Celestia network context, whose current
+zero-TVL observation remains correctly fail-closed as `NO_DATA`.
+
+The separate operational defect was an ERC-20 scanner roughly 20,000 blocks
+behind the Ethereum safe head because its 40-block ceiling healed deployment
+gaps too slowly. Its bounded budget is now 2,000 blocks per run in 500-block log
+chunks. A controlled cloud catch-up scanned every intervening range and reached
+the safe head; the seven verified contracts remain ARKM, BIO, ETHFI, ILV, LQTY,
+SLP and UMA. No >=10M USD event was found in that catch-up, which is reported as
+covered/no-event rather than missing.
+
+Deployment rollback:
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-report-evidence-rollback-20260827`.
+Full local suite passed 111/111; cloud target tests passed 3/3. The worker and
+critical timers are active. Live report v1.4 was generated from a fresh 13-coin
+decision run, mirrored exactly to Supabase, and the critical outbox was zero.
+No evidence threshold, strategy policy, allocation gate or real-order authority
+changed.
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+
 # 2026-08-27 — legacy product PARTIAL closed
 
 The final persistent `product_cycle_status=PARTIAL` was traced to one expected

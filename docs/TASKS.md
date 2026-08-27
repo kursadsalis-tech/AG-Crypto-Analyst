@@ -276,6 +276,7 @@
 - [ ] Bitcoin on-chain metriklerinde 24 saatlik doğal geçmişin oluşmasını izle
 - [ ] WARMING_UP ve NO_DATA on-chain metriklerini alarm/karar girdisi yapma
 - [x] Token bazlı on-chain kapsamın ilk bölümünü Whale Tracker ile doğrulanmış Ethereum kontratlarına genişlet
+- [x] Günlük komite raporunda gerçek kaynak hatasını kapsam dışı coin, kapsamda olay yok ve yönü doğrulanmamış whale olayından ayır; ERC-20 tarama backlog'unu zincir ucuna yetiştir
 - [ ] Whale Tracker kanıtlarını biriktir; UNVERIFIED hareketleri alarm/karar girdisi yapma
 - [ ] Diğer zincirlerdeki takip-listesi tokenlarını yalnızca güvenilir ve doğrudan doğrulanabilir kaynak bulunduğunda genişlet
 - [ ] PROVISIONAL makro rejim snapshot'larını tarihsel/forward doğrulama için biriktir

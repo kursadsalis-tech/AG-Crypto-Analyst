@@ -10,15 +10,16 @@ from __future__ import annotations
 import json
 import sqlite3
 from database.runtime_store import connect as runtime_connect
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from risk_manager import signal_risk_gate
+from whale_tracker.ethereum_token_whale_collector import TOKEN_CONFIGS
 
 
 DB_NAME = "crypto_data.db"
-REPORT_VERSION = "1.3.0"
+REPORT_VERSION = "1.4.0"
 REPORT_POLICY = "INVESTMENT_COMMITTEE_REPORT_V2_FORECAST"
 DECISION_ENGINE_VERSION = "1.1.0"
 DECISION_POLICY_VERSION = "DECISION_POLICY_V1_SHADOW"
@@ -419,6 +420,114 @@ def evidence_states(decisions):
     }
 
 
+def _latest_source_audit(con, source):
+    if not table_exists(con, "data_validation_audit"):
+        return None
+    con.row_factory = sqlite3.Row
+    row = con.execute("""
+        SELECT status,checked_at,detail_json
+        FROM data_validation_audit
+        WHERE gate_name='SOURCE_CYCLE' AND source=?
+        ORDER BY id DESC LIMIT 1
+    """, (source,)).fetchone()
+    return dict(row) if row else None
+
+
+def _audit_health(audit, now, max_age_minutes):
+    if not audit:
+        return "VERI_EKSIK", None
+    checked = signal_risk_gate.parse_time(audit.get("checked_at"))
+    if checked is None:
+        return "VERI_EKSIK", None
+    age = (now - checked).total_seconds() / 60.0
+    if age < -1.0 or age > max_age_minutes or audit.get("status") != "PASS":
+        return "VERI_EKSIK", age
+    return "SAGLIKLI", age
+
+
+def supporting_evidence_coverage(con, decisions, now):
+    """Separate source failure, unsupported coverage, no event and unknown direction."""
+    onchain_audit = _latest_source_audit(con, "onchain")
+    whale_audit = _latest_source_audit(con, "whale_tracker")
+    onchain_health, onchain_age = _audit_health(onchain_audit, now, 30.0)
+    whale_health, whale_age = _audit_health(whale_audit, now, 20.0)
+
+    cutoff = iso(now - timedelta(hours=24))
+    whale_rows = []
+    if table_exists(con, "whale_events"):
+        con.row_factory = sqlite3.Row
+        whale_rows = [dict(row) for row in con.execute("""
+            SELECT asset,direction,exchange_flow,COUNT(*) AS event_count,
+                   COALESCE(SUM(usd_estimate),0) AS gross_usd_estimate
+            FROM whale_events WHERE block_time>=?
+            GROUP BY asset,direction,exchange_flow
+        """, (cutoff,)).fetchall()]
+    by_asset = {}
+    for row in whale_rows:
+        by_asset.setdefault(str(row["asset"]), []).append(row)
+
+    whale_supported = {"BTC", "ETH"} | {
+        str(config["symbol"]) for config in TOKEN_CONFIGS.values()
+    }
+    network_by_symbol = {
+        "BTCUSDT": "Bitcoin", "ETHUSDT": "Ethereum", "TIAUSDT": "Celestia",
+    }
+    rows = []
+    for decision in decisions:
+        symbol = str(decision["symbol"])
+        coin = str(decision["coin"])
+        onchain = (decision.get("evidence") or {}).get("onchain") or {}
+        chain = network_by_symbol.get(symbol)
+        if onchain_health != "SAGLIKLI":
+            onchain_state = "VERI_EKSIK"
+        elif chain is None:
+            onchain_state = "KAPSAM_DISI_TOKEN_SEVIYESI"
+        else:
+            onchain_state = str(onchain.get("state") or "KAPSAMDA_KAYIT_YOK")
+
+        events = by_asset.get(coin, [])
+        if whale_health != "SAGLIKLI":
+            whale_state = "VERI_EKSIK"
+            whale_direction = "BELIRLENEMEDI"
+            whale_event_count = 0
+        elif coin not in whale_supported:
+            whale_state = "KAPSAM_DISI"
+            whale_direction = "UYGULANAMAZ"
+            whale_event_count = 0
+        elif not events:
+            whale_state = "KAPSAMDA_OLAY_YOK"
+            whale_direction = "YOK"
+            whale_event_count = 0
+        else:
+            whale_event_count = sum(int(row["event_count"]) for row in events)
+            verified = {
+                row["direction"] for row in events
+                if row["exchange_flow"] == "VERIFIED"
+                and row["direction"] in {"EXCHANGE_INFLOW", "EXCHANGE_OUTFLOW"}
+            }
+            if verified:
+                whale_state = "DOGRULANMIS_BORSA_AKISI"
+                whale_direction = ",".join(sorted(verified))
+            else:
+                whale_state = "OLAY_VAR_YON_DOGRULANMADI"
+                whale_direction = "UNKNOWN"
+        rows.append({
+            "symbol": symbol,
+            "onchain_state": onchain_state,
+            "onchain_chain": chain,
+            "whale_state": whale_state,
+            "whale_direction": whale_direction,
+            "whale_event_count": whale_event_count,
+        })
+    return {
+        "onchain_health": onchain_health,
+        "onchain_age_minutes": onchain_age,
+        "whale_health": whale_health,
+        "whale_age_minutes": whale_age,
+        "rows": rows,
+    }
+
+
 def riskiest_asset(assets):
     if not assets:
         return None
@@ -475,6 +584,7 @@ def build_report(
     forecast_scores,
     latest_outcomes,
     diagnosis_counts,
+    supporting_coverage,
 ):
     local_now = now.astimezone(ISTANBUL)
     decision_state = decision_run_status(latest_run, now)
@@ -684,6 +794,27 @@ def build_report(
         f"| Whale | {maturity['whale']} | Doğrulanmış yön yoksa gözlem |",
         f"| Risk | {maturity['risk']} | Nihai veto ve tavan |",
         "",
+        "### On-chain ve Balina Kapsam Tanısı",
+        "",
+        f"- On-chain collector: **{supporting_coverage['onchain_health']}** | "
+        f"yaş={fmt_age(supporting_coverage['onchain_age_minutes'])}",
+        f"- Whale collector: **{supporting_coverage['whale_health']}** | "
+        f"yaş={fmt_age(supporting_coverage['whale_age_minutes'])}",
+        "- `VERI_EKSIK` yalnız kaynak başarısız, bayat veya doğrulanamazsa kullanılır. "
+        "Kapsam dışı coin, kapsamda olay yok ve yönü doğrulanmamış olay ayrı durumlardır.",
+        "",
+        "| Coin | On-chain kapsamı | Whale kapsamı | 24s olay | Doğrulanmış yön |",
+        "|---|---|---|---:|---|",
+    ])
+    for row in supporting_coverage["rows"]:
+        chain = f" ({row['onchain_chain']})" if row["onchain_chain"] else ""
+        lines.append(
+            f"| {row['symbol']} | {row['onchain_state']}{chain} | "
+            f"{row['whale_state']} | {row['whale_event_count']} | "
+            f"{row['whale_direction']} |"
+        )
+    lines.extend([
+        "",
         "## Komite Sonucu",
         "",
     ])
@@ -718,6 +849,7 @@ def build_report(
             row["settled"] for row in forecast_scores.values()
         ),
         "forecast_diagnoses": diagnosis_counts,
+        "supporting_evidence_coverage": supporting_coverage,
     }
     return "\n".join(lines) + "\n", summary
 
@@ -789,6 +921,7 @@ def generate(now=None, persist=True, write_file=True):
         latest_outcomes = latest_settled_forecasts(con)
         forecast_scores = unified_forecast_performance(con)
         diagnosis_counts = forecast_diagnosis_counts(con)
+        supporting_coverage = supporting_evidence_coverage(con, decisions, now)
         content, summary = build_report(
             now,
             latest_run,
@@ -803,6 +936,7 @@ def generate(now=None, persist=True, write_file=True):
             forecast_scores,
             latest_outcomes,
             diagnosis_counts,
+            supporting_coverage,
         )
         if persist:
             save_report(con, now, content, summary, policy)
