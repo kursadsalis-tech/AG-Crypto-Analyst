@@ -1,5 +1,34 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-27 — Spot Flow Feature Challenger V1 implemented
+
+The next product step was implemented: collected money-flow evidence is now a
+real model input in a separate point-in-time challenger, not merely report
+decoration. Official Binance Spot closed candles were re-fetched for the fixed
+13-symbol cohort to populate 405 days of taker-buy quote volume without changing
+labels or prices. Minimum per-symbol valid flow coverage is 99.19%.
+
+The frozen feature set adds own-symbol 1h/4h/24h taker imbalance, 4h flow
+acceleration, 24h price confirmation, and BTC 1h/4h/24h taker imbalance to the
+audited price/volume/regime features. Tests prove that a future candle cannot
+change the feature vector. The final EXAM segment was not opened.
+
+Development evidence was negative and is intentionally preserved: 1h Brier
+skill -1.18%, 4h -0.41%, and 24h +0.24%; normalized MAE skill was 0.00%, -0.05%
+and -0.53% respectively. No horizon produced a >=70% probability action, so all
+three were `DEVELOPMENT_REJECT`. Existing gates were not weakened. The model is
+frozen only to collect honest forward ablation evidence and to inform a later
+regime-selective challenger; it cannot enter PAPER allocation.
+
+`forecast_feature_challenger_predictions` records probabilities, class,
+shadow-only action, direction hit, Brier, action hit and net-after-cost utility.
+Every row has `production_eligible=0` and `action_authority=0`. Full local suite:
+119/119. Candidate artifact:
+`reports/forecast_feature_challenger_candidate.json`; model hash:
+`523bb8e1669f48f4830b1c0ada5ccb951e8c0eb1bbdee8a3ddad2b0ae7d3f4fd`.
+Cloud deployment and the first natural 39-row feature bundle remain to be
+completed with rollback protection.
+
 # 2026-08-27 — Unified Forecast direction-collapse correction started
 
 The repeated 0/11 and 1/11 direction batches were traced to a product/model

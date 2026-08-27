@@ -154,9 +154,12 @@ def _quantile_edges(values, bins=HISTOGRAM_BINS):
 def fit_histogram_edges(rows):
     if not rows:
         raise ValueError("histogram model requires FIT rows")
+    feature_count = len(rows[0]["features"])
+    if feature_count <= 0 or any(len(row["features"]) != feature_count for row in rows):
+        raise ValueError("inconsistent histogram feature width")
     return [
         _quantile_edges(row[feature_index] for row in (item["features"] for item in rows))
-        for feature_index in range(len(FEATURE_NAMES))
+        for feature_index in range(feature_count)
     ]
 
 

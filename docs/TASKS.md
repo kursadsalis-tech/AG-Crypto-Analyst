@@ -186,7 +186,9 @@
 - [x] Korelasyonlu 13 coini bağımsız örnek saymayan, lookahead-safe sınıf-drift challenger'ını ekle
 - [x] Challenger sonuçlarını incumbent'tan ayrı direction-hit ve Brier ile kalıcı kaydet
 - [ ] Yeni forward paketlerde ufuk bazında incumbent üstünlüğü kanıtlanmadan hiçbir promotion/politika değişikliği yapma
-- [ ] Money-flow ve diğer ajan özelliklerini yalnız point-in-time tarihçesi yeterli olduğunda yeni feature challenger'a al
+- [x] Money-flow'u 400 günlük point-in-time Spot tarihçesiyle Feature Challenger V1'e al
+- [x] Feature Challenger'ı direction/Brier/net-after-cost utility ile ayrı forward tabloda izle
+- [ ] Geliştirmede reddedilen genel flow modelini promote etme; forward ablation sonrası rejim-seçici V2 tasarla
 
 ### Dış trader trade-learning araştırması
 

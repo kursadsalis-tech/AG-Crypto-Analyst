@@ -1,5 +1,20 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-27 point-in-time Spot Flow Feature Challenger V1
+
+- Sabit 13 coin için resmî Binance Spot kaynağından 405 günlük kapalı saatlik
+  mum yeniden okundu ve eski satırlardaki taker-buy quote volume alanı
+  tamamlandı; en düşük coin kapsaması %99,19 oldu.
+- Tahmin anındaki 1h/4h/24h spot taker imbalance, 4h flow acceleration,
+  24h fiyat teyidi ve eşzamanlı BTC flow özellikleri eklendi.
+- Son EXAM segmenti açılmadan sabit histogram challenger geliştirildi. Üç ufuk
+  da geliştirme kapısında reddedildi; zayıf sonucu gizlemek veya eşiği düşürmek
+  yerine model yalnız forward ablation tanısı için donduruldu.
+- Forward tablo direction hit, Brier, shadow action, action hit ve gerçek
+  maliyet sonrası utility'yi saklar. `production_eligible=0` ve
+  `action_authority=0` değişmezdir.
+- Tam yerel suite 119/119 geçti.
+
 ## 2026-08-27 lookahead-safe direction-drift challenger
 
 - Birleşik Forecast Core'un canlı sınıf dağılımındaki DOWN çöküşü doğrulandı;

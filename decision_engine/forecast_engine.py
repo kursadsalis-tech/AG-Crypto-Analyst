@@ -140,6 +140,8 @@ def ensure_tables(con):
     con.commit()
     from analysis import forecast_drift_challenger
     forecast_drift_challenger.ensure_table(con)
+    from analysis import forecast_feature_challenger
+    forecast_feature_challenger.ensure_table(con)
     con.commit()
 
 
@@ -407,6 +409,12 @@ def create_forecasts(con, model_payload, series, decision_time, now):
         symbol: latest_agent_context(con, symbol, now)
         for symbol in core.SYMBOLS
     }
+    feature_challenger_model = None
+    try:
+        from analysis import forecast_feature_challenger_lab
+        feature_challenger_model = forecast_feature_challenger_lab.load_model()
+    except (FileNotFoundError, RuntimeError, ValueError, KeyError):
+        feature_challenger_model = None
     for row in rows:
         try:
             prediction = core.forecast_row(model_payload["models"][row["horizon"]], row)
@@ -454,6 +462,12 @@ def create_forecasts(con, model_payload, series, decision_time, now):
                      "NEUTRAL": prediction["p_neutral"]},
                     model_payload["models"][row["horizon"]]["base_probabilities"],
                 )
+                if feature_challenger_model is not None:
+                    from analysis import forecast_feature_challenger
+                    forecast_feature_challenger.record(
+                        con, stored_row[0], iso(now), row, series,
+                        feature_challenger_model,
+                    )
             forecasts.append({**prediction, "reasons": reasons})
         except Exception as exc:
             no_forecast.append({"symbol": row["symbol"], "horizon": row["horizon"], "reason": str(exc)})
@@ -650,6 +664,10 @@ def settle_due(con, now):
               iso(now), row[0]))
         from analysis import forecast_drift_challenger
         forecast_drift_challenger.settle(con, row[0], actual_class, iso(now))
+        from analysis import forecast_feature_challenger
+        forecast_feature_challenger.settle(
+            con, row[0], actual_class, actual_return, iso(now)
+        )
         settled += 1
     con.commit()
     return settled
@@ -670,6 +688,12 @@ def performance(con, artifact):
             FROM forecast_drift_challenger_predictions
             WHERE status='SETTLED' AND horizon_hours=?
         """, (horizon,)).fetchall()
+        feature_rows = con.execute("""
+            SELECT direction_hit,brier_score,action_hit,action_net_utility_pct
+            FROM forecast_feature_challenger_predictions
+            WHERE status='SETTLED' AND horizon_hours=?
+        """, (horizon,)).fetchall()
+        feature_actions = [row for row in feature_rows if row[2] is not None]
         output[horizon] = {
             "settled": len(rows),
             "mae_pct": statistics.fmean(row[0] for row in rows) if rows else 0.0,
@@ -688,6 +712,25 @@ def performance(con, artifact):
                 "brier": (
                     statistics.fmean(row[1] for row in challenger_rows)
                     if challenger_rows else 0.0
+                ),
+                "state": "FORWARD_SHADOW_ONLY",
+                "production_eligible": False,
+            },
+            "feature_challenger": {
+                "settled": len(feature_rows),
+                "direction_hit_pct": (
+                    100 * statistics.fmean(row[0] for row in feature_rows)
+                    if feature_rows else 0.0
+                ),
+                "brier": statistics.fmean(row[1] for row in feature_rows) if feature_rows else 0.0,
+                "actions": len(feature_actions),
+                "action_hit_pct": (
+                    100 * statistics.fmean(row[2] for row in feature_actions)
+                    if feature_actions else 0.0
+                ),
+                "utility_pct": (
+                    statistics.fmean(row[3] for row in feature_actions)
+                    if feature_actions else 0.0
                 ),
                 "state": "FORWARD_SHADOW_ONLY",
                 "production_eligible": False,
@@ -721,6 +764,11 @@ def render(result):
         print(f"    drift_challenger | settled={challenger['settled']} | "
               f"class_hit={challenger['direction_hit_pct']:.1f}% | "
               f"Brier={challenger['brier']:.3f} | FORWARD_SHADOW_ONLY")
+        feature = score["feature_challenger"]
+        print(f"    feature_challenger | settled={feature['settled']} | "
+              f"class_hit={feature['direction_hit_pct']:.1f}% | "
+              f"Brier={feature['brier']:.3f} | actions={feature['actions']} | "
+              f"utility={feature['utility_pct']:+.3f}% | FORWARD_SHADOW_ONLY")
     print("Not: class_hit, UP/DOWN/NEUTRAL üç sınıfının isabetidir; yalnız yönlü işlem başarısı değildir.")
     print("BEN_OLSAM gölge görüştür; ürün alarmı veya otomatik işlem değildir. SAT=spot azalt/çık/kaçın, short değildir.")
 

@@ -238,10 +238,14 @@ def load_series(con, start, end):
     from data.truth_engine import validate_stored_candles
 
     output = {}
+    columns = {row[1] for row in con.execute("PRAGMA table_info(market_klines)")}
+    taker_expression = (
+        "taker_buy_quote_volume" if "taker_buy_quote_volume" in columns else "NULL"
+    )
     for symbol in SYMBOLS:
-        rows = con.execute("""
+        rows = con.execute(f"""
             SELECT open_time, close_time, open, high, low, close,
-                   volume, quote_volume
+                   volume, quote_volume, {taker_expression}
             FROM market_klines
             WHERE symbol=? AND interval='1h'
               AND close_time>=? AND close_time<=?
@@ -251,6 +255,7 @@ def load_series(con, start, end):
         for row in rows:
             values = [float(value) for value in row[2:7]]
             quote_volume = None if row[7] is None else float(row[7])
+            taker_buy_quote_volume = None if row[8] is None else float(row[8])
             candles.append({
                 "open_time": parse_time(row[0]),
                 "close_time": parse_time(row[1]),
@@ -260,6 +265,7 @@ def load_series(con, start, end):
                 "close": values[3],
                 "volume": values[4],
                 "quote_volume": quote_volume,
+                "taker_buy_quote_volume": taker_buy_quote_volume,
             })
         validate_stored_candles(
             candles,
