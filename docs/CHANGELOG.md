@@ -869,6 +869,15 @@ Tamamlandı.
 
 Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren geliştirmeler yalnız ölçülmüş ürün ihtiyacıyla açılacaktır; yakın öncelik operasyonel doğrulama, veri birikimi ve güvenilirliktir.
 
+## 2026-08-28 — Fixed rolling 1h direction ensemble
+
+- Added a 50/50 incumbent + rolling HistGradientBoosting probability ensemble
+  for 1h direction only after six-block walk-forward improvement.
+- Kept 4h/24h, price targets, action/cost thresholds, risk veto, strategy policy,
+  evidence gates and real-order authority unchanged.
+- Made the sklearn model cache-stable with once-serialized, SHA-256-verified
+  model bytes; full suite passes 122/122.
+
 
 ---
 

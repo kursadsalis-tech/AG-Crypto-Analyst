@@ -23,7 +23,7 @@ from data.truth_engine import DataValidationError, record_audit
 
 DB_NAME = "crypto_data.db"
 ENGINE_VERSION = "UNIFIED_FORECAST_ENGINE_V1"
-MODEL_VERSION = "POOLED_RIDGE_DISTRIBUTION_RUNTIME_V1_FIXED"
+MODEL_VERSION = "POOLED_RIDGE_RUNTIME_V2_ROLLING_1H_DIRECTION"
 MODEL_PATH = Path("reports/unified_forecast_model.pkl")
 MODEL_TTL = timedelta(days=30)
 MAX_FORECAST_AGE = timedelta(minutes=15)
@@ -213,6 +213,8 @@ def load_cached_model(now):
             return None
         if set(map(int, payload["models"].keys())) != set(HORIZONS):
             return None
+        if "rolling_1h_direction" not in payload:
+            return None
         return payload
     except Exception:
         return None
@@ -243,6 +245,8 @@ def train_model(series, start, end, now):
         raise RuntimeError("INSUFFICIENT_CHRONOLOGICAL_TRAINING_ROWS")
     models = {horizon: core.fit_model(fit_rows, calibration_rows, horizon)
               for horizon in HORIZONS}
+    from analysis import forecast_core_v4_direction
+    rolling_1h_direction = forecast_core_v4_direction.fit(rows, end)
     payload = {
         "engine_version": ENGINE_VERSION,
         "model_version": MODEL_VERSION,
@@ -253,6 +257,7 @@ def train_model(series, start, end, now):
         "calibration_rows": len(calibration_rows),
         "source_gaps": int(built["source_gaps"]),
         "models": models,
+        "rolling_1h_direction": rolling_1h_direction,
     }
     return save_model(payload)
 
@@ -418,6 +423,11 @@ def create_forecasts(con, model_payload, series, decision_time, now):
     for row in rows:
         try:
             prediction = core.forecast_row(model_payload["models"][row["horizon"]], row)
+            if int(row["horizon"]) == 1:
+                from analysis import forecast_core_v4_direction
+                prediction = forecast_core_v4_direction.blend(
+                    model_payload["rolling_1h_direction"], row, prediction
+                )
             record, reasons = validate_contract(prediction, model_payload)
             signed_expected = float(prediction["expected_trade_return_pct"])
             action_utility = float(prediction["expected_net_return_pct"])

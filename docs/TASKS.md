@@ -4,6 +4,13 @@
 
 "Dünyanın en başarılı tahminlerini yapan, fırsatları ve riskleri erken tespit eden profesyonel bir kripto analiz ve karar destek sistemi" oluşturmak.
 
+## AKTİF TAHMİN İYİLEŞTİRME
+
+- [x] Altı ardışık walk-forward blokta 1h incumbent + rolling direction
+  ensemble'ını doğrula ve yalnız ölçülen 1h iyileştirmesini uygula
+- [ ] İlk doğal canlı 1h tahmin paketini ve ileri sonuçlandıkça incumbent'a göre
+  yön isabeti/Brier katkısını izle; 4h/24h politikasını değiştirme
+
 ---
 
 ## ANA ÜRÜN YOL HARİTASI

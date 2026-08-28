@@ -1,5 +1,26 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-28 — Measured 1h direction ensemble implemented
+
+The production-facing Unified Forecast 1h direction probabilities now blend the
+unchanged incumbent 50/50 with one fixed rolling HistGradientBoosting model.
+The challenger trains only on the preceding 120 days, uses a fixed 45-day
+half-life and the first 12 existing price/market features. Six sequential
+30-day walk-forward blocks measured incumbent accuracy 41.58% versus 42.34%
+rolling and 42.37% blended; the blend improved accuracy in 4/6 blocks and Brier
+score in 6/6 blocks (0.63281 to 0.62975). The same approach was rejected for 4h
+and 24h, so those horizons remain untouched.
+
+This changes direction probabilities only. Price targets, the 70% action
+threshold, 10 bps cost assumption, risk veto, PAPER strategy policy, evidence
+gates and real-order authority are unchanged. The sklearn artifact is stored as
+once-serialized bytes with its own SHA-256 so cache verification is stable.
+Local retraining used 37,011 causal 1h rows from 2026-04-30 through 2026-08-26;
+the saved artifact reloaded with both outer and inner hashes valid. Full local
+suite: 122/122. Deployment and the first naturally issued/settled live bundle
+remain to be verified; do not describe the historical lift as live forward
+performance.
+
 # 2026-08-27 — Trader success KPI corrected from class accuracy to economics
 
 A read-only audit found that the alarming low three-class direction scores were
