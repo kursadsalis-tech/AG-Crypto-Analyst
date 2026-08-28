@@ -869,6 +869,16 @@ Tamamlandı.
 
 Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren geliştirmeler yalnız ölçülmüş ürün ihtiyacıyla açılacaktır; yakın öncelik operasyonel doğrulama, veri birikimi ve güvenilirliktir.
 
+## 2026-08-28 — Private Supabase runtime RLS hardening
+
+- Enabled RLS on the 10 remaining `agca_runtime` tables; all 43 runtime tables
+  are now RLS-enabled.
+- Revoked schema/table/default privileges from `anon` and `authenticated`;
+  no public grant or schema usage existed before or after the migration.
+- Added `PRIVATE_RLS_V1` to mirror table provisioning so future remote tables
+  are fail-closed by construction.
+- Full suite passes 124/124.
+
 ## 2026-08-28 — Advanced technical feature synthesis
 
 - Added 24 closed-candle technical features covering trend, momentum,

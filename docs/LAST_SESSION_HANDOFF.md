@@ -1,5 +1,22 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-28 — Supabase RLS security alert resolved
+
+The “AGCA kritik altyapı güvenlik uyarısı” came from the hourly monitoring task,
+which correctly reported 10 `agca_runtime` tables with RLS disabled. A direct
+Postgres audit established that `anon` and `authenticated` had neither schema
+USAGE nor table grants, so there was no evidence of public disclosure or
+unauthorized mutation. The configuration was nevertheless incomplete hardening.
+
+Migration `database/migrations/20260828_private_runtime_rls.sql` revoked all
+Data API role access and enabled RLS on all 10 missing tables without policies;
+the private mirror owner remains the sole writer. Post-change audit: 43/43
+runtime tables have RLS enabled, zero anon/authenticated table grants, and both
+roles lack schema USAGE. Runtime table creation now carries a versioned
+`PRIVATE_RLS_V1` schema signature, enables RLS and revokes Data API roles so a
+new mirrored table cannot regress silently. Full suite: 124/124. The durable
+code deployment and post-deploy owner-write/attestation verification remain.
+
 # 2026-08-28 — Advanced technical analysis entered the 1h direction model
 
 The former RSI/MACD/EMA research-only context was not an advanced technical

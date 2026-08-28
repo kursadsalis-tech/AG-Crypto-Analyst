@@ -199,6 +199,30 @@ class RuntimeStoreTests(unittest.TestCase):
         self.assertEqual(sent_rows, [(2, 9000.0)])
         con.close()
 
+    def test_remote_table_contract_enables_rls_and_revokes_data_api_roles(self):
+        con = runtime_store.connect(":memory:")
+        columns = [
+            (0, "id", "INTEGER", 0, None, 1),
+            (1, "value", "TEXT", 0, None, 0),
+        ]
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = [("id",), ("value",)]
+        signature = runtime_store._ensure_remote_table(
+            con, cursor, "agca_runtime", "private_events", columns
+        )
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(signature)
+        self.assertIn(
+            'ALTER TABLE "agca_runtime"."private_events" ENABLE ROW LEVEL SECURITY',
+            statements,
+        )
+        self.assertIn(
+            'REVOKE ALL ON TABLE "agca_runtime"."private_events" '
+            'FROM anon, authenticated',
+            statements,
+        )
+        con.close()
+
     def test_remote_failure_keeps_outbox_row_for_retry(self):
         con = runtime_store.connect(":memory:")
         con.execute("CREATE TABLE paper_agent_portfolio (portfolio_id INTEGER PRIMARY KEY)")

@@ -13,6 +13,11 @@
 - [ ] İlk doğal canlı 1h tahmin paketini ve ileri sonuçlandıkça incumbent'a göre
   yön isabeti/Brier katkısını izle; 4h/24h politikasını değiştirme
 
+## SUPABASE GÜVENLİK
+
+- [x] `agca_runtime` 43/43 tablo RLS, sıfır anon/authenticated grant ve gelecekte
+  oluşturulan mirror tabloları için `PRIVATE_RLS_V1` sözleşmesini uygula
+
 ---
 
 ## ANA ÜRÜN YOL HARİTASI

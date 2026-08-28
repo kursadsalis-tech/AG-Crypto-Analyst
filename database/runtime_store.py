@@ -330,9 +330,18 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> M
                     )
                     cursor.execute(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'")
                     infrastructure_confirmed = {}
-                    schema_signature = hashlib.sha256(schema.encode()).hexdigest()
+                    schema_signature = hashlib.sha256(
+                        f"{schema}|private-schema-v1".encode()
+                    ).hexdigest()
                     if not _local_schema_confirmed(local, "__remote_schema__", schema_signature):
                         cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}")
+                        cursor.execute(
+                            f"REVOKE ALL ON SCHEMA {_quote(schema)} FROM anon, authenticated"
+                        )
+                        cursor.execute(
+                            f"ALTER DEFAULT PRIVILEGES IN SCHEMA {_quote(schema)} "
+                            "REVOKE ALL ON TABLES FROM anon, authenticated"
+                        )
                         infrastructure_confirmed["__remote_schema__"] = schema_signature
                     health_signature = hashlib.sha256(b"remote_mirror_health_v1").hexdigest()
                     if not _local_schema_confirmed(
@@ -503,7 +512,12 @@ def _remote_url() -> str:
 
 def _schema_signature(columns) -> str:
     encoded = json.dumps(
-        [(column[1], column[2], column[3], column[5]) for column in columns],
+        {
+            "security_contract": "PRIVATE_RLS_V1",
+            "columns": [
+                (column[1], column[2], column[3], column[5]) for column in columns
+            ],
+        },
         separators=(",", ":"),
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -547,6 +561,12 @@ def _ensure_remote_table(local, remote_cursor, schema: str, table: str, columns)
                 f"ALTER TABLE {schema_q}.{table_q} ADD COLUMN {_quote(column[1])} "
                 f"{_postgres_type(column[2])}"
             )
+    remote_cursor.execute(
+        f"ALTER TABLE {schema_q}.{table_q} ENABLE ROW LEVEL SECURITY"
+    )
+    remote_cursor.execute(
+        f"REVOKE ALL ON TABLE {schema_q}.{table_q} FROM anon, authenticated"
+    )
 
     return signature
 
