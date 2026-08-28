@@ -22,9 +22,14 @@ zero on the audited 24h slice) with the PAPER agent's actual nine trades.
 Full local suite: 121/121. The first live render caught and rejected a stale
 hard-coded cohort identifier; the report now imports the PAPER agent's canonical
 `FORWARD_COHORT` constant. Active evidence advanced to 10 closed trades and
-+111.3071 USDT net P&L. The corrected file must be redeployed, the v1.6 row must
-show this active cohort, and the updated committee snapshot must drain to
-Supabase before closeout.
++111.3071 USDT net P&L. Checkpoint `0471e8a` was deployed using rollback
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-paper-economics-rollback-f8a4a73`.
+The worker returned active in `PAPER_ONLY`. The live v1.6 report now renders:
+24h SHORT, 10 closed, 6 winners, +111.31 USDT net P&L, profit factor 3.87 and
+37.64 USDT maximum closed-trade drawdown. `committee_report_snapshots` outbox
+is zero. A direct Supabase read returned report date 2026-08-28, created at
+2026-08-28T06:10:17.885471+00:00, version 1.6.0, and confirmed both the PAPER
+economics heading and exact row. The previously partial task is complete.
 
 # 2026-08-27 — Spot Flow Feature Challenger V1 implemented
 

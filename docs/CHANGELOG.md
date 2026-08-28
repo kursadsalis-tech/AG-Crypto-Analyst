@@ -18,6 +18,10 @@
 - Canlı render kontrolü eski/hard-coded kohort adını yakaladı. Sorgu PAPER
   ajanının tek kaynak `FORWARD_COHORT` sabitine bağlandı; aktif temiz kohort artık
   doğru okunuyor.
+- Checkpoint `0471e8a` buluta dağıtıldı. Canlı v1.6 rapor 24h SHORT için
+  10 kapanan, 6 kazanan, +111.31 USDT net P&L, 3.87 profit factor ve 37.64 USDT
+  max drawdown gösterdi. Supabase direct query exact satırı doğruladı; ilgili
+  outbox sıfırlandı.
 
 ## 2026-08-27 point-in-time Spot Flow Feature Challenger V1
 
