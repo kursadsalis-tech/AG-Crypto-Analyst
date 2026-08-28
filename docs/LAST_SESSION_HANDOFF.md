@@ -19,8 +19,12 @@ split: `paper_trader_performance()` reads only clean, evidence-eligible CLOSED
 `paper_agent_positions` and renders a separate primary PAPER economics table by
 horizon/direction. It cannot confuse Forecast Engine `shadow_action` (currently
 zero on the audited 24h slice) with the PAPER agent's actual nine trades.
-Full local suite: 121/121. Cloud deployment of this final report file and a live
-v1.6 render/Supabase snapshot check remain to be completed.
+Full local suite: 121/121. The first live render caught and rejected a stale
+hard-coded cohort identifier; the report now imports the PAPER agent's canonical
+`FORWARD_COHORT` constant. Active evidence advanced to 10 closed trades and
++111.3071 USDT net P&L. The corrected file must be redeployed, the v1.6 row must
+show this active cohort, and the updated committee snapshot must drain to
+Supabase before closeout.
 
 # 2026-08-27 — Spot Flow Feature Challenger V1 implemented
 

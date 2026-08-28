@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from risk_manager import signal_risk_gate
 from analysis import money_flow
+from paper_trading.crypto_profit_agent import FORWARD_COHORT
 from whale_tracker.ethereum_token_whale_collector import TOKEN_CONFIGS
 
 
@@ -304,10 +305,10 @@ def paper_trader_performance(con):
     rows = con.execute("""
         SELECT horizon_hours,direction,net_pnl
         FROM paper_agent_positions
-        WHERE validation_cohort='CLEAN_FORWARD_COHORT_V1'
+        WHERE validation_cohort=?
           AND evidence_eligible=1 AND status='CLOSED'
         ORDER BY exit_time,position_id
-    """).fetchall()
+    """, (FORWARD_COHORT,)).fetchall()
     grouped = {}
     for horizon, direction, net_pnl in rows:
         grouped.setdefault((int(horizon), str(direction)), []).append(float(net_pnl))

@@ -2,6 +2,7 @@ import sqlite3
 import unittest
 
 from reports import investment_committee_report as report
+from paper_trading.crypto_profit_agent import FORWARD_COHORT
 
 
 class TraderKpiReportingTests(unittest.TestCase):
@@ -35,8 +36,8 @@ class TraderKpiReportingTests(unittest.TestCase):
             )
         """)
         con.executemany("INSERT INTO paper_agent_positions VALUES(?,?,?,?,?,?,?,?)", [
-            (1,"a",24,"SHORT",10.0,"CLEAN_FORWARD_COHORT_V1",1,"CLOSED"),
-            (2,"b",24,"SHORT",-2.0,"CLEAN_FORWARD_COHORT_V1",1,"CLOSED"),
+            (1,"a",24,"SHORT",10.0,FORWARD_COHORT,1,"CLOSED"),
+            (2,"b",24,"SHORT",-2.0,FORWARD_COHORT,1,"CLOSED"),
             (3,"c",4,"LONG",99.0,"LEGACY",0,"CLOSED"),
         ])
         score = report.paper_trader_performance(con)

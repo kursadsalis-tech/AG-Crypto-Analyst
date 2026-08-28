@@ -15,6 +15,9 @@
   bağımsız olarak doğrudan temiz `paper_agent_positions` kohortundan ufuk/yön,
   kapanan, kazanan, net P&L, profit factor ve max drawdown tablosu üretir.
   Tam suite 121/121.
+- Canlı render kontrolü eski/hard-coded kohort adını yakaladı. Sorgu PAPER
+  ajanının tek kaynak `FORWARD_COHORT` sabitine bağlandı; aktif temiz kohort artık
+  doğru okunuyor.
 
 ## 2026-08-27 point-in-time Spot Flow Feature Challenger V1
 
