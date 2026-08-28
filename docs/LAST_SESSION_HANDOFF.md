@@ -14,7 +14,13 @@ utility and profit factor. UP/DOWN/NEUTRAL direction hit remains visible only as
 a model diagnostic and is explicitly not labeled trader success. The PAPER
 daily report also records lifetime profit factor and closed-trade maximum
 drawdown. No model, selection rule, evidence threshold, allocation policy or
-order authority changed. Full local suite: 120/120.
+order authority changed. The follow-up completed the previously partial report
+split: `paper_trader_performance()` reads only clean, evidence-eligible CLOSED
+`paper_agent_positions` and renders a separate primary PAPER economics table by
+horizon/direction. It cannot confuse Forecast Engine `shadow_action` (currently
+zero on the audited 24h slice) with the PAPER agent's actual nine trades.
+Full local suite: 121/121. Cloud deployment of this final report file and a live
+v1.6 render/Supabase snapshot check remain to be completed.
 
 # 2026-08-27 — Spot Flow Feature Challenger V1 implemented
 

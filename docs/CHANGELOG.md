@@ -11,6 +11,10 @@
   model teşhisi olarak etiketlendi.
 - PAPER günlük raporuna profit factor ve kapanmış-işlem max drawdown eklendi.
 - Strateji, allocation eşiği ve emir yetkisi değiştirilmedi. Tam suite 120/120.
+- Follow-up tamamlandı: komite raporu artık Forecast `shadow_action` sayacından
+  bağımsız olarak doğrudan temiz `paper_agent_positions` kohortundan ufuk/yön,
+  kapanan, kazanan, net P&L, profit factor ve max drawdown tablosu üretir.
+  Tam suite 121/121.
 
 ## 2026-08-27 point-in-time Spot Flow Feature Challenger V1
 

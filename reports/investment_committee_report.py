@@ -298,6 +298,39 @@ def unified_forecast_performance(con):
     return result
 
 
+def paper_trader_performance(con):
+    if not table_exists(con, "paper_agent_positions"):
+        return []
+    rows = con.execute("""
+        SELECT horizon_hours,direction,net_pnl
+        FROM paper_agent_positions
+        WHERE validation_cohort='CLEAN_FORWARD_COHORT_V1'
+          AND evidence_eligible=1 AND status='CLOSED'
+        ORDER BY exit_time,position_id
+    """).fetchall()
+    grouped = {}
+    for horizon, direction, net_pnl in rows:
+        grouped.setdefault((int(horizon), str(direction)), []).append(float(net_pnl))
+    output = []
+    for (horizon, direction), values in sorted(grouped.items()):
+        positive = sum(max(0.0, value) for value in values)
+        negative = abs(sum(min(0.0, value) for value in values))
+        profit_factor = positive / negative if negative else (
+            float("inf") if positive else 0.0
+        )
+        cumulative = peak = drawdown = 0.0
+        for value in values:
+            cumulative += value
+            peak = max(peak, cumulative)
+            drawdown = max(drawdown, peak - cumulative)
+        output.append({
+            "horizon": horizon, "direction": direction, "closed": len(values),
+            "wins": sum(value > 0.0 for value in values), "net_pnl": sum(values),
+            "profit_factor": profit_factor, "max_drawdown": drawdown,
+        })
+    return output
+
+
 def forecast_diagnosis_counts(con):
     if not table_exists(con, "forecast_engine_predictions"):
         return {}
@@ -615,6 +648,7 @@ def build_report(
     forecast_bundle,
     forecasts,
     forecast_scores,
+    paper_scores,
     latest_outcomes,
     diagnosis_counts,
     supporting_coverage,
@@ -713,6 +747,21 @@ def build_report(
         "Hedef q50 medyandır; aralık q10–q90'dır. UP/DOWN olasılığı 10 bps "
         "maliyet ve 5 bps anlamlı hareket eşiği sonrasını ifade eder. "
         "Risk yalnız aksiyonu veto eder; hedefi veya olasılığı değiştirmez.",
+        "",
+        "### PAPER Trader Ekonomik Performansı — birincil başarı KPI'ı",
+        "",
+        "| Ufuk/Yön | Kapanan | Kazanan | Net P&L | Profit factor | Max drawdown |",
+        "|---|---:|---:|---:|---:|---:|",
+    ])
+    if not paper_scores:
+        lines.append("| Kanıt birikiyor | 0 | 0 | 0.00 USDT | 0.00 | 0.00 USDT |")
+    for score in paper_scores:
+        lines.append(
+            f"| {score['horizon']}h {score['direction']} | {score['closed']} | "
+            f"{score['wins']} | {score['net_pnl']:+.2f} USDT | "
+            f"{score['profit_factor']:.2f} | {score['max_drawdown']:.2f} USDT |"
+        )
+    lines.extend([
         "",
         "### Forecast Performansı",
         "",
@@ -980,6 +1029,7 @@ def generate(now=None, persist=True, write_file=True):
         forecast_bundle, forecasts = latest_forecast_bundle(con)
         latest_outcomes = latest_settled_forecasts(con)
         forecast_scores = unified_forecast_performance(con)
+        paper_scores = paper_trader_performance(con)
         diagnosis_counts = forecast_diagnosis_counts(con)
         supporting_coverage = supporting_evidence_coverage(con, decisions, now)
         flow_coverage = money_flow_coverage(con, decisions, now)
@@ -995,6 +1045,7 @@ def generate(now=None, persist=True, write_file=True):
             forecast_bundle,
             forecasts,
             forecast_scores,
+            paper_scores,
             latest_outcomes,
             diagnosis_counts,
             supporting_coverage,
