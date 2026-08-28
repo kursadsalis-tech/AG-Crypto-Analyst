@@ -23,8 +23,12 @@ model at 42.727% / 0.628099. Accuracy improved in 4/6 blocks and Brier in 6/6.
 Only the already-selected 1h 50/50 direction ensemble changed; 4h/24h, price
 targets, 70% action threshold, costs, evidence gates, PAPER policy and real-order
 authority remain unchanged. Retraining used 35,750 causal rows and the artifact
-round-trip passed. Full suite: 123/123. Deployment/natural forward verification
-remain pending; historical lift is not live forward proof.
+round-trip passed. Full suite: 123/123. Checkpoint `ae4a354` was deployed with
+rollback `/home/kursadsalis/AG-Crypto-Analyst-cloud-advanced-technical-rollback-ae4a354`.
+All four deployed runtime-file SHA-256 values match locally. The worker completed
+a graceful restart and is active/running in `PAPER_ONLY`. The first natural
+advanced-technical forecast and its forward settlements remain to be verified;
+historical lift is not live forward proof.
 
 # 2026-08-28 — Measured 1h direction ensemble implemented
 
