@@ -869,6 +869,17 @@ Tamamlandı.
 
 Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren geliştirmeler yalnız ölçülmüş ürün ihtiyacıyla açılacaktır; yakın öncelik operasyonel doğrulama, veri birikimi ve güvenilirliktir.
 
+## 2026-08-28 — Advanced technical feature synthesis
+
+- Added 24 closed-candle technical features covering trend, momentum,
+  volatility, volume/flow, support/resistance, Fibonacci range position,
+  candle structure and breakouts.
+- The rolling 1h classifier now synthesizes a nonlinear technical direction
+  composite from these features plus the existing market inputs.
+- Six-block walk-forward accuracy improved from 42.426% to 42.727%; Brier
+  improved from 0.630754 to 0.628099 and in all six blocks.
+- 4h/24h and every strategy, evidence, risk and order-authority gate are unchanged.
+
 ## 2026-08-28 — Fixed rolling 1h direction ensemble
 
 - Added a 50/50 incumbent + rolling HistGradientBoosting probability ensemble

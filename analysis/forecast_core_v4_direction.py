@@ -7,7 +7,7 @@ import hashlib
 from datetime import timedelta
 
 
-VERSION = "ROLLING_1H_DIRECTION_ENSEMBLE_V1_FIXED"
+VERSION = "ROLLING_1H_ADVANCED_TECHNICAL_ENSEMBLE_V2_FIXED"
 TRAINING_DAYS = 120
 HALF_LIFE_DAYS = 45.0
 BLEND_WEIGHT = 0.50
@@ -34,9 +34,11 @@ def fit(rows, cutoff):
             "DOWN" if row["trade_return_pct"] < -meaningful else "NEUTRAL"
         ) for row in selected
     ])
-    matrix = np.asarray(
-        [row["features"][:FEATURE_COUNT] for row in selected], dtype=float
-    )
+    from analysis import advanced_technical_features
+    matrix = np.asarray([
+        row["features"][:FEATURE_COUNT] + row["technical_features"]
+        for row in selected
+    ], dtype=float)
     if not np.isfinite(matrix).all():
         raise ValueError("non-finite rolling direction features")
     ages = np.asarray([
@@ -58,13 +60,17 @@ def fit(rows, cutoff):
         "training_start": min(row["as_of"] for row in selected),
         "training_end": max(row["due_time"] for row in selected),
         "feature_count": FEATURE_COUNT, "blend_weight": BLEND_WEIGHT,
+        "technical_feature_count": len(advanced_technical_features.FEATURE_NAMES),
+        "technical_feature_version": advanced_technical_features.VERSION,
+        "synthesized_indicator": "NONLINEAR_TECHNICAL_DIRECTION_COMPOSITE",
     }
 
 
 def blend(rolling, row, incumbent):
     import numpy as np
 
-    matrix = np.asarray([row["features"][:rolling["feature_count"]]], dtype=float)
+    matrix = np.asarray([row["features"][:rolling["feature_count"]]
+                         + row["technical_features"]], dtype=float)
     model = rolling.get("model")
     if model is None:
         model_bytes = rolling["model_bytes"]
@@ -93,5 +99,6 @@ def blend(rolling, row, incumbent):
         output["action"] if row["risk_eligible"] else "BEKLE"
     )
     output["direction_ensemble_version"] = VERSION
+    output["synthesized_indicator"] = rolling["synthesized_indicator"]
     output["rolling_probabilities"] = rolling_probabilities
     return output

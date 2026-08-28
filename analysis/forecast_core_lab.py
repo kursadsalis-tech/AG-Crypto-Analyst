@@ -397,6 +397,8 @@ def build_rows(series, start, end):
             candles = series[symbol]["candles"]
             try:
                 features = feature_values(symbol, candles, index, btc, btc_index)
+                from analysis import advanced_technical_features
+                technical_features = advanced_technical_features.vector(candles, index)
                 require_hourly_continuity(candles, index, index + max_horizon)
             except ValueError:
                 gaps += 1
@@ -429,6 +431,7 @@ def build_rows(series, start, end):
                     "target_normalized": price_return / scale,
                     "scale_pct": scale,
                     "features": features,
+                    "technical_features": technical_features,
                     "risk_state": policy["market_state"],
                     "risk_cap_pct": float(asset["max_position_pct"]),
                     "risk_eligible": risk_allowed,

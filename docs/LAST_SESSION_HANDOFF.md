@@ -1,5 +1,31 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-28 — Advanced technical analysis entered the 1h direction model
+
+The former RSI/MACD/EMA research-only context was not an advanced technical
+prediction layer. `ADVANCED_TECHNICAL_FEATURES_V1_FIXED` now derives 24 causal
+features from closed 1h OHLCV: RSI, multi-EMA spreads, normalized MACD,
+Bollinger position/width, ATR, ADX, Stochastic, Williams %R, CCI, MFI, VWAP
+deviation, OBV slope, volume anomaly, dynamic support/resistance distance,
+72h Fibonacci/range position, trend efficiency, candle body/wicks, breakout
+and 168h range position. A test proves a future candle cannot change them.
+
+The rolling 1h HistGradientBoosting model now learns a nonlinear
+`NONLINEAR_TECHNICAL_DIRECTION_COMPOSITE` from the existing 12 market features
+plus those 24 technical features. This is the bounded, auditable indicator
+synthesis mechanism: it relearns combinations on the preceding 120 days at
+the existing 30-day artifact refresh, but cannot invent data, change thresholds,
+mutate strategy policy or obtain order authority.
+
+Six sequential 30-day walk-forward blocks (54,301 predictions) measured the old
+rolling model at 42.426% accuracy / 0.630754 Brier and the advanced technical
+model at 42.727% / 0.628099. Accuracy improved in 4/6 blocks and Brier in 6/6.
+Only the already-selected 1h 50/50 direction ensemble changed; 4h/24h, price
+targets, 70% action threshold, costs, evidence gates, PAPER policy and real-order
+authority remain unchanged. Retraining used 35,750 causal rows and the artifact
+round-trip passed. Full suite: 123/123. Deployment/natural forward verification
+remain pending; historical lift is not live forward proof.
+
 # 2026-08-28 — Measured 1h direction ensemble implemented
 
 The production-facing Unified Forecast 1h direction probabilities now blend the

@@ -23,7 +23,7 @@ from data.truth_engine import DataValidationError, record_audit
 
 DB_NAME = "crypto_data.db"
 ENGINE_VERSION = "UNIFIED_FORECAST_ENGINE_V1"
-MODEL_VERSION = "POOLED_RIDGE_RUNTIME_V2_ROLLING_1H_DIRECTION"
+MODEL_VERSION = "POOLED_RIDGE_RUNTIME_V3_ADVANCED_TECHNICAL_1H_DIRECTION"
 MODEL_PATH = Path("reports/unified_forecast_model.pkl")
 MODEL_TTL = timedelta(days=30)
 MAX_FORECAST_AGE = timedelta(minutes=15)
@@ -330,6 +330,8 @@ def live_rows(con, series, decision_time, now):
         try:
             candles = series[symbol]["candles"]
             features = core.feature_values(symbol, candles, index, btc, btc_index)
+            from analysis import advanced_technical_features
+            technical_features = advanced_technical_features.vector(candles, index)
             current = float(candles[index]["close"])
             risk_eligible = bool(not risk_error and policy["new_positions_allowed"] and asset["new_position_allowed"]
                                  and float(asset["max_position_pct"]) > 0)
@@ -347,6 +349,7 @@ def live_rows(con, series, decision_time, now):
                     "trade_return_pct": 0.0,
                     "scale_pct": max(float(features[4]) * math.sqrt(float(horizon)), 0.10),
                     "features": features,
+                    "technical_features": technical_features,
                     "risk_state": str(policy["market_state"]),
                     "risk_cap_pct": float(asset["max_position_pct"]),
                     "risk_eligible": risk_eligible,

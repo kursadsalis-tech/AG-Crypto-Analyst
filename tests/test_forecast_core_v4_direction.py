@@ -11,8 +11,13 @@ class RollingDirectionEnsembleTests(unittest.TestCase):
         rolling = {
             "model": Model(), "classes": ("UP", "DOWN", "NEUTRAL"),
             "feature_count": 12, "blend_weight": 0.5,
+            "synthesized_indicator": "NONLINEAR_TECHNICAL_DIRECTION_COMPOSITE",
         }
-        row = {"features": [0.0] * 12, "risk_eligible": False}
+        row = {
+            "features": [0.0] * 12,
+            "technical_features": [0.0] * 24,
+            "risk_eligible": False,
+        }
         incumbent = {
             "p_up": 0.40, "p_down": 0.40, "p_neutral": 0.20,
             "predicted_return_pct": 1.25, "target_price": 101.25,

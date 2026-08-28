@@ -8,6 +8,8 @@
 
 - [x] Altı ardışık walk-forward blokta 1h incumbent + rolling direction
   ensemble'ını doğrula ve yalnız ölçülen 1h iyileştirmesini uygula
+- [x] 24 özellikli ileri teknik analiz ve denetlenebilir doğrusal olmayan
+  indikatör sentezini 1h rolling modele ölçerek ekle
 - [ ] İlk doğal canlı 1h tahmin paketini ve ileri sonuçlandıkça incumbent'a göre
   yön isabeti/Brier katkısını izle; 4h/24h politikasını değiştirme
 
