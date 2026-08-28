@@ -14,8 +14,13 @@ the private mirror owner remains the sole writer. Post-change audit: 43/43
 runtime tables have RLS enabled, zero anon/authenticated table grants, and both
 roles lack schema USAGE. Runtime table creation now carries a versioned
 `PRIVATE_RLS_V1` schema signature, enables RLS and revokes Data API roles so a
-new mirrored table cannot regress silently. Full suite: 124/124. The durable
-code deployment and post-deploy owner-write/attestation verification remain.
+new mirrored table cannot regress silently. Full suite: 124/124. Checkpoint
+`56122d5` was deployed with rollback
+`/home/kursadsalis/AG-Crypto-Analyst-cloud-supabase-rls-rollback-56122d5` and
+matching runtime-store SHA-256. Direct post-hardening evidence returned a
+HEALTHY `PAPER_ONLY` attestation (`may_send_real_orders=0`, SQLite `ok`), remote
+mirror success at 2026-08-28T07:10:03Z, active worker/attestation/drain timers,
+and zero local outbox backlog. The security alert is resolved.
 
 # 2026-08-28 — Advanced technical analysis entered the 1h direction model
 
