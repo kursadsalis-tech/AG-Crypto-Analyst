@@ -17,9 +17,12 @@ gates and real-order authority are unchanged. The sklearn artifact is stored as
 once-serialized bytes with its own SHA-256 so cache verification is stable.
 Local retraining used 37,011 causal 1h rows from 2026-04-30 through 2026-08-26;
 the saved artifact reloaded with both outer and inner hashes valid. Full local
-suite: 122/122. Deployment and the first naturally issued/settled live bundle
-remain to be verified; do not describe the historical lift as live forward
-performance.
+suite: 122/122. Checkpoint `d7f25b2` was deployed to `agca-runtime` with rollback
+copy `/home/kursadsalis/AG-Crypto-Analyst-cloud-rolling-1h-direction-rollback-d7f25b2`.
+Local/deployed SHA-256 values match for both changed runtime files. The worker
+restarted active/running with `AGCA_EXECUTION_MODE=PAPER_ONLY`. The first
+naturally issued and then settled live bundle remains to be verified; do not
+describe the historical lift as live forward performance.
 
 # 2026-08-27 — Trader success KPI corrected from class accuracy to economics
 
