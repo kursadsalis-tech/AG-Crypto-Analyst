@@ -18,6 +18,13 @@
 - Separated an official macro release timestamp from AGCA's actual observation
   timestamp. Causal availability is now the later value: preloaded scheduled
   events wait for release, while late discoveries cannot rewrite past minutes.
+- Added a schedule-aware exact-macro observer. It refreshes the first-party FOMC
+  calendar at most daily outside decision windows, checks once per minute only
+  from 15 minutes before through 90 minutes after a scheduled release, fetches
+  only the matching meeting page, and uses a 15-minute error backoff.
+- Added bounded systemd service/timer definitions and bound the observer's
+  hash-valid health record into cloud attestation. The units remain uninstalled
+  and disabled pending explicit user approval.
 - Persisted exact external events idempotently beside local behavior minutes
   under the same 30-day retention boundary; this table is not remotely mirrored.
 - Added observational first/last midpoint prices to closed behavior minutes so

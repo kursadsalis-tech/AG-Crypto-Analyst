@@ -29,6 +29,12 @@ PAGE_LINK = re.compile(
     r'href=["\'](?P<href>/monetarypolicy/fomc(?:pressconf|presconf)\d{8}\.htm)["\']',
     re.I,
 )
+YEAR_HEADING = re.compile(r"<h4><a[^>]*>(\d{4}) FOMC Meetings</a></h4>", re.I)
+MEETING_DATE = re.compile(
+    r"fomc-meeting__month[^>]*><strong>(?P<month>[^<]+)</strong></div>\s*"
+    r"<div class=\"fomc-meeting__date[^>]*>(?P<dates>[^<]+)</div>",
+    re.I,
+)
 PARAGRAPH = re.compile(r"<p\b[^>]*>(.*?)</p>", re.I | re.S)
 HREF = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 TAG = re.compile(r"<[^>]+>")
@@ -42,6 +48,12 @@ EVENT_LABELS = {
     "Implementation Note": "FOMC_IMPLEMENTATION_NOTE",
     "Projections Materials": "FOMC_PROJECTIONS",
     "Minutes": "FOMC_MINUTES",
+}
+MONTHS = {
+    name: index for index, name in enumerate(
+        ("January", "February", "March", "April", "May", "June", "July",
+         "August", "September", "October", "November", "December"), 1
+    )
 }
 
 
@@ -68,6 +80,54 @@ def meeting_pages(calendar_html, year=None):
             seen.add(url)
             found.append(url)
     return found
+
+
+def decision_release_times(calendar_html, year):
+    """Return regular meeting decision times explicitly scheduled by the Fed."""
+    headings = list(YEAR_HEADING.finditer(calendar_html))
+    section = None
+    for index, heading in enumerate(headings):
+        if int(heading.group(1)) == int(year):
+            end = headings[index + 1].start() if index + 1 < len(headings) else len(calendar_html)
+            section = calendar_html[heading.end():end]
+            break
+    if section is None:
+        raise ValueError(f"FOMC_YEAR_SECTION_MISSING:{year}")
+    releases = []
+    for match in MEETING_DATE.finditer(section):
+        month_text = html.unescape(match.group("month")).strip()
+        date_text = html.unescape(match.group("dates")).strip()
+        if "notation" in date_text.lower():
+            continue
+        clean_dates = re.sub(r"[^0-9\-]", "", date_text)
+        if not clean_dates:
+            continue
+        decision_day = int(clean_dates.split("-")[-1])
+        month_parts = month_text.split("/")
+        decision_month_name = month_parts[-1]
+        decision_month = MONTHS.get(decision_month_name)
+        if decision_month is None:
+            raise ValueError(f"FOMC_MONTH_UNSUPPORTED:{month_text}")
+        decision_year = int(year)
+        if len(month_parts) == 2 and MONTHS.get(month_parts[0], 0) > decision_month:
+            decision_year += 1
+        local = datetime(
+            decision_year, decision_month, decision_day, 14, 0,
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+        releases.append(local.astimezone(timezone.utc))
+    if not releases:
+        raise ValueError(f"FOMC_DECISION_DATES_MISSING:{year}")
+    return releases
+
+
+def meeting_page_for_date(calendar_html, decision_date):
+    stamp = decision_date.strftime("%Y%m%d")
+    matches = [url for url in meeting_pages(calendar_html, decision_date.year)
+               if stamp in url]
+    if len(matches) > 1:
+        raise ValueError(f"AMBIGUOUS_FOMC_MEETING_PAGE:{stamp}")
+    return matches[0] if matches else None
 
 
 def _release_utc(date_text, time_text):
@@ -162,10 +222,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--max-pages", type=int)
+    parser.add_argument("--schedule-only", action="store_true")
     parser.add_argument("--output", required=True)
     parser.add_argument("--database")
     args = parser.parse_args()
-    report = collect_year(args.year, args.max_pages)
+    if args.schedule_only:
+        calendar_html = fetch_text(CALENDAR_URL)
+        releases = decision_release_times(calendar_html, args.year)
+        report = {
+            "contract_version": VERSION,
+            "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM",
+            "calendar_url": CALENDAR_URL,
+            "calendar_sha256": hashlib.sha256(calendar_html.encode("utf-8")).hexdigest(),
+            "year": args.year,
+            "scheduled_release_times": [value.isoformat() for value in releases],
+            "event_count": 0, "meeting_page_count": 0, "events": [],
+        }
+    else:
+        report = collect_year(args.year, args.max_pages)
     if args.database:
         with connect(args.database) as con:
             for event in report["events"]:
@@ -175,6 +249,7 @@ def main():
     print(json.dumps({
         "meeting_page_count": report["meeting_page_count"],
         "event_count": report["event_count"], "database_written": bool(args.database),
+        "scheduled_release_count": len(report.get("scheduled_release_times") or []),
     }, sort_keys=True))
     return report
 

@@ -1,0 +1,20 @@
+{
+  "calendar_sha256": "1df38381aa16070223e16a1f99ce901ee215935ad18c327793159f4ea38c968f",
+  "calendar_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+  "contract_version": "FEDERAL_RESERVE_EXACT_EVENTS_V1",
+  "event_count": 0,
+  "events": [],
+  "meeting_page_count": 0,
+  "scheduled_release_times": [
+    "2026-01-28T19:00:00+00:00",
+    "2026-03-18T18:00:00+00:00",
+    "2026-04-29T18:00:00+00:00",
+    "2026-06-17T18:00:00+00:00",
+    "2026-07-29T18:00:00+00:00",
+    "2026-09-16T18:00:00+00:00",
+    "2026-10-28T18:00:00+00:00",
+    "2026-12-09T19:00:00+00:00"
+  ],
+  "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM",
+  "year": 2026
+}

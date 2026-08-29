@@ -1,0 +1,20 @@
+[Unit]
+Description=AGCA schedule-aware exact macro observer
+After=network-online.target agca-cloud-worker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=HOME=/home/kursadsalis
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python scripts/observe_exact_macro_events.py --database /var/lib/agca/crypto_data.db --health-output /var/lib/agca/exact-macro-health.json --lock-file /var/lib/agca/exact-macro.lock
+TimeoutStartSec=40
+Nice=10
+MemoryMax=128M
+CPUQuota=25%
+UMask=0077

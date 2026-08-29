@@ -1,5 +1,42 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Bulut onayına kadar exact-macro/behavior gözlem paketi hazır
+
+`1bed153` checkpoint'inden devam edildi. Bulut onayı verilmeden yapılabilecek
+yerel hazırlık tamamlandı. Resmî FOMC takvimini kaynak olarak kullanan ayrı
+`observe_exact_macro_events.py` gözlemcisi eklendi. Normal günlerde takvimi en
+fazla 24 saatte bir kontrol eder; yalnız planlı karar zamanının 15 dakika öncesi
+ile 90 dakika sonrası arasında dakikada bir takvim kontrolü yapar. Resmî toplantı
+sayfası görünürse yalnız ilgili karar gününün sayfasını alır ve açık kesin saatli
+belgeleri kaydeder. Ağ hatası normal zamanda 15 dakikalık geri çekilmeye girer.
+Ham sayfa/payload saklanmaz.
+
+2026 resmî takvimi canlı kaynaktan yeniden üretilebilir raporla doğrulandı:
+8 düzenli karar zamanı; Ocak ve Aralık kış saatiyle 19:00 UTC, diğer kararlar
+yaz saatiyle 18:00 UTC. Rapor
+`reports/federal_reserve_fomc_schedule_2026.json` içindedir. Gözlemcinin erken,
+zamanında, geç, sayfa-yok ve kaynak-hata senaryoları sahte saatle test edildi.
+Resmî yayın saati ve gerçek AGCA gözlem saati ayrı kalır; nedensel erişim zamanı
+her zaman geç olanıdır.
+
+`agca-exact-macro-observer.service/.timer` 40 saniye timeout, 128 MB bellek,
+%25 CPU, tekil kilit, özel dosya izinleri ve yalnız PAPER_ONLY ile hazırlandı.
+Timer kalıcı catch-up yapmaz. Sağlık kaydı atomik ve SHA-256 korumalıdır; mevcut
+cloud attestation artık exact-macro observer durumunu da `CURRENT/MISSING/STALE/
+INVALID` olarak taşır. Market-behavior ve exact-macro servisleri için kontrollü
+ilk koşu, tablo/outbox/hash/PAPER doğrulama, enable ve fail-closed rollback
+adımları `docs/CLOUD_PAPER_RUNTIME.md` içine yazıldı.
+
+Hiçbir service/timer buluta kurulmadı, etkinleştirilmedi veya başlatılmadı;
+runtime DB ve dış servis durumu değişmedi. PAPER_ONLY, kanıt eşikleri, strateji
+politikası, allocation ve gerçek emir yetkisi değişmedi. Tam yerel suite 206/206
+geçti. Mac'teki ağsız/fail-closed test mesajları beklenen senaryolardır.
+
+Bulut onayı gelirse sıradaki işlem yalnız dokümante edilmiş geri alınabilir
+kurulumdur: önce checkpoint adlı rollback kopyası, sonra iki servisin kontrollü
+tek koşusu, sağlık/hash/yerel-only tablo/outbox doğrulaması ve ancak hepsi geçerse
+timer enable. Doğal veri birikmeden performans veya öğrenme iddiası yapılmaz.
+
 # 2026-08-30 — FOMC resmî saati ile gerçek gözlem saati nedensel olarak ayrıldı
 
 `955bb08` checkpoint'inden devam edildi. Kesin-zamanlı makro sözleşmesinde kritik

@@ -22,6 +22,23 @@ PAGE = """
 
 
 class FederalReserveExactEventsTests(unittest.TestCase):
+    def test_future_schedule_parses_decision_day_and_dst(self):
+        calendar = """
+        <h4><a id="x">2026 FOMC Meetings</a></h4>
+        <div class="row fomc-meeting">
+          <div class="fomc-meeting__month x"><strong>September</strong></div>
+          <div class="fomc-meeting__date x">15-16*</div>
+        </div>
+        <div class="row fomc-meeting">
+          <div class="fomc-meeting__month x"><strong>October</strong></div>
+          <div class="fomc-meeting__date x">27-28</div>
+        </div>
+        <h4><a id="y">2025 FOMC Meetings</a></h4>
+        """
+        releases = fed.decision_release_times(calendar, 2026)
+        self.assertEqual([value.isoformat() for value in releases], [
+            "2026-09-16T18:00:00+00:00", "2026-10-28T18:00:00+00:00",
+        ])
     def test_calendar_keeps_only_requested_year_and_deduplicates(self):
         calendar = """
         <a href='/monetarypolicy/fomcpresconf20260729.htm'>x</a>

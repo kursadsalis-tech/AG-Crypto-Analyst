@@ -81,6 +81,34 @@ class CloudAttestationTests(unittest.TestCase):
         self.assertEqual(observer["eligible_row_count"], 12)
         self.assertFalse(observer["may_send_real_orders"])
 
+    def test_exact_macro_health_hash_is_bound_to_attestation(self):
+        now = datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "macro-health.json")
+            health = {
+                "health_contract_version": "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1",
+                "status": "HEALTHY", "completed_at": now.isoformat(),
+                "execution_mode": "PAPER_ONLY",
+                "source_status": "OFFICIAL_RELEASE_PAGE_OBSERVED",
+                "active_release_at": now.isoformat(), "events_observed": 3,
+                "stored_event_count": 3, "raw_payloads_persisted": False,
+                "may_send_real_orders": False,
+            }
+            canonical = json.dumps(
+                health, sort_keys=True, separators=(",", ":")
+            ).encode()
+            health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(health, handle)
+            payload, _, _ = cloud_attestation.build(
+                self.con, "HEALTHY", {}, now,
+                exact_macro_health_path=path,
+            )
+        macro = payload["exact_macro_observer"]
+        self.assertEqual(macro["state"], "CURRENT")
+        self.assertEqual(macro["events_observed"], 3)
+        self.assertFalse(macro["may_send_real_orders"])
+
 
 if __name__ == "__main__":
     unittest.main()

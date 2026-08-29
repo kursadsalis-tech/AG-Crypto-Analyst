@@ -65,3 +65,62 @@ its credentials are external state. Until the image is deployed on a cloud
 host with the persistent volume and Supabase secret, the active process remains
 the Mac LaunchAgent. OHLCV-based simulated fills are intentionally adverse but
 cannot reproduce an historical order book exactly.
+
+## Market behavior and exact-macro observers — approval-gated deployment
+
+The repository contains two prepared but separately approval-gated observers:
+
+- `agca-market-behavior-observer.service/.timer` collects compact closed-minute
+  market behavior without raw payload retention.
+- `agca-exact-macro-observer.service/.timer` refreshes the official FOMC
+  calendar at most daily on normal days and once per minute only inside the
+  15-minute-before/90-minute-after decision window. It stores official release
+  time and actual AGCA observation time separately.
+
+Do not install or start these units without the user's explicit approval. When
+approval is given, first create a rollback directory named with the local
+checkpoint, then copy the four unit files and the changed Python sources. The
+intended unit installation commands are:
+
+```bash
+sudo install -m 0644 deploy/agca-market-behavior-observer.service /etc/systemd/system/
+sudo install -m 0644 deploy/agca-market-behavior-observer.timer /etc/systemd/system/
+sudo install -m 0644 deploy/agca-exact-macro-observer.service /etc/systemd/system/
+sudo install -m 0644 deploy/agca-exact-macro-observer.timer /etc/systemd/system/
+sudo install -m 0644 deploy/agca-cloud-attestation.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+Run each service once before enabling timers. A successful controlled check
+must prove:
+
+1. both services exit successfully under `AGCA_EXECUTION_MODE=PAPER_ONLY`;
+2. `/var/lib/agca/market-behavior-health.json` and
+   `/var/lib/agca/exact-macro-health.json` are mode `0600` and hash-valid;
+3. SQLite contains the three local-only tables
+   `market_behavior_minute_features`, `causal_minute_external_evidence`, and
+   `exact_time_macro_events`;
+4. none of those tables enters the Supabase outbox/remote allowlist;
+5. a new cloud attestation contains both observer blocks, reports
+   `may_send_real_orders=false`, and retains `PAPER_ONLY`;
+6. the primary worker and its hourly/PAPER jobs remain healthy.
+
+Only after those checks may the approved timers be enabled:
+
+```bash
+sudo systemctl enable --now agca-market-behavior-observer.timer
+sudo systemctl enable --now agca-exact-macro-observer.timer
+```
+
+Rollback is fail-closed and does not delete accumulated SQLite evidence:
+
+```bash
+sudo systemctl disable --now agca-market-behavior-observer.timer
+sudo systemctl disable --now agca-exact-macro-observer.timer
+sudo systemctl daemon-reload
+```
+
+Restore the checkpoint-named rollback copies of changed source/unit files,
+restart only `agca-cloud-worker.service` and `agca-cloud-attestation.timer`, and
+verify a fresh hash-valid PAPER_ONLY attestation. Do not delete observer tables
+or evidence during rollback.
