@@ -25,6 +25,10 @@ from data.okx_live_evidence import collect, fetch_json
 from data.okx_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
+from database.causal_evidence_store import evidence_for_closed_minute
+
+
+HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 
 
 def refresh_market_route():
@@ -108,6 +112,16 @@ def main():
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    result["causal_external_evidence"] = (
+        evidence_for_closed_minute(args.database, minute_end_ms)
+        if args.database else {
+            "contract_version": "CAUSAL_MINUTE_EVIDENCE_V1",
+            "minute_end_timestamp_ms": minute_end_ms,
+            "assignment_clock": "AVAILABLE_AT", "event_count": 0,
+            "counts": {kind: 0 for kind in ("MACRO", "NEWS", "ONCHAIN", "WHALE")},
+            "events": [],
+        }
+    )
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
@@ -121,6 +135,7 @@ def main():
     if args.health_output:
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
         health = {
+            "health_contract_version": HEALTH_CONTRACT_VERSION,
             "status": "HEALTHY" if result["eligible_row_count"] == result["row_count"] else "DEGRADED",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "execution_mode": "PAPER_ONLY",

@@ -1,5 +1,19 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-30 causal minute evidence and observer attestation
+
+- Bound the separate market-behavior observer health record into the canonical
+  cloud attestation payload as `CURRENT`, `MISSING`, `STALE`, or `INVALID`.
+- Added one exact-time causal minute contract for news, macro, on-chain, and
+  whale evidence. Events are assigned by the time they became available to
+  AGCA; day-only and timezone-free timestamps fail closed.
+- Projected existing exact news collection times, on-chain collection times,
+  and whale observed times into the same closed-minute line. Added an immutable
+  local exact-macro event contract; ordinary day-level FRED observations are
+  deliberately not promoted into intraday evidence.
+- This evidence remains observational. PAPER_ONLY, action thresholds, strategy
+  policy, allocation gates, and real-order authority are unchanged.
+
 ## 2026-08-27 trader KPI correction
 
 - Temiz PAPER kohortu doğrudan denetlendi: 9 kapanmış 24h SHORT işlem,

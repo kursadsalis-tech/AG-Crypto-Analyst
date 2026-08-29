@@ -1,5 +1,38 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Gözlem sağlığı attestation'a, dış kanıtlar nedensel dakikaya bağlandı
+
+Temiz `6610102` piyasa-davranışı checkpoint'inden devam edildi. Ayrı ve atomik
+`market-behavior-health.json` kaydı artık mevcut cloud attestation payload'ında
+yer alıyor. Sözleşme sürümü, PAPER_ONLY, gerçek emir kapalı, ham payload
+saklanmıyor ve SHA-256 biçimi birlikte doğrulanıyor; sonuç `CURRENT`, `MISSING`,
+`STALE` veya `INVALID` olarak fail-closed raporlanıyor. Bu gözlem sağlığı worker
+sağlığını veya emir yetkisini değiştirmiyor.
+
+Haber, makro, on-chain ve balina kanıtları için tek
+`CAUSAL_MINUTE_EVIDENCE_V1` çizgisi eklendi. Olaylar gerçekleşme zamanına göre
+değil, AGCA'nın gerçekten erişebildiği `available_at` dakikasına yazılıyor.
+Geç gelen olay geçmiş dakikayı değiştiremez; gün düzeyindeki veya saat dilimsiz
+zamanlar reddedilir. Mevcut haberlerde yayın/toplama zamanının geç olanı,
+on-chain'de toplama zamanı, balinada blok/gözlem zamanının geç olanı kullanılır.
+Kesin zamanlı makro için değişmez kimlikli yerel giriş sözleşmesi hazırdır;
+yalnız gün taşıyan mevcut FRED seri gözlemleri kesin dakikaya yükseltilmemiştir.
+Dakika sorguları bütün geçmişi okumaz, yalnız ilgili 60 saniyelik pencereyi
+getirir. Bu kanıtlar gözlemseldir; model veya işlem girdisine terfi edilmedi.
+
+Hazırlanmış market-behavior service/timer buluta kurulmadı veya başlatılmadı;
+dış servis durumu değiştirilmedi. PAPER_ONLY, kanıt eşikleri, strateji
+politikası, allocation kapıları ve gerçek emir yetkisi değişmedi; yeni
+model/eşik araması yapılmadı. Odaklı testler 12/12, tam yerel suite 189/189
+geçti. Mac'teki tam testte beklenen ağsız/fail-closed senaryo mesajları görüldü;
+test sonucu temizdir.
+
+Sıradaki iş: bu yerel sözleşmelerin kod incelemesini sürdürmek; resmî Federal
+Reserve yayın takviminden gerçek `occurred_at`/`available_at` taşıyan küçük,
+yeniden üretilebilir bir örnekle kesin makro girişini doğrulamak. Kullanıcının
+açık onayı olmadan service/timer'ı buluta kurma veya başlatma. Kanıtları model
+ya da politika girdisine terfi etme.
+
 # 2026-08-29 — Piyasa-geneli davranış okuma zemini ve hafif canlı gözlem hazır
 
 Ana ürün amacı kök `AGENTS.md` çalışma sözleşmesine kalıcı olarak yazıldı:

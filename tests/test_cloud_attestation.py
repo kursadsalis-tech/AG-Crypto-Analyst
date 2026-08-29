@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -56,6 +57,29 @@ class CloudAttestationTests(unittest.TestCase):
         with patch.dict(os.environ, {"AGCA_EXECUTION_MODE": "LIVE"}):
             with self.assertRaises(RuntimeError):
                 cloud_attestation.build(self.con, "HEALTHY", {})
+
+    def test_market_behavior_health_is_bound_fail_closed(self):
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "health.json")
+            health = {
+                "health_contract_version": "AGCA_MARKET_BEHAVIOR_HEALTH_V1",
+                "status": "HEALTHY", "completed_at": now.isoformat(),
+                "execution_mode": "PAPER_ONLY", "row_count": 12,
+                "eligible_row_count": 12, "minute_end_timestamp_ms": 1,
+                "report_sha256": "a" * 64,
+                "raw_market_payloads_persisted": False,
+                "may_send_real_orders": False,
+            }
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(health, handle)
+            payload, _, _ = cloud_attestation.build(
+                self.con, "HEALTHY", {}, now, behavior_health_path=path
+            )
+        observer = payload["market_behavior_observer"]
+        self.assertEqual(observer["state"], "CURRENT")
+        self.assertEqual(observer["eligible_row_count"], 12)
+        self.assertFalse(observer["may_send_real_orders"])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import subprocess
+import string
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_a
 
 DB_NAME = "crypto_data.db"
 ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V1"
+MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 
 
 def iso(value):
@@ -55,7 +57,56 @@ def _status(result):
     return result.get("status") if isinstance(result, dict) else None
 
 
-def build(con, worker_status, last_results, now=None):
+def market_behavior_health(now=None, path=None):
+    """Read the observer's atomic health record without granting it authority."""
+    now = now or datetime.now(timezone.utc)
+    path = Path(path or os.getenv(
+        "AGCA_MARKET_BEHAVIOR_HEALTH_PATH",
+        "/var/lib/agca/market-behavior-health.json",
+    ))
+    base = {
+        "contract_version": MARKET_BEHAVIOR_HEALTH_VERSION,
+        "state": "MISSING", "status": None, "completed_at": None,
+        "age_seconds": None, "minute_end_timestamp_ms": None,
+        "row_count": 0, "eligible_row_count": 0, "report_sha256": None,
+        "raw_market_payloads_persisted": None,
+        "may_send_real_orders": False,
+    }
+    if not path.is_file():
+        return base
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        completed = datetime.fromisoformat(
+            str(raw["completed_at"]).replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        age = max(0.0, (now - completed).total_seconds())
+        max_age = float(os.getenv("AGCA_MARKET_BEHAVIOR_HEALTH_MAX_AGE_SECONDS", "180"))
+        valid = (
+            raw.get("health_contract_version") == MARKET_BEHAVIOR_HEALTH_VERSION
+            and raw.get("execution_mode") == "PAPER_ONLY"
+            and raw.get("may_send_real_orders") is False
+            and raw.get("raw_market_payloads_persisted") is False
+            and isinstance(raw.get("report_sha256"), str)
+            and len(raw["report_sha256"]) == 64
+            and all(character in string.hexdigits for character in raw["report_sha256"])
+            and int(raw.get("row_count") or 0) >= int(raw.get("eligible_row_count") or 0) >= 0
+        )
+        state = "INVALID" if not valid else ("STALE" if age > max_age else "CURRENT")
+        return {
+            **base, "state": state, "status": raw.get("status"),
+            "completed_at": completed.isoformat(), "age_seconds": round(age, 3),
+            "minute_end_timestamp_ms": raw.get("minute_end_timestamp_ms"),
+            "row_count": int(raw.get("row_count") or 0),
+            "eligible_row_count": int(raw.get("eligible_row_count") or 0),
+            "report_sha256": raw.get("report_sha256"),
+            "raw_market_payloads_persisted": raw.get("raw_market_payloads_persisted"),
+            "may_send_real_orders": bool(raw.get("may_send_real_orders", False)),
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return {**base, "state": "INVALID"}
+
+
+def build(con, worker_status, last_results, now=None, behavior_health_path=None):
     now = now or datetime.now(timezone.utc)
     mode = os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY")
     integrity = con.execute("PRAGMA quick_check").fetchone()[0]
@@ -100,6 +151,9 @@ def build(con, worker_status, last_results, now=None):
             "realized_pnl": float(portfolio[2]),
             "total_fees": float(portfolio[3]),
         },
+        "market_behavior_observer": market_behavior_health(
+            now=now, path=behavior_health_path
+        ),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return payload, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
