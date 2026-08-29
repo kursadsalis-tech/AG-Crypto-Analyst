@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from database.market_behavior_store import TABLE, persist_closed_minute
+from database.market_behavior_store import (
+    EXTERNAL_EVIDENCE_TABLE, TABLE, persist_closed_minute,
+)
 from database.runtime_store import REMOTE_RUNTIME_TABLES
 
 
@@ -41,6 +43,30 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             result = persist_closed_minute(path, report(200_000_000, "BBB"), retention_days=1)
             self.assertEqual(result["pruned"], 1)
             self.assertEqual(result["row_count"], 1)
+
+    def test_external_evidence_is_idempotent_and_local_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            payload = report(120_000)
+            payload["causal_external_evidence"] = {
+                "assignment_clock": "AVAILABLE_AT",
+                "events": [{
+                    "event_id": "fed-1", "kind": "MACRO", "source": "Fed",
+                    "occurred_at": "1970-01-01T00:01:10+00:00",
+                    "available_at": "1970-01-01T00:01:10+00:00",
+                    "symbols": [], "direction": "UNKNOWN", "detail": {},
+                }],
+            }
+            first = persist_closed_minute(path, payload)
+            second = persist_closed_minute(path, payload)
+            self.assertEqual(first["external_evidence_row_count"], 1)
+            self.assertEqual(second["external_evidence_row_count"], 1)
+            with sqlite3.connect(path) as connection:
+                row = connection.execute(
+                    f"SELECT minute_end_timestamp_ms,kind FROM {EXTERNAL_EVIDENCE_TABLE}"
+                ).fetchone()
+            self.assertEqual(row, (120_000, "MACRO"))
+            self.assertNotIn(EXTERNAL_EVIDENCE_TABLE, REMOTE_RUNTIME_TABLES)
 
     def test_rejects_open_minute(self):
         with tempfile.TemporaryDirectory() as tmp:

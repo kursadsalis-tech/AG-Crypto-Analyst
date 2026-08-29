@@ -1,5 +1,40 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Resmî FOMC saatleri gerçek örnekle doğrulandı ve dakika deposuna eklendi
+
+`526277b` checkpoint'inden devam edildi. Federal Reserve'in resmî FOMC toplantı
+sayfalarındaki açık `Released <tarih> at <saat>` satırlarını ve aynı satırdaki
+resmî belge bağlantısını zorunlu tutan `FEDERAL_RESERVE_EXACT_EVENTS_V1`
+toplayıcısı eklendi. ABD Doğu saati `America/New_York` kurallarıyla UTC'ye
+çevriliyor; böylece kış saati 14:00 yayını 19:00 UTC, yaz saati yayını 18:00 UTC
+oluyor. Kaynak toplantı sayfası, belge URL'si, zaman dayanağı ve indirilen HTML
+SHA-256 değeri korunuyor. Açık kesin saat yoksa sayfa fail-closed reddediliyor.
+
+Resmî kaynaktan gerçek, küçük ve yeniden üretilebilir 2026 örneği üretildi:
+3 toplantı sayfası, 10 belge; 3 FOMC açıklaması, 3 uygulama notu, 3 tutanak ve
+1 projeksiyon belgesi. Örnek `reports/federal_reserve_exact_events_2026_sample.json`
+dosyasındadır. Runtime SQLite'a tarihsel backfill yapılmadı. Uçtan uca test,
+resmî olayın `exact_time_macro_events` sözleşmesinden geçip yalnız 18:00-18:01
+UTC erişilebilirlik dakikasına girdiğini doğruladı.
+
+Nedensel dış olaylar artık yalnız kapanmış dakika JSON'unda kalmıyor:
+`causal_minute_external_evidence` yerel SQLite tablosuna olay kimliği + dakika
+ile idempotent yazılıyor ve davranış özellikleriyle aynı 30 günlük saklama
+sınırında budanıyor. Tablo Supabase mirror allowlist'ine eklenmedi. Bu veriler
+halen yalnız gözlemseldir; model, sinyal veya işlem kararına bağlanmadı.
+
+Buluta kurulum, servis/timer başlatma veya runtime veritabanı yazımı yapılmadı.
+PAPER_ONLY, kanıt eşikleri, strateji politikası, allocation ve gerçek emir
+yetkisi değişmedi; yeni model/eşik araması açılmadı. Odaklı testler 12/12, tam
+suite 194/194 geçti. Tam testteki ağsız/fail-closed mesajları beklenen test
+senaryolarıdır.
+
+Sıradaki ürün işi: canlıya yetki vermeden, kesin-zamanlı dış kanıt satırlarıyla
+aynı dakikadaki piyasa davranışı arasında yalnız ölçüm amaçlı bir forward
+eşleşme/sonuç tablosu tasarlamak. Önce yeterli doğal dakika ve farklı olay türü
+birikimini say; veri yetersizse model veya eşik araması yapma. Kullanıcının açık
+onayı olmadan hazırlanmış service/timer'ı buluta kurma veya başlatma.
+
 # 2026-08-30 — Gözlem sağlığı attestation'a, dış kanıtlar nedensel dakikaya bağlandı
 
 Temiz `6610102` piyasa-davranışı checkpoint'inden devam edildi. Ayrı ve atomik

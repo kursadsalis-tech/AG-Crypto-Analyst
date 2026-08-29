@@ -11,6 +11,12 @@
   and whale observed times into the same closed-minute line. Added an immutable
   local exact-macro event contract; ordinary day-level FRED observations are
   deliberately not promoted into intraday evidence.
+- Added a first-party Federal Reserve FOMC collector that accepts only explicit
+  `Released <date> at <time>` evidence, converts America/New_York time to UTC
+  with daylight-saving rules, and records source URLs and HTML SHA-256 values.
+  A three-page 2026 sample yielded 10 exact-time documents.
+- Persisted exact external events idempotently beside local behavior minutes
+  under the same 30-day retention boundary; this table is not remotely mirrored.
 - This evidence remains observational. PAPER_ONLY, action thresholds, strategy
   policy, allocation gates, and real-order authority are unchanged.
 

@@ -1,0 +1,166 @@
+{
+  "calendar_sha256": "711f3c89c10147642b687fbff07ae4034ab4c1974c5f0b5d18196156065914e6",
+  "calendar_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+  "contract_version": "FEDERAL_RESERVE_EXACT_EVENTS_V1",
+  "event_count": 10,
+  "events": [
+    {
+      "available_at": "2026-01-28T19:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a1.htm",
+        "meeting_page_sha256": "9e5e12f32fef0763982675bacc63cbb164b7b97acbce750b73ebd6731ef01eda",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpressconf20260128.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Implementation Note"
+      },
+      "event_id": "1b78429be8b017b473975828793ba8a901bb1df3d471972f062479632cfbec60",
+      "event_name": "FOMC_IMPLEMENTATION_NOTE",
+      "occurred_at": "2026-01-28T19:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-01-28T19:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260128a.htm",
+        "meeting_page_sha256": "9e5e12f32fef0763982675bacc63cbb164b7b97acbce750b73ebd6731ef01eda",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpressconf20260128.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "FOMC Meeting Statement"
+      },
+      "event_id": "ebddb45eeb68fa73fd4a5d457d0f04df215a544f0d3f86b6896714bdf865dc15",
+      "event_name": "FOMC_STATEMENT",
+      "occurred_at": "2026-01-28T19:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-02-18T19:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260128.htm",
+        "meeting_page_sha256": "9e5e12f32fef0763982675bacc63cbb164b7b97acbce750b73ebd6731ef01eda",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpressconf20260128.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Minutes"
+      },
+      "event_id": "bce7b65f915cc50f96dcb375133e4fcfbba343698a0d4bb7f62059f4de1bf059",
+      "event_name": "FOMC_MINUTES",
+      "occurred_at": "2026-02-18T19:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-03-18T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/monetarypolicy/fomcprojtabl20260318.htm",
+        "meeting_page_sha256": "827aa5594649f30a9e2a7b86a0d29eb999eb78fdfad78c2356b4c38c76c67157",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260318.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Projections Materials"
+      },
+      "event_id": "1c523f73e1331e49bc139879dbaff1359a6b3d0102d59bd3086c8747c9e348f2",
+      "event_name": "FOMC_PROJECTIONS",
+      "occurred_at": "2026-03-18T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-03-18T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260318a1.htm",
+        "meeting_page_sha256": "827aa5594649f30a9e2a7b86a0d29eb999eb78fdfad78c2356b4c38c76c67157",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260318.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Implementation Note"
+      },
+      "event_id": "2d22ff6809e7a672e69b867b8783dde33d2f526bef055599fd658205b2547e49",
+      "event_name": "FOMC_IMPLEMENTATION_NOTE",
+      "occurred_at": "2026-03-18T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-03-18T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260318a.htm",
+        "meeting_page_sha256": "827aa5594649f30a9e2a7b86a0d29eb999eb78fdfad78c2356b4c38c76c67157",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260318.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "FOMC Meeting Statement"
+      },
+      "event_id": "f9c4e599bef903f84631439c173631f078ecd01ce5b7bf4b50bd783a857ee9c2",
+      "event_name": "FOMC_STATEMENT",
+      "occurred_at": "2026-03-18T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-04-08T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260318.htm",
+        "meeting_page_sha256": "827aa5594649f30a9e2a7b86a0d29eb999eb78fdfad78c2356b4c38c76c67157",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260318.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Minutes"
+      },
+      "event_id": "c3583659a102067db44daf4c7fa13e9e41bf42b054bd95deee04f0d540745240",
+      "event_name": "FOMC_MINUTES",
+      "occurred_at": "2026-04-08T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-04-29T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260429a.htm",
+        "meeting_page_sha256": "c96690a7573d2d4e92f2dd18e50c3a14e270fb9e904853674f966b8527844314",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260429.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "FOMC Meeting Statement"
+      },
+      "event_id": "0a2924cbb2f69466d9abb711b81700461d69dda295d34fae54780b2aa85c783d",
+      "event_name": "FOMC_STATEMENT",
+      "occurred_at": "2026-04-29T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-04-29T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260429a1.htm",
+        "meeting_page_sha256": "c96690a7573d2d4e92f2dd18e50c3a14e270fb9e904853674f966b8527844314",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260429.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Implementation Note"
+      },
+      "event_id": "0a76db8d24a92ba083205a20cb0b1a13c352622502cbd2489acbae0c49d3b2f0",
+      "event_name": "FOMC_IMPLEMENTATION_NOTE",
+      "occurred_at": "2026-04-29T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    },
+    {
+      "available_at": "2026-05-20T18:00:00+00:00",
+      "detail": {
+        "document_url": "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260429.htm",
+        "meeting_page_sha256": "c96690a7573d2d4e92f2dd18e50c3a14e270fb9e904853674f966b8527844314",
+        "meeting_page_url": "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260429.htm",
+        "source_timezone": "America/New_York",
+        "timestamp_basis": "OFFICIAL_RELEASED_DATE_AND_TIME",
+        "visible_label": "Minutes"
+      },
+      "event_id": "02551527977990e36bf355ef655777dff7cacdeb950d600ba539d7a72e1c052f",
+      "event_name": "FOMC_MINUTES",
+      "occurred_at": "2026-05-20T18:00:00+00:00",
+      "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM"
+    }
+  ],
+  "meeting_page_count": 3,
+  "page_sha256": {
+    "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260318.htm": "827aa5594649f30a9e2a7b86a0d29eb999eb78fdfad78c2356b4c38c76c67157",
+    "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20260429.htm": "c96690a7573d2d4e92f2dd18e50c3a14e270fb9e904853674f966b8527844314",
+    "https://www.federalreserve.gov/monetarypolicy/fomcpressconf20260128.htm": "9e5e12f32fef0763982675bacc63cbb164b7b97acbce750b73ebd6731ef01eda"
+  },
+  "source": "BOARD_OF_GOVERNORS_FEDERAL_RESERVE_SYSTEM",
+  "year": 2026
+}

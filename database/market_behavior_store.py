@@ -8,6 +8,7 @@ from database.runtime_store import connect
 
 
 TABLE = "market_behavior_minute_features"
+EXTERNAL_EVIDENCE_TABLE = "causal_minute_external_evidence"
 DEFAULT_RETENTION_DAYS = 30
 
 
@@ -40,6 +41,25 @@ def ensure_table(connection):
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_market_behavior_minute_end
         ON {TABLE}(minute_end_timestamp_ms)
+    """)
+    connection.execute(f"""
+        CREATE TABLE IF NOT EXISTS {EXTERNAL_EVIDENCE_TABLE} (
+            event_id TEXT NOT NULL,
+            minute_end_timestamp_ms INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            source TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            symbols_json TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            detail_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(event_id, minute_end_timestamp_ms)
+        )
+    """)
+    connection.execute(f"""
+        CREATE INDEX IF NOT EXISTS ix_causal_external_evidence_minute
+        ON {EXTERNAL_EVIDENCE_TABLE}(minute_end_timestamp_ms, kind)
     """)
 
 
@@ -94,10 +114,38 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                 json.dumps(row["quality_gates"], sort_keys=True, separators=(",", ":")),
                 int(row["eligible_for_learning"]), created_at,
             ))
+        external = report.get("causal_external_evidence") or {}
+        if external and external.get("assignment_clock") != "AVAILABLE_AT":
+            raise ValueError("external evidence must use AVAILABLE_AT")
+        for event in external.get("events", []):
+            connection.execute(f"""
+                INSERT INTO {EXTERNAL_EVIDENCE_TABLE}(
+                    event_id,minute_end_timestamp_ms,kind,source,occurred_at,
+                    available_at,symbols_json,direction,detail_json,created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(event_id,minute_end_timestamp_ms) DO NOTHING
+            """, (
+                event["event_id"], minute_end, event["kind"], event["source"],
+                event["occurred_at"], event["available_at"],
+                json.dumps(event.get("symbols") or [], sort_keys=True, separators=(",", ":")),
+                event.get("direction") or "UNKNOWN",
+                json.dumps(event.get("detail") or {}, sort_keys=True, separators=(",", ":")),
+                created_at,
+            ))
         deleted = connection.execute(
             f"DELETE FROM {TABLE} WHERE minute_end_timestamp_ms < ?", (cutoff,)
         ).rowcount
+        external_deleted = connection.execute(
+            f"DELETE FROM {EXTERNAL_EVIDENCE_TABLE} WHERE minute_end_timestamp_ms < ?",
+            (cutoff,),
+        ).rowcount
         count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+        external_count = connection.execute(
+            f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
+        ).fetchone()[0]
     return {"upserted": len(report.get("rows", [])), "pruned": deleted,
             "row_count": count, "retention_days": int(retention_days),
+            "external_evidence_upserted": len(external.get("events", [])),
+            "external_evidence_pruned": external_deleted,
+            "external_evidence_row_count": external_count,
             "remote_mirror_enabled_for_table": False}
