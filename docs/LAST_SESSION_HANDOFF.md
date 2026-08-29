@@ -1,5 +1,49 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-29 — Çoklu zaman dilimi ve vadeli veri araştırması kapandı
+
+Kullanıcıya rapor verirken sade Türkçe kullanılmalı; teknik bir ölçü yazılırsa
+ne anlama geldiği de açıklanmalıdır. Kullanıcı açıkça `oturum bitti` demeden
+kapanış raporu veya sonraki oturum mesajı gönderilmemelidir.
+
+Bu oturumda aylık → haftalık → günlük → 4 saat → 1 saat kapalı mum bağlamı,
+piyasa türüne göre ayrı uzmanlar ve geçmiş ayın masraf sonrası sonucuna göre
+işlem seçimi sınandı. Bütün sonuçlar tarihsel geliştirme kanıtıdır; canlı başarı
+olarak sunulmamalıdır.
+
+- Piyasa türüne göre uzman modeller 4 saatlik yön isabetini altı dönemin
+  altısında artırdı (%44,96 → %46,01) fakat olasılık kalitesini bozdu ve masraf
+  sonrası ortalama sonuç -%0,083 kaldı. İleri PAPER sınavına alınmadı.
+- Geçmiş 30 günde açıkça olumlu kalan piyasa türü/yön/güven koşullarını sonraki
+  30 güne taşıyan seçici yöntem 4 saatte 1.822 işlem seçti (%13,2 kapsam), yön
+  isabeti %48,52 ve masraf sonrası ortalama -%0,049 üretti. Altı dönemin yalnız
+  ikisi artıydı; ileri PAPER sınavına alınmadı.
+- Mevcut 23 vadeli piyasa ölçüsü (fonlama, açık pozisyon, spot-vadeli farkı,
+  alıcı/satıcı baskısı; coin ve BTC) çoklu zaman dilimli 4 saatlik modele eklendi.
+  12 coin ve 82.664 örnekte yön isabeti %45,38 → %45,69 oldu; yalnız 3/6 dönem
+  kazandı, olasılık kalitesi 0,6048 → 0,6116 kötüleşti (düşük daha iyi) ve masraf
+  sonrası sonuç -%0,094 kaldı. Aday reddedildi.
+- Binance arşivindeki tek sıfır BTC açık-pozisyon saati uydurma değerle
+  doldurulmadı; yalnız ona bağlı bağlamlar dışlandı. Toplam eksik bağlam %0,046.
+
+Canlı Unified Forecast, PAPER trader, strateji politikası, kanıt eşikleri ve
+gerçek emir yetkisi değiştirilmedi. PAPER_ONLY korunuyor. Son tam yerel test
+141/141 geçti. Son temiz checkpoint `5c946ae`; dal
+`checkpoint/agca-20260826-supabase-recovery`.
+
+Sonraki araştırmanın konusu yeni model/ayar aramak değil, mevcut veride olmayan
+ve hareketin nedenini zamanında açıklayabilecek yeni bilgi kaynaklarının
+uygulanabilirliğidir: tarihsel tasfiyeler, geçmiş emir defteri dengesizlikleri
+ve kesin zamanlı ekonomik/haber olayları. Önce ücretsiz ve güvenilir kaynakların
+zaman damgası, geçmiş derinliği, coin kapsamı, yeniden üretilebilirliği ve kullanım
+şartları araştırılmalı; veri yeterli değilse kullanıcıya ücretli seçeneklerin
+maliyeti ve farkı sunulmalı, onay alınmadan satın alma/abonelik yapılmamalıdır.
+Yeni veri bulunmadan aynı fiyat/teknik/vadeli özelliklerle yeni model veya eşik
+araması açılmamalıdır.
+
+Bu oturumda değiştirilmemesi gerekenler: PAPER_ONLY, üretim/eylem yetkisi,
+kanıt eşikleri, strateji dağıtım politikası ve gerçek emir kapıları.
+
 # 2026-08-28 — Supabase RLS security alert resolved
 
 The “AGCA kritik altyapı güvenlik uyarısı” came from the hourly monitoring task,
