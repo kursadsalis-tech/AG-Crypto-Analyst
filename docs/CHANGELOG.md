@@ -895,12 +895,14 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Built a causal monthly, weekly, daily, 4h and 1h feature layer using only
   fully closed higher-timeframe bars. Tests prove future and incomplete bars
   cannot change an earlier feature vector.
-- Compared the fixed top-down layer with the existing advanced 1h model across
-  six sequential 30-day blocks. Accuracy moved from 42.705% to 42.776%, but
-  Brier worsened from 0.628869 to 0.631139; it won accuracy in only 2/6 blocks
-  and Brier in only 1/6.
-- The predeclared gate rejected it. The layer remains reproducible research and
-  is not connected to live forecasts, PAPER policy, thresholds or authority.
+- Compared the fixed top-down layer with the same advanced technical classifier
+  across six sequential 30-day blocks, using non-overlapping labels for 4h/24h.
+  It failed the predeclared gate at every horizon: 1h accuracy/Brier moved from
+  42.738%/0.628966 to 42.579%/0.631307; 4h from 44.757%/0.604854 to
+  45.324%/0.605884; and 24h from 47.619%/0.611188 to 48.371%/0.603935, but
+  accuracy block wins were only 2/6 at 24h and Brier wins only 2/6 at 4h.
+- The layer remains reproducible rejected research and is not connected to live
+  forecasts, PAPER policy, thresholds or authority.
 
 ## 2026-08-28 — Fixed rolling 1h direction ensemble
 

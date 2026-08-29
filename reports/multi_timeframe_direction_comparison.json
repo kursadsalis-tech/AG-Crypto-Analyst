@@ -1,107 +1,321 @@
 {
-  "blocks": [
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.39627688028244357,
-        "brier": 0.6447140831150133,
-        "events": 9347
-      },
-      "end": "2026-04-01T00:00:00+00:00",
-      "start": "2026-03-02T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.4091152241360864,
-        "brier": 0.6479201051810098,
-        "events": 9347
-      },
-      "training_rows": 28392
-    },
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.4081523483470632,
-        "brier": 0.6338277385404592,
-        "events": 9347
-      },
-      "end": "2026-05-01T00:00:00+00:00",
-      "start": "2026-04-01T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.40718947255804,
-        "brier": 0.6407304021507731,
-        "events": 9347
-      },
-      "training_rows": 37427
-    },
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.4451695731250669,
-        "brier": 0.6195898403397259,
-        "events": 9347
-      },
-      "end": "2026-05-31T00:00:00+00:00",
-      "start": "2026-05-01T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.4434577939445811,
-        "brier": 0.6204161655908991,
-        "events": 9347
-      },
-      "training_rows": 37427
-    },
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.45747298598480796,
-        "brier": 0.6058708406914128,
-        "events": 9347
-      },
-      "end": "2026-06-30T00:00:00+00:00",
-      "start": "2026-05-31T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.4539424414250562,
-        "brier": 0.6065942757072127,
-        "events": 9347
-      },
-      "training_rows": 37427
-    },
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.42484219535679896,
-        "brier": 0.6390636911713566,
-        "events": 9347
-      },
-      "end": "2026-07-30T00:00:00+00:00",
-      "start": "2026-06-30T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.4213116507970472,
-        "brier": 0.641856413205176,
-        "events": 9347
-      },
-      "training_rows": 37427
-    },
-    {
-      "advanced_1h_only": {
-        "accuracy": 0.43037829136483846,
-        "brier": 0.6301455911851731,
-        "events": 8697
-      },
-      "end": "2026-08-29T00:00:00+00:00",
-      "start": "2026-07-30T00:00:00+00:00",
-      "top_down_multi_timeframe": {
-        "accuracy": 0.4315281131424629,
-        "brier": 0.6293140240383717,
-        "events": 8697
-      },
-      "training_rows": 37427
-    }
-  ],
   "claim": "HISTORICAL_DEVELOPMENT_EVIDENCE_NOT_FORWARD_PROOF",
-  "summary": {
-    "accuracy_block_wins": 2,
-    "action_authority": false,
-    "advanced_1h_only_accuracy": 0.42704871241016984,
-    "advanced_1h_only_brier": 0.6288686308405235,
-    "brier_block_wins": 1,
-    "production_eligible": false,
-    "selected_for_forward_shadow": false,
-    "top_down_multi_timeframe_accuracy": 0.427757449333879,
-    "top_down_multi_timeframe_brier": 0.6311385643122404
+  "horizons": {
+    "1": {
+      "blocks": [
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.3964908526800043,
+            "brier": 0.6454557618631724,
+            "events": 9347
+          },
+          "end": "2026-04-01T00:00:00+00:00",
+          "start": "2026-03-02T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.40291002460682573,
+            "brier": 0.6489344380755075,
+            "events": 9347
+          },
+          "training_rows": 28392
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4120038515031561,
+            "brier": 0.6327261725260486,
+            "events": 9347
+          },
+          "end": "2026-05-01T00:00:00+00:00",
+          "start": "2026-04-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.40879426553974535,
+            "brier": 0.6395599478640531,
+            "events": 9347
+          },
+          "training_rows": 37427
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.44720231090189366,
+            "brier": 0.6196758697771306,
+            "events": 9347
+          },
+          "end": "2026-05-31T00:00:00+00:00",
+          "start": "2026-05-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4400342355836097,
+            "brier": 0.621684843577023,
+            "events": 9347
+          },
+          "training_rows": 37427
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4611105167433401,
+            "brier": 0.6059230280010923,
+            "events": 9347
+          },
+          "end": "2026-06-30T00:00:00+00:00",
+          "start": "2026-05-31T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4515887450518883,
+            "brier": 0.6074831500264224,
+            "events": 9347
+          },
+          "training_rows": 37427
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4205627474055847,
+            "brier": 0.6392998653669121,
+            "events": 9347
+          },
+          "end": "2026-07-30T00:00:00+00:00",
+          "start": "2026-06-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.42013480261046326,
+            "brier": 0.6407983710821521,
+            "events": 9347
+          },
+          "training_rows": 37427
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.426928826031965,
+            "brier": 0.6307137616785845,
+            "events": 8697
+          },
+          "end": "2026-08-29T00:00:00+00:00",
+          "start": "2026-07-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.431298148786938,
+            "brier": 0.6293799432040361,
+            "events": 8697
+          },
+          "training_rows": 37427
+        }
+      ],
+      "summary": {
+        "accuracy_block_wins": 2,
+        "action_authority": false,
+        "advanced_1h_only_accuracy": 0.4273831842109906,
+        "advanced_1h_only_brier": 0.6289657432021568,
+        "brier_block_wins": 1,
+        "production_eligible": false,
+        "selected_for_forward_shadow": false,
+        "top_down_multi_timeframe_accuracy": 0.42579337036324505,
+        "top_down_multi_timeframe_brier": 0.6313067823048657
+      }
+    },
+    "24": {
+      "blocks": [
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4350132625994695,
+            "brier": 0.6760546677141868,
+            "events": 377
+          },
+          "end": "2026-04-01T00:00:00+00:00",
+          "start": "2026-03-02T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4350132625994695,
+            "brier": 0.6597164924321158,
+            "events": 377
+          },
+          "training_rows": 1183
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.47214854111405835,
+            "brier": 0.6391861366762123,
+            "events": 377
+          },
+          "end": "2026-05-01T00:00:00+00:00",
+          "start": "2026-04-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.5039787798408488,
+            "brier": 0.6199093064810449,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4403183023872679,
+            "brier": 0.6088486109184787,
+            "events": 377
+          },
+          "end": "2026-05-31T00:00:00+00:00",
+          "start": "2026-05-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.46419098143236076,
+            "brier": 0.6053906330432232,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.5092838196286472,
+            "brier": 0.5877107117045904,
+            "events": 377
+          },
+          "end": "2026-06-30T00:00:00+00:00",
+          "start": "2026-05-31T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4986737400530504,
+            "brier": 0.5932453728025164,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.5278514588859416,
+            "brier": 0.5527255160112857,
+            "events": 377
+          },
+          "end": "2026-07-30T00:00:00+00:00",
+          "start": "2026-06-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.5278514588859416,
+            "brier": 0.5408988655396572,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4725274725274725,
+            "brier": 0.6026030421710297,
+            "events": 364
+          },
+          "end": "2026-08-29T00:00:00+00:00",
+          "start": "2026-07-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4725274725274725,
+            "brier": 0.6044487849194036,
+            "events": 364
+          },
+          "training_rows": 1547
+        }
+      ],
+      "summary": {
+        "accuracy_block_wins": 2,
+        "action_authority": false,
+        "advanced_1h_only_accuracy": 0.4761904761904762,
+        "advanced_1h_only_brier": 0.6111881141992973,
+        "brier_block_wins": 4,
+        "production_eligible": false,
+        "selected_for_forward_shadow": false,
+        "top_down_multi_timeframe_accuracy": 0.4837059492231906,
+        "top_down_multi_timeframe_brier": 0.6039349092029935
+      }
+    },
+    "4": {
+      "blocks": [
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4374731413837559,
+            "brier": 0.6178280671466797,
+            "events": 2327
+          },
+          "end": "2026-04-01T00:00:00+00:00",
+          "start": "2026-03-02T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.45251396648044695,
+            "brier": 0.6176262062946724,
+            "events": 2327
+          },
+          "training_rows": 7098
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.47142243231628705,
+            "brier": 0.5977403344246167,
+            "events": 2327
+          },
+          "end": "2026-05-01T00:00:00+00:00",
+          "start": "2026-04-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.46669531585732704,
+            "brier": 0.6027378289287063,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.43403523850451226,
+            "brier": 0.6066935409329804,
+            "events": 2327
+          },
+          "end": "2026-05-31T00:00:00+00:00",
+          "start": "2026-05-01T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4374731413837559,
+            "brier": 0.6105273829114687,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.45938977223893424,
+            "brier": 0.5860512829811789,
+            "events": 2327
+          },
+          "end": "2026-06-30T00:00:00+00:00",
+          "start": "2026-05-31T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.47142243231628705,
+            "brier": 0.5867988189863754,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4426299957026214,
+            "brier": 0.6119872001630354,
+            "events": 2327
+          },
+          "end": "2026-07-30T00:00:00+00:00",
+          "start": "2026-06-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4426299957026214,
+            "brier": 0.612013913836348,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.44047619047619047,
+            "brier": 0.6088254085521343,
+            "events": 2184
+          },
+          "end": "2026-08-29T00:00:00+00:00",
+          "start": "2026-07-30T00:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.44871794871794873,
+            "brier": 0.6056020229471286,
+            "events": 2184
+          },
+          "training_rows": 9347
+        }
+      ],
+      "summary": {
+        "accuracy_block_wins": 4,
+        "action_authority": false,
+        "advanced_1h_only_accuracy": 0.4475711284370502,
+        "advanced_1h_only_brier": 0.6048543057001042,
+        "brier_block_wins": 2,
+        "production_eligible": false,
+        "selected_for_forward_shadow": false,
+        "top_down_multi_timeframe_accuracy": 0.4532421334097312,
+        "top_down_multi_timeframe_brier": 0.6058843623174499
+      }
+    }
   },
   "version": "MULTI_TIMEFRAME_DIRECTION_LAB_V1_FIXED"
 }

@@ -19,6 +19,7 @@ TRAINING_DAYS = 120
 HALF_LIFE_DAYS = 45.0
 RANDOM_STATE = 20260829
 CLASSES = ("UP", "DOWN", "NEUTRAL")
+HORIZONS = (1, 4, 24)
 
 
 def _features(row, include_multi_timeframe):
@@ -34,16 +35,28 @@ def _label(row):
     return "UP" if value > meaningful else ("DOWN" if value < -meaningful else "NEUTRAL")
 
 
-def _fit(rows, cutoff, include_multi_timeframe):
+def _non_overlapping(rows, horizon):
+    selected = []
+    next_allowed = {}
+    for row in sorted(rows, key=lambda item: (item["as_of"], item["symbol"])):
+        if row["as_of"] < next_allowed.get(row["symbol"], row["as_of"]):
+            continue
+        selected.append(row)
+        next_allowed[row["symbol"]] = row["due_time"]
+    return selected
+
+
+def _fit(rows, cutoff, horizon, include_multi_timeframe):
     import numpy as np
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     selected = [
         row for row in rows
-        if int(row["horizon"]) == 1
+        if int(row["horizon"]) == int(horizon)
         and cutoff - timedelta(days=TRAINING_DAYS) <= row["as_of"]
         and row["due_time"] < cutoff
     ]
+    selected = _non_overlapping(selected, horizon)
     matrix = np.asarray([
         _features(row, include_multi_timeframe) for row in selected
     ], dtype=float)
@@ -89,19 +102,20 @@ def _score(model, rows, include_multi_timeframe):
     }
 
 
-def compare(rows, end):
+def _compare_horizon(rows, end, horizon):
     blocks = []
     for offset in reversed(range(BLOCK_COUNT)):
         start = end - timedelta(days=(offset + 1) * BLOCK_DAYS)
         stop = start + timedelta(days=BLOCK_DAYS)
         test = [
             row for row in rows
-            if int(row["horizon"]) == 1
+            if int(row["horizon"]) == int(horizon)
             and start <= row["as_of"] < stop
             and row["due_time"] < stop
         ]
-        old_model, training_rows = _fit(rows, start, False)
-        new_model, _ = _fit(rows, start, True)
+        test = _non_overlapping(test, horizon)
+        old_model, training_rows = _fit(rows, start, horizon, False)
+        new_model, _ = _fit(rows, start, horizon, True)
         blocks.append({
             "start": core.iso(start), "end": core.iso(stop),
             "training_rows": training_rows,
@@ -135,8 +149,6 @@ def compare(rows, end):
         and accuracy_wins >= 4 and brier_wins >= 4
     )
     return {
-        "version": VERSION,
-        "claim": "HISTORICAL_DEVELOPMENT_EVIDENCE_NOT_FORWARD_PROOF",
         "blocks": blocks,
         "summary": {
             "advanced_1h_only_accuracy": old_accuracy,
@@ -152,6 +164,17 @@ def compare(rows, end):
     }
 
 
+def compare(rows, end):
+    return {
+        "version": VERSION,
+        "claim": "HISTORICAL_DEVELOPMENT_EVIDENCE_NOT_FORWARD_PROOF",
+        "horizons": {
+            str(horizon): _compare_horizon(rows, end, horizon)
+            for horizon in HORIZONS
+        },
+    }
+
+
 def run(database=core.DB_NAME):
     now = core.utcnow()
     start, fetch_start, end = core.requested_range(now)
@@ -162,15 +185,23 @@ def run(database=core.DB_NAME):
     finally:
         con.close()
     from analysis import multi_timeframe_features
+    invalid_ids = set()
     for symbol, item in series.items():
         indexes = item["by_close"]
         candles = item["candles"]
         for row in built["rows"]:
             if row["symbol"] == symbol and "multi_timeframe_features" not in row:
-                row["multi_timeframe_features"] = multi_timeframe_features.vector(
-                    candles, indexes[row["as_of"]]
-                )
-    report = compare(built["rows"], end)
+                try:
+                    row["multi_timeframe_features"] = multi_timeframe_features.vector(
+                        candles, indexes[row["as_of"]]
+                    )
+                except ValueError:
+                    invalid_ids.add(id(row))
+    eligible = [
+        row for row in built["rows"]
+        if id(row) not in invalid_ids and "multi_timeframe_features" in row
+    ]
+    report = compare(eligible, end)
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -182,7 +213,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--database", default=core.DB_NAME)
     args = parser.parse_args()
-    print(json.dumps(run(args.database)["summary"], indent=2, sort_keys=True))
+    report = run(args.database)
+    print(json.dumps({
+        horizon: result["summary"]
+        for horizon, result in report["horizons"].items()
+    }, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
