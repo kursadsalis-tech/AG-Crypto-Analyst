@@ -903,6 +903,16 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   accuracy block wins were only 2/6 at 24h and Brier wins only 2/6 at 4h.
 - The layer remains reproducible rejected research and is not connected to live
   forecasts, PAPER policy, thresholds or authority.
+- A second fixed experiment implemented the intended sequential workflow rather
+  than feeding every metric to one model: BTC/risk market ground, monthly-
+  weekly-daily big picture, 4h setup, 1h timing and 24h spot-flow confirmation.
+  Missing evidence could not add confidence and any higher/lower-timeframe
+  conflict forced abstention.
+- The hierarchy also failed. Confirmed direction accuracy was 41.24% vs 42.33%
+  at 1h, 39.59% vs 44.86% at 4h, and 45.06% vs 47.62% at 24h. Net-after-cost
+  utility stayed negative at all horizons and the fixed gate rejected it.
+- The hierarchy remains auditable rejected research with zero production,
+  policy-mutation, action or real-order authority.
 
 ## 2026-08-28 — Fixed rolling 1h direction ensemble
 

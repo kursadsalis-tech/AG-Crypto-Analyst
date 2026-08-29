@@ -102,6 +102,47 @@ def _score(model, rows, include_multi_timeframe):
     }
 
 
+def _hierarchy_score(model, rows):
+    import numpy as np
+    from analysis import hierarchical_market_context as hierarchy
+
+    matrix = np.asarray([_features(row, False) for row in rows], dtype=float)
+    raw = model.predict_proba(matrix)
+    classes = tuple(str(value) for value in model.classes_)
+    baseline = []
+    confirmed = []
+    for row, values in zip(rows, raw):
+        probabilities = {
+            name: float(values[classes.index(name)]) for name in CLASSES
+        }
+        predicted = max(probabilities, key=probabilities.get)
+        if predicted == "NEUTRAL":
+            continue
+        actual = _label(row)
+        hit = int(predicted == actual)
+        utility = (
+            float(row["trade_return_pct"])
+            if predicted == "UP" else -float(row["trade_return_pct"])
+        ) - 0.10
+        item = (hit, utility)
+        baseline.append(item)
+        if hierarchy.confirms_forecast(row["hierarchical_context"], predicted):
+            confirmed.append(item)
+
+    def metrics(selected):
+        return {
+            "events": len(selected),
+            "accuracy": statistics.fmean(item[0] for item in selected) if selected else 0.0,
+            "net_utility_pct": statistics.fmean(item[1] for item in selected) if selected else 0.0,
+        }
+
+    return {
+        "all_directional": metrics(baseline),
+        "hierarchy_confirmed": metrics(confirmed),
+        "coverage": len(confirmed) / len(baseline) if baseline else 0.0,
+    }
+
+
 def _compare_horizon(rows, end, horizon):
     blocks = []
     for offset in reversed(range(BLOCK_COUNT)):
@@ -121,6 +162,7 @@ def _compare_horizon(rows, end, horizon):
             "training_rows": training_rows,
             "advanced_1h_only": _score(old_model, test, False),
             "top_down_multi_timeframe": _score(new_model, test, True),
+            "hierarchical_confirmation": _hierarchy_score(old_model, test),
         })
     old_accuracy = statistics.fmean(
         block["advanced_1h_only"]["accuracy"] for block in blocks
@@ -148,6 +190,52 @@ def _compare_horizon(rows, end, horizon):
         new_accuracy > old_accuracy and new_brier < old_brier
         and accuracy_wins >= 4 and brier_wins >= 4
     )
+    hierarchy_events = sum(
+        block["hierarchical_confirmation"]["hierarchy_confirmed"]["events"]
+        for block in blocks
+    )
+    directional_events = sum(
+        block["hierarchical_confirmation"]["all_directional"]["events"]
+        for block in blocks
+    )
+    hierarchy_accuracy = sum(
+        block["hierarchical_confirmation"]["hierarchy_confirmed"]["accuracy"]
+        * block["hierarchical_confirmation"]["hierarchy_confirmed"]["events"]
+        for block in blocks
+    ) / hierarchy_events if hierarchy_events else 0.0
+    baseline_accuracy = sum(
+        block["hierarchical_confirmation"]["all_directional"]["accuracy"]
+        * block["hierarchical_confirmation"]["all_directional"]["events"]
+        for block in blocks
+    ) / directional_events if directional_events else 0.0
+    hierarchy_utility = sum(
+        block["hierarchical_confirmation"]["hierarchy_confirmed"]["net_utility_pct"]
+        * block["hierarchical_confirmation"]["hierarchy_confirmed"]["events"]
+        for block in blocks
+    ) / hierarchy_events if hierarchy_events else 0.0
+    baseline_utility = sum(
+        block["hierarchical_confirmation"]["all_directional"]["net_utility_pct"]
+        * block["hierarchical_confirmation"]["all_directional"]["events"]
+        for block in blocks
+    ) / directional_events if directional_events else 0.0
+    hierarchy_accuracy_wins = sum(
+        block["hierarchical_confirmation"]["hierarchy_confirmed"]["accuracy"]
+        > block["hierarchical_confirmation"]["all_directional"]["accuracy"]
+        for block in blocks
+    )
+    hierarchy_utility_wins = sum(
+        block["hierarchical_confirmation"]["hierarchy_confirmed"]["net_utility_pct"]
+        > block["hierarchical_confirmation"]["all_directional"]["net_utility_pct"]
+        for block in blocks
+    )
+    hierarchy_selected = bool(
+        hierarchy_events >= 100
+        and hierarchy_events / max(directional_events, 1) >= 0.05
+        and hierarchy_accuracy > baseline_accuracy
+        and hierarchy_utility > baseline_utility
+        and hierarchy_accuracy_wins >= 4
+        and hierarchy_utility_wins >= 4
+    )
     return {
         "blocks": blocks,
         "summary": {
@@ -158,6 +246,16 @@ def _compare_horizon(rows, end, horizon):
             "accuracy_block_wins": accuracy_wins,
             "brier_block_wins": brier_wins,
             "selected_for_forward_shadow": selected,
+            "hierarchy_directional_events": directional_events,
+            "hierarchy_confirmed_events": hierarchy_events,
+            "hierarchy_coverage": hierarchy_events / max(directional_events, 1),
+            "hierarchy_baseline_accuracy": baseline_accuracy,
+            "hierarchy_confirmed_accuracy": hierarchy_accuracy,
+            "hierarchy_baseline_net_utility_pct": baseline_utility,
+            "hierarchy_confirmed_net_utility_pct": hierarchy_utility,
+            "hierarchy_accuracy_block_wins": hierarchy_accuracy_wins,
+            "hierarchy_utility_block_wins": hierarchy_utility_wins,
+            "hierarchy_selected_for_forward_shadow": hierarchy_selected,
             "production_eligible": False,
             "action_authority": False,
         },
@@ -185,7 +283,10 @@ def run(database=core.DB_NAME):
     finally:
         con.close()
     from analysis import multi_timeframe_features
+    from analysis import hierarchical_market_context
     invalid_ids = set()
+    btc_candles = series["BTCUSDT"]["candles"]
+    btc_indexes = series["BTCUSDT"]["by_close"]
     for symbol, item in series.items():
         indexes = item["by_close"]
         candles = item["candles"]
@@ -194,6 +295,11 @@ def run(database=core.DB_NAME):
                 try:
                     row["multi_timeframe_features"] = multi_timeframe_features.vector(
                         candles, indexes[row["as_of"]]
+                    )
+                    row["hierarchical_context"] = hierarchical_market_context.build(
+                        candles, indexes[row["as_of"]],
+                        btc_candles, btc_indexes[row["as_of"]],
+                        bool(row["risk_eligible"]),
                     )
                 except ValueError:
                     invalid_ids.add(id(row))

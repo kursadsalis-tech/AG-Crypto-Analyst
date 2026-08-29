@@ -10,6 +10,19 @@
             "events": 9347
           },
           "end": "2026-04-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.39592382225192113,
+              "events": 8979,
+              "net_utility_pct": -0.10582631262824882
+            },
+            "coverage": 0.09499944314511638,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4091441969519343,
+              "events": 853,
+              "net_utility_pct": -0.12560681977400678
+            }
+          },
           "start": "2026-03-02T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.40291002460682573,
@@ -25,6 +38,19 @@
             "events": 9347
           },
           "end": "2026-05-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4087403598971722,
+              "events": 8558,
+              "net_utility_pct": -0.11540502078580155
+            },
+            "coverage": 0.03365272259873802,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4236111111111111,
+              "events": 288,
+              "net_utility_pct": -0.07748535679161621
+            }
+          },
           "start": "2026-04-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.40879426553974535,
@@ -40,6 +66,19 @@
             "events": 9347
           },
           "end": "2026-05-31T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.44021479713603817,
+              "events": 8380,
+              "net_utility_pct": -0.10725559498412308
+            },
+            "coverage": 0.03233890214797136,
+            "hierarchy_confirmed": {
+              "accuracy": 0.3763837638376384,
+              "events": 271,
+              "net_utility_pct": -0.14450581809722005
+            }
+          },
           "start": "2026-05-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4400342355836097,
@@ -55,6 +94,19 @@
             "events": 9347
           },
           "end": "2026-06-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.46123988022623935,
+              "events": 9017,
+              "net_utility_pct": -0.017778304609246544
+            },
+            "coverage": 0.04336253742930021,
+            "hierarchy_confirmed": {
+              "accuracy": 0.45012787723785164,
+              "events": 391,
+              "net_utility_pct": 0.07662942870171213
+            }
+          },
           "start": "2026-05-31T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4515887450518883,
@@ -70,6 +122,19 @@
             "events": 9347
           },
           "end": "2026-07-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.42084118016321403,
+              "events": 7965,
+              "net_utility_pct": -0.06785033764997729
+            },
+            "coverage": 0.023854362837413684,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4,
+              "events": 190,
+              "net_utility_pct": -0.056490380954338386
+            }
+          },
           "start": "2026-06-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.42013480261046326,
@@ -85,6 +150,19 @@
             "events": 8697
           },
           "end": "2026-08-29T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4105163557718302,
+              "events": 7398,
+              "net_utility_pct": -0.12013952727408653
+            },
+            "coverage": 0.037712895377128956,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4014336917562724,
+              "events": 279,
+              "net_utility_pct": -0.1346990471104089
+            }
+          },
           "start": "2026-07-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.431298148786938,
@@ -100,6 +178,16 @@
         "advanced_1h_only_accuracy": 0.4273831842109906,
         "advanced_1h_only_brier": 0.6289657432021568,
         "brier_block_wins": 1,
+        "hierarchy_accuracy_block_wins": 2,
+        "hierarchy_baseline_accuracy": 0.4232856830427262,
+        "hierarchy_baseline_net_utility_pct": -0.08800086784019374,
+        "hierarchy_confirmed_accuracy": 0.41241197183098594,
+        "hierarchy_confirmed_events": 2272,
+        "hierarchy_confirmed_net_utility_pct": -0.08229382774221779,
+        "hierarchy_coverage": 0.04517168021949619,
+        "hierarchy_directional_events": 50297,
+        "hierarchy_selected_for_forward_shadow": false,
+        "hierarchy_utility_block_wins": 3,
         "production_eligible": false,
         "selected_for_forward_shadow": false,
         "top_down_multi_timeframe_accuracy": 0.42579337036324505,
@@ -115,6 +203,19 @@
             "events": 377
           },
           "end": "2026-04-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4350132625994695,
+              "events": 377,
+              "net_utility_pct": -0.2734130606765934
+            },
+            "coverage": 0.09814323607427056,
+            "hierarchy_confirmed": {
+              "accuracy": 0.2972972972972973,
+              "events": 37,
+              "net_utility_pct": -0.786577413024123
+            }
+          },
           "start": "2026-03-02T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4350132625994695,
@@ -130,6 +231,19 @@
             "events": 377
           },
           "end": "2026-05-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.47214854111405835,
+              "events": 377,
+              "net_utility_pct": -0.19943714948972135
+            },
+            "coverage": 0.09018567639257294,
+            "hierarchy_confirmed": {
+              "accuracy": 0.5,
+              "events": 34,
+              "net_utility_pct": -0.6727416055716218
+            }
+          },
           "start": "2026-04-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.5039787798408488,
@@ -145,6 +259,19 @@
             "events": 377
           },
           "end": "2026-05-31T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4403183023872679,
+              "events": 377,
+              "net_utility_pct": -0.3783151949419896
+            },
+            "coverage": 0.07161803713527852,
+            "hierarchy_confirmed": {
+              "accuracy": 0.37037037037037035,
+              "events": 27,
+              "net_utility_pct": -0.6270357109192505
+            }
+          },
           "start": "2026-05-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.46419098143236076,
@@ -160,6 +287,19 @@
             "events": 377
           },
           "end": "2026-06-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.5092838196286472,
+              "events": 377,
+              "net_utility_pct": 0.09343720299119207
+            },
+            "coverage": 0.07957559681697612,
+            "hierarchy_confirmed": {
+              "accuracy": 0.7,
+              "events": 30,
+              "net_utility_pct": 1.7846055995618495
+            }
+          },
           "start": "2026-05-31T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4986737400530504,
@@ -175,6 +315,19 @@
             "events": 377
           },
           "end": "2026-07-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.5278514588859416,
+              "events": 377,
+              "net_utility_pct": 0.32479789496302053
+            },
+            "coverage": 0.034482758620689655,
+            "hierarchy_confirmed": {
+              "accuracy": 0.38461538461538464,
+              "events": 13,
+              "net_utility_pct": -1.1205511775760328
+            }
+          },
           "start": "2026-06-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.5278514588859416,
@@ -190,6 +343,19 @@
             "events": 364
           },
           "end": "2026-08-29T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4725274725274725,
+              "events": 364,
+              "net_utility_pct": -0.531032301110388
+            },
+            "coverage": 0.057692307692307696,
+            "hierarchy_confirmed": {
+              "accuracy": 0.42857142857142855,
+              "events": 21,
+              "net_utility_pct": -0.3665925386513985
+            }
+          },
           "start": "2026-07-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4725274725274725,
@@ -205,6 +371,16 @@
         "advanced_1h_only_accuracy": 0.4761904761904762,
         "advanced_1h_only_brier": 0.6111881141992973,
         "brier_block_wins": 4,
+        "hierarchy_accuracy_block_wins": 2,
+        "hierarchy_baseline_accuracy": 0.47621164962205426,
+        "hierarchy_baseline_net_utility_pct": -0.15851955687028627,
+        "hierarchy_confirmed_accuracy": 0.4506172839506173,
+        "hierarchy_confirmed_events": 162,
+        "hierarchy_confirmed_net_utility_pct": -0.2323085413546899,
+        "hierarchy_coverage": 0.07203201422854602,
+        "hierarchy_directional_events": 2249,
+        "hierarchy_selected_for_forward_shadow": false,
+        "hierarchy_utility_block_wins": 2,
         "production_eligible": false,
         "selected_for_forward_shadow": false,
         "top_down_multi_timeframe_accuracy": 0.4837059492231906,
@@ -220,6 +396,19 @@
             "events": 2327
           },
           "end": "2026-04-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4384151593453919,
+              "events": 2322,
+              "net_utility_pct": -0.11092010812646846
+            },
+            "coverage": 0.0714900947459087,
+            "hierarchy_confirmed": {
+              "accuracy": 0.42771084337349397,
+              "events": 166,
+              "net_utility_pct": -0.17248628702755836
+            }
+          },
           "start": "2026-03-02T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.45251396648044695,
@@ -235,6 +424,19 @@
             "events": 2327
           },
           "end": "2026-05-01T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4717794054286945,
+              "events": 2321,
+              "net_utility_pct": -0.07823975719837876
+            },
+            "coverage": 0.04739336492890995,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4727272727272727,
+              "events": 110,
+              "net_utility_pct": 0.13855030049158454
+            }
+          },
           "start": "2026-04-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.46669531585732704,
@@ -250,6 +452,19 @@
             "events": 2327
           },
           "end": "2026-05-31T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4354769097971515,
+              "events": 2317,
+              "net_utility_pct": -0.25724319288188713
+            },
+            "coverage": 0.0466119982736297,
+            "hierarchy_confirmed": {
+              "accuracy": 0.2962962962962963,
+              "events": 108,
+              "net_utility_pct": -0.5897321549777609
+            }
+          },
           "start": "2026-05-01T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4374731413837559,
@@ -265,6 +480,19 @@
             "events": 2327
           },
           "end": "2026-06-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.46037898363479757,
+              "events": 2322,
+              "net_utility_pct": -0.13671528957241022
+            },
+            "coverage": 0.059431524547803614,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4057971014492754,
+              "events": 138,
+              "net_utility_pct": 0.21391813760278922
+            }
+          },
           "start": "2026-05-31T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.47142243231628705,
@@ -280,6 +508,19 @@
             "events": 2327
           },
           "end": "2026-07-30T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.44282029234737746,
+              "events": 2326,
+              "net_utility_pct": -0.1137233329691807
+            },
+            "coverage": 0.026655202063628546,
+            "hierarchy_confirmed": {
+              "accuracy": 0.3709677419354839,
+              "events": 62,
+              "net_utility_pct": -0.2669588750266009
+            }
+          },
           "start": "2026-06-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4426299957026214,
@@ -295,6 +536,19 @@
             "events": 2184
           },
           "end": "2026-08-29T00:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4420323325635104,
+              "events": 2165,
+              "net_utility_pct": -0.17800040244791107
+            },
+            "coverage": 0.04295612009237875,
+            "hierarchy_confirmed": {
+              "accuracy": 0.3655913978494624,
+              "events": 93,
+              "net_utility_pct": -0.1977658512335172
+            }
+          },
           "start": "2026-07-30T00:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.44871794871794873,
@@ -310,6 +564,16 @@
         "advanced_1h_only_accuracy": 0.4475711284370502,
         "advanced_1h_only_brier": 0.6048543057001042,
         "brier_block_wins": 2,
+        "hierarchy_accuracy_block_wins": 1,
+        "hierarchy_baseline_accuracy": 0.448558774413708,
+        "hierarchy_baseline_net_utility_pct": -0.1453951711034348,
+        "hierarchy_confirmed_accuracy": 0.39586410635155095,
+        "hierarchy_confirmed_events": 677,
+        "hierarchy_confirmed_net_utility_pct": -0.12187036153217136,
+        "hierarchy_coverage": 0.04915414216220141,
+        "hierarchy_directional_events": 13773,
+        "hierarchy_selected_for_forward_shadow": false,
+        "hierarchy_utility_block_wins": 2,
         "production_eligible": false,
         "selected_for_forward_shadow": false,
         "top_down_multi_timeframe_accuracy": 0.4532421334097312,
