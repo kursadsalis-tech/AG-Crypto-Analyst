@@ -1,5 +1,18 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-30 behavior-first event response contract
+
+- Recorded the product decision that exact-time news direction is context, not
+  a direct trading instruction. The testable edge hypothesis is the market's
+  positioned, liquidity-constrained response to broadly available information.
+- Upgraded read-only event measurement to use the final pre-event closed minute
+  as baseline and measure raw response paths at 1m, 5m, 15m, 1h, 4h, and 24h.
+- Added event-minute order-book imbalance, taker pressure, spread, OI change,
+  funding, and liquidation summaries. No absorption/resilience label, threshold,
+  model search, policy mutation, or action authority was introduced.
+- Explicitly marks instruments sharing one global event/minute as correlated,
+  preventing market-wide rows from being presented as independent evidence.
+
 ## 2026-08-30 causal minute evidence and observer attestation
 
 - Bound the separate market-behavior observer health record into the canonical

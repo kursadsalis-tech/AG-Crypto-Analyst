@@ -1,5 +1,32 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Davranış-önce piyasa okuma ilkesi ölçüm sözleşmesine dönüştürüldü
+
+Kullanıcının bilgi asimetrisinin haber erişiminden davranış/akış okumasına
+kaydığı ürün tezi `docs/DECISIONS.md` Karar 027 olarak kalıcılaştırıldı. Bu tez
+gizli el/manipülasyon varsayımı değildir: haber geniş biçimde aynı anda
+bilinirken avantajın haber öncesi konumlanma, ilk kalabalık refleksi, likidite
+absorpsiyonu, tükenme ve tepkinin devam/tersine dönüşünü ölçmekte olabileceği
+test edilebilir hipotezidir. Haber etiketi tek başına yön veya işlem üretmez.
+
+`BEHAVIOR_EVENT_FORWARD_MEASUREMENT_V2`, olaydan önceki son kapanmış davranış
+dakikasını fiyat tabanı yapıyor. Olay dakikasında 20 kademe defter dengesizliği,
+agresif işlem baskısı, spread, OI değişimi, funding ve iki yönlü tasfiye notionalı
+birlikte korunuyor. Ham fiyat tepkisi olay öncesi orta fiyata göre 1, 5, 15, 60,
+240 ve 1.440 dakikada ölçülüyor; hedef dakika kapanmadan sonuç yok. Önceki 1h
+hesabındaki bir dakikalık fazla ileri kayma doğal veri başlamadan düzeltildi.
+
+Absorpsiyon, dayanıklılık, tükenme veya tersine dönüş etiketi/eşiği icat edilmedi.
+Aynı global olayda farklı coin satırlarının korelasyonlu olduğu raporda açıkça
+işaretleniyor; bağımsız kanıt birimi olay/dakikadır. Mevcut yerel runtime DB'de
+observer tabloları hâlâ kurulmadığı için ölçüm sonucu sıfır ve blocker görünürdür.
+Yeni model/eşik araması açılmadı.
+
+Tam suite 206/206 geçti. Bulut, service/timer, runtime DB, PAPER_ONLY, kanıt
+eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi. Bulut onayı
+gelirse `6d49e8d` ile hazırlanmış kontrollü kurulum planına bu davranış-önce
+ölçüm sözleşmesiyle devam edilir; doğal veri oluşmadan performans iddiası yoktur.
+
 # 2026-08-30 — Bulut onayına kadar exact-macro/behavior gözlem paketi hazır
 
 `1bed153` checkpoint'inden devam edildi. Bulut onayı verilmeden yapılabilecek

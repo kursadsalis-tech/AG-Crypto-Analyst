@@ -616,3 +616,35 @@ Paper simülasyon gelecekteki gerçek işlem ortamıyla aynı execution contract
 Güvenilir biçimde modellenemeyen koşul sessizce iyimser varsayılmaz; açık ESTIMATED/DATA_BLOCKED etiketiyle fail-closed ele alınır. Simülatör ile ilerideki canlı emir adaptörü aynı karar ve execution sözleşmesini kullanacak; sermaye açılmadan önce shadow/dry-run ve simülasyon-canlı reconciliation testleri tamamlanacaktır.
 
 Gerçek para kullanımı ancak kullanıcının açık onayı, ana orkestratörün ayrı terfi kararı ve önceden tanımlı performans/risk kapılarının birlikte geçilmesiyle mümkündür.
+
+---
+
+## Karar 027 - Haber-Yönü Değil Davranış-Tepkisi Önceliği
+
+Kripto piyasasında haberin geniş kitlelere erişim hızı arttığı için AGCA'nın
+avantaj hipotezi "haberi önce duymak" veya haber metnini doğrudan fiyat yönüne
+çevirmek değildir. Test edilecek hipotez, haber öncesi konumlanma ile haberden
+sonra gerçekleşen kalabalık refleksinin, likidite ve güçlü karşı taraf davranışı
+üzerinden ölçülebilir olmasıdır.
+
+Bu karar piyasanın gizli eller tarafından ayarlandığı varsayımına dayanmaz.
+Bilgi asimetrisinin haber erişiminden; pozisyon, akış, likidite, absorpsiyon ve
+tepkinin devam edip etmediğini görebilme kapasitesine kaydığı hipotezidir.
+
+Bağlayıcı ölçüm sözleşmesi:
+
+- İyi/kötü haber etiketi tek başına işlem yönü veya yetki üretmez.
+- Her kesin-zamanlı olayda önce olaydan önceki son kapanmış dakika sabitlenir.
+- Olay dakikasındaki emir defteri dengesizliği, agresif işlem baskısı, spread,
+  açık pozisyon değişimi, funding ve tasfiyeler birlikte korunur.
+- Fiyat yolu olay öncesi orta fiyata göre 1, 5, 15, 60, 240 ve 1.440 dakikada
+  ölçülür. Gelecek ufuk kapanmadan sonuç yazılmaz.
+- "Kötü habere dayanıklılık", "iyi habere zayıflık", absorpsiyon, tükenme veya
+  tersine dönüş gibi yorumlar sabit eşik icat edilerek atanmaz; önce ham tepki
+  yolu ve yeterli doğal olay çeşitliliği birikir.
+- Aynı global olayda birçok coin satırı korelasyonludur ve bağımsız örnek gibi
+  sayılmaz. Olay/dakika ana bağımsızlık birimidir.
+- Gerçek yapısal kırılma olasılığı korunur; her kötü haber otomatik alım fırsatı
+  veya her iyi haber dağıtım kabul edilmez.
+- Bu katman observed-only ölçümdür. Yeni model, eşik, strateji terfisi veya emir
+  yetkisi için mevcut forward kanıt ve yönetişim kapıları aynen geçerlidir.

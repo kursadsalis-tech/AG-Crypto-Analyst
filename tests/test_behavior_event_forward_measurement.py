@@ -33,8 +33,15 @@ class BehaviorEventForwardMeasurementTests(unittest.TestCase):
             values = ("BTC-USDT-SWAP", base, 60_000, 4, 10_000, 0, 0, 0, 0,
                       1, 100, 100, 1, 1, 0, 0, 0, 0, 0, "{}", 1, "now")
             con.execute(f"INSERT INTO market_behavior_minute_features({columns}) VALUES({','.join('?' * 22)})", values)
+            previous = list(values)
+            previous[1], previous[2], previous[10], previous[11] = (
+                base - 60_000, base - 120_000, 99, 99,
+            )
+            con.execute(f"INSERT INTO market_behavior_minute_features({columns}) VALUES({','.join('?' * 22)})", previous)
             future = list(values)
-            future[1], future[2], future[10], future[11] = base + 3_600_000, base + 3_540_000, 101, 101
+            future[1], future[2], future[10], future[11] = (
+                base + 59 * 60_000, base + 58 * 60_000, 101, 101,
+            )
             con.execute(f"INSERT INTO market_behavior_minute_features({columns}) VALUES({','.join('?' * 22)})", future)
             con.execute("""
                 INSERT INTO causal_minute_external_evidence VALUES(
@@ -46,6 +53,11 @@ class BehaviorEventForwardMeasurementTests(unittest.TestCase):
             con.close()
         self.assertEqual(result["exact_minute_join_rows"], 1)
         self.assertEqual(result["forward_outcomes_by_horizon"]["60"], 1)
+        self.assertAlmostEqual(
+            result["reaction_summary"]["MACRO:60"]
+                  ["mean_return_from_pre_event_pct"],
+            (101 / 99 - 1) * 100,
+        )
         self.assertTrue(result["measurement_ready"])
 
 
