@@ -56,6 +56,24 @@ class MultiTimeframeDirectionLabTests(unittest.TestCase):
         self.assertEqual(score["expert_usage"]["TREND"], 1)
         self.assertAlmostEqual(score["directional_net_utility_pct"], 0.4)
 
+    def test_economic_policy_rejects_small_or_uncertain_samples(self):
+        predictions = [{
+            "regime": "TREND", "predicted": "UP", "confidence": 0.55,
+            "utility": 1.0 if index % 2 == 0 else -1.0,
+        } for index in range(lab.MIN_POLICY_CELL_ROWS - 1)]
+        allowed, _ = lab._learn_economic_policy(predictions)
+        self.assertEqual(allowed, set())
+
+    def test_economic_policy_accepts_only_supported_positive_cell(self):
+        predictions = [{
+            "regime": "TREND", "predicted": "UP", "confidence": 0.55,
+            "utility": 0.2,
+        } for _ in range(lab.MIN_POLICY_CELL_ROWS)]
+        allowed, evidence = lab._learn_economic_policy(predictions)
+        key = ("TREND", "UP", lab._confidence_band(0.55))
+        self.assertEqual(allowed, {key})
+        self.assertTrue(evidence["TREND|UP|2"]["accepted"])
+
 
 if __name__ == "__main__":
     unittest.main()

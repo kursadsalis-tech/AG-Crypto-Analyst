@@ -21,6 +21,9 @@ RANDOM_STATE = 20260829
 CLASSES = ("UP", "DOWN", "NEUTRAL")
 HORIZONS = (1, 4, 24)
 MIN_EXPERT_ROWS = 500
+CALIBRATION_DAYS = 30
+MIN_POLICY_CELL_ROWS = 50
+CONFIDENCE_BANDS = (0.40, 0.50, 0.60)
 
 
 def _features(row, include_multi_timeframe):
@@ -157,12 +160,12 @@ def _score(model, rows, include_multi_timeframe):
     }
 
 
-def _score_experts(payload, rows):
+def _expert_predictions(payload, rows):
     import numpy as np
 
-    hits, briers, utilities = [], [], []
     usage = {"GLOBAL_FALLBACK": 0, "TREND": 0, "RANGE": 0, "TRANSITION": 0, "SHOCK": 0}
     grouped = {}
+    predictions = []
     for row in rows:
         regime = row["hierarchical_context"]["regime"]
         expert = payload["experts"][regime]["model"]
@@ -181,26 +184,93 @@ def _score_experts(payload, rows):
             }
             actual = _label(row)
             predicted = max(probabilities, key=probabilities.get)
-            hits.append(int(predicted == actual))
-            briers.append(sum(
-                (probabilities[name] - (1.0 if name == actual else 0.0)) ** 2
-                for name in CLASSES
-            ))
+            utility = None
             if predicted != "NEUTRAL":
-                utilities.append((
+                utility = (
                     float(row["trade_return_pct"])
                     if predicted == "UP" else -float(row["trade_return_pct"])
-                ) - 0.10)
+                ) - 0.10
+            predictions.append({
+                "row": row,
+                "actual": actual,
+                "predicted": predicted,
+                "confidence": max(probabilities.values()),
+                "brier": sum(
+                (probabilities[name] - (1.0 if name == actual else 0.0)) ** 2
+                for name in CLASSES
+                ),
+                "utility": utility,
+                "regime": row["hierarchical_context"]["regime"],
+            })
+    return predictions, usage
+
+
+def _score_experts(payload, rows):
+    predictions, usage = _expert_predictions(payload, rows)
+    utilities = [item["utility"] for item in predictions if item["utility"] is not None]
     return {
         "events": len(rows),
-        "accuracy": statistics.fmean(hits),
-        "brier": statistics.fmean(briers),
+        "accuracy": statistics.fmean(
+            item["predicted"] == item["actual"] for item in predictions
+        ),
+        "brier": statistics.fmean(item["brier"] for item in predictions),
         "directional_net_utility_pct": statistics.fmean(utilities) if utilities else 0.0,
         "expert_usage": usage,
         "expert_training_rows": {
             regime: item["training_rows"]
             for regime, item in payload["experts"].items()
         },
+    }
+
+
+def _confidence_band(value):
+    return sum(value >= boundary for boundary in CONFIDENCE_BANDS)
+
+
+def _learn_economic_policy(predictions):
+    """Select only cells whose past net result is conservatively positive."""
+    cells = {}
+    for item in predictions:
+        if item["utility"] is None:
+            continue
+        key = (item["regime"], item["predicted"], _confidence_band(item["confidence"]))
+        cells.setdefault(key, []).append(item["utility"])
+    allowed = set()
+    evidence = {}
+    for key, values in cells.items():
+        mean = statistics.fmean(values)
+        error = statistics.stdev(values) / math.sqrt(len(values)) if len(values) > 1 else math.inf
+        lower_bound = mean - error
+        accepted = len(values) >= MIN_POLICY_CELL_ROWS and lower_bound > 0.0
+        evidence["|".join(map(str, key))] = {
+            "events": len(values), "mean_net_utility_pct": mean,
+            "one_standard_error_lower_bound_pct": lower_bound,
+            "accepted": accepted,
+        }
+        if accepted:
+            allowed.add(key)
+    return allowed, evidence
+
+
+def _score_economic_policy(payload, rows, allowed, evidence):
+    predictions, _ = _expert_predictions(payload, rows)
+    selected = [
+        item for item in predictions
+        if item["utility"] is not None
+        and (item["regime"], item["predicted"], _confidence_band(item["confidence"])) in allowed
+    ]
+    return {
+        "events": len(selected),
+        "coverage": len(selected) / max(sum(item["utility"] is not None for item in predictions), 1),
+        "direction_accuracy": (
+            statistics.fmean(item["predicted"] == item["actual"] for item in selected)
+            if selected else 0.0
+        ),
+        "net_utility_pct": (
+            statistics.fmean(item["utility"] for item in selected) if selected else 0.0
+        ),
+        "accepted_cells": sorted("|".join(map(str, key)) for key in allowed),
+        "calibration_evidence": evidence,
     }
 
 
@@ -275,6 +345,19 @@ def _compare_horizon(rows, end, horizon):
         old_model, training_rows = _fit(rows, start, horizon, False)
         new_model, _ = _fit(rows, start, horizon, True)
         experts, _ = _fit_experts(rows, start, horizon)
+        calibration_start = start - timedelta(days=CALIBRATION_DAYS)
+        calibration_rows = [
+            row for row in rows
+            if int(row["horizon"]) == int(horizon)
+            and calibration_start <= row["as_of"] < start
+            and row["due_time"] < start
+        ]
+        calibration_rows = _non_overlapping(calibration_rows, horizon)
+        calibration_experts, _ = _fit_experts(rows, calibration_start, horizon)
+        calibration_predictions, _ = _expert_predictions(
+            calibration_experts, calibration_rows
+        )
+        allowed_cells, policy_evidence = _learn_economic_policy(calibration_predictions)
         blocks.append({
             "start": core.iso(start), "end": core.iso(stop),
             "training_rows": training_rows,
@@ -282,6 +365,9 @@ def _compare_horizon(rows, end, horizon):
             "top_down_multi_timeframe": _score(new_model, test, True),
             "hierarchical_confirmation": _hierarchy_score(old_model, test),
             "regime_experts": _score_experts(experts, test),
+            "economic_policy": _score_economic_policy(
+                experts, test, allowed_cells, policy_evidence
+            ),
         })
     old_accuracy = statistics.fmean(
         block["advanced_1h_only"]["accuracy"] for block in blocks
@@ -386,6 +472,28 @@ def _compare_horizon(rows, end, horizon):
         and expert_accuracy_wins >= 4 and expert_brier_wins >= 4
         and expert_utility_wins >= 4
     )
+    policy_events = sum(block["economic_policy"]["events"] for block in blocks)
+    policy_directional_events = sum(
+        block["regime_experts"]["events"] for block in blocks
+    )
+    policy_utility = sum(
+        block["economic_policy"]["net_utility_pct"] * block["economic_policy"]["events"]
+        for block in blocks
+    ) / policy_events if policy_events else 0.0
+    policy_accuracy = sum(
+        block["economic_policy"]["direction_accuracy"] * block["economic_policy"]["events"]
+        for block in blocks
+    ) / policy_events if policy_events else 0.0
+    policy_positive_blocks = sum(
+        block["economic_policy"]["net_utility_pct"] > 0
+        and block["economic_policy"]["events"] > 0 for block in blocks
+    )
+    economic_policy_selected = bool(
+        policy_events >= 100
+        and policy_events / max(policy_directional_events, 1) >= 0.02
+        and policy_utility > 0.0
+        and policy_positive_blocks >= 4
+    )
     return {
         "blocks": blocks,
         "summary": {
@@ -414,6 +522,12 @@ def _compare_horizon(rows, end, horizon):
             "regime_expert_brier_block_wins": expert_brier_wins,
             "regime_expert_utility_block_wins": expert_utility_wins,
             "regime_experts_selected_for_forward_shadow": experts_selected,
+            "economic_policy_events": policy_events,
+            "economic_policy_coverage": policy_events / max(policy_directional_events, 1),
+            "economic_policy_direction_accuracy": policy_accuracy,
+            "economic_policy_net_utility_pct": policy_utility,
+            "economic_policy_positive_blocks": policy_positive_blocks,
+            "economic_policy_selected_for_forward_shadow": economic_policy_selected,
             "production_eligible": False,
             "action_authority": False,
         },

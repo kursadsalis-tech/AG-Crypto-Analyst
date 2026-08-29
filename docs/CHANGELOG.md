@@ -1019,3 +1019,17 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   iyileşmedi. Masraflar sonrası ortalama sonuç da üç zaman diliminde ekside kaldı.
 - Bu nedenle uzman modeller canlı veya ileriye dönük gölge tahmine alınmadı.
   PAPER_ONLY, karar eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.
+
+## 2026-08-29 — Geçmiş sonuçla ekonomik işlem seçme sınaması
+
+- Her sınav ayından önceki ayrı 30 günlük dönemde, piyasa türü, yön ve model
+  güven aralığına göre masraf sonrası açıkça olumlu kalan koşullar belirlendi.
+  Sınav ayının sonuçları seçim yapılırken görülmedi.
+- 4 saatlik model 1.822 işlem (%13,2 kapsam) seçti; yön isabeti %48,52 ve işlem
+  başına masraf sonrası ortalama sonuç -%0,049 oldu. Altı dönemin yalnız ikisi
+  artıda kaldı; son dönemde güvenilir koşul bulunamadığı için işlem seçilmedi.
+- 1 saatlik küçük ortalama artı sonuç yalnız tek dönemde oluştu; 24 saatlik sonuç
+  belirgin biçimde ekside kaldı. Hiçbir zaman dilimi kabul şartlarını geçmedi.
+- Sonuç, geçmiş ayda işe yarayan dar koşulların sonraki aya güvenilir biçimde
+  taşınmadığını gösterdi. Yöntem canlı/gölge tahmine alınmadı; güvenlik ve emir
+  yetkileri değiştirilmedi.
