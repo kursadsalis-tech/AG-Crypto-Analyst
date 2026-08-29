@@ -738,9 +738,12 @@ def load_derivatives(con, start, end, symbols):
                     f"DERIVATIVES_POSITIONING:{symbol}", ("INVALID_AVAILABILITY_OR_VALUE",)
                 )
             if oi_value <= 0.0:
-                raise DataValidationError(
-                    f"DERIVATIVES_POSITIONING:{symbol}", ("NON_POSITIVE_OI_VALUE",)
-                )
+                # A sparse Binance archive row may carry zero instead of a
+                # usable OI snapshot.  Exclude that exact hour; downstream
+                # anchor checks then reject only contexts that depend on it,
+                # and the existing global/symbol/week gap gates still fail
+                # the complete study if the defect is material.
+                continue
             positioning.append({
                 "hour_close_time": hour_close,
                 "source_max_time": source_max,

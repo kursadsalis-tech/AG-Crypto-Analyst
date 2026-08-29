@@ -1033,3 +1033,17 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Sonuç, geçmiş ayda işe yarayan dar koşulların sonraki aya güvenilir biçimde
   taşınmadığını gösterdi. Yöntem canlı/gölge tahmine alınmadı; güvenlik ve emir
   yetkileri değiştirilmedi.
+
+## 2026-08-29 — Vadeli piyasa + çoklu zaman dilimi 4 saatlik sınaması
+
+- Fiyat ve çoklu zaman dilimi modeline, önceden tanımlı 23 vadeli piyasa ölçüsü
+  eklendi: fonlama, açık pozisyon değişimi, spot-vadeli fiyat farkı ve vadeli
+  alıcı/satıcı baskısının coin ve BTC görünümleri.
+- 12 coin ve 82.664 uygun 4 saatlik örnek kullanıldı. Tek bir sıfır açık-pozisyon
+  arşiv saati doldurulmadı; yalnız ona bağlı örnekler dışlandı. Toplam eksik bağlam
+  oranı %0,046 ile mevcut güvenlik sınırlarının içinde kaldı.
+- Altı görülmemiş 30 günlük dönemde yön isabeti ortalama %45,38'den %45,69'a
+  çıktı; ancak yalnız üç dönem kazanıldı. Olasılık kalitesi 0,6048'den 0,6116'ya
+  kötüleşti (düşük daha iyi), masraf sonrası sonuç -%0,094'te kaldı.
+- Aday reddedildi; canlı veya ileri PAPER tahmine alınmadı. PAPER_ONLY, kanıt
+  eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.

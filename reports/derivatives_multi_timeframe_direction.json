@@ -1,0 +1,155 @@
+{
+  "blocks": [
+    {
+      "end": "2026-03-19T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.47998137802607077,
+        "brier": 0.5996821477379901,
+        "directional_events": 2148,
+        "directional_net_utility_pct": 0.02512923909514929,
+        "events": 2148
+      },
+      "start": "2026-02-17T00:00:00+00:00",
+      "training_rows": 7776,
+      "with_derivatives": {
+        "accuracy": 0.43575418994413406,
+        "brier": 0.631582117567086,
+        "directional_events": 2144,
+        "directional_net_utility_pct": -0.12620090303119175,
+        "events": 2148
+      }
+    },
+    {
+      "end": "2026-04-18T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.43249534450651766,
+        "brier": 0.6249826945251424,
+        "directional_events": 2137,
+        "directional_net_utility_pct": -0.14648507143194148,
+        "events": 2148
+      },
+      "start": "2026-03-19T00:00:00+00:00",
+      "training_rows": 8628,
+      "with_derivatives": {
+        "accuracy": 0.4757914338919926,
+        "brier": 0.6131253553424979,
+        "directional_events": 2135,
+        "directional_net_utility_pct": -0.013138771530500389,
+        "events": 2148
+      }
+    },
+    {
+      "end": "2026-05-18T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.45344506517690875,
+        "brier": 0.6007525240064281,
+        "directional_events": 2141,
+        "directional_net_utility_pct": -0.11241293404042937,
+        "events": 2148
+      },
+      "start": "2026-04-18T00:00:00+00:00",
+      "training_rows": 8628,
+      "with_derivatives": {
+        "accuracy": 0.46322160148975794,
+        "brier": 0.6102507283053011,
+        "directional_events": 2143,
+        "directional_net_utility_pct": -0.11165136718527661,
+        "events": 2148
+      }
+    },
+    {
+      "end": "2026-06-17T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.4655493482309125,
+        "brier": 0.5755696856781393,
+        "directional_events": 2129,
+        "directional_net_utility_pct": -0.17276528315645306,
+        "events": 2148
+      },
+      "start": "2026-05-18T00:00:00+00:00",
+      "training_rows": 8628,
+      "with_derivatives": {
+        "accuracy": 0.49487895716945995,
+        "brier": 0.5696178170858776,
+        "directional_events": 2142,
+        "directional_net_utility_pct": -0.12896531879253623,
+        "events": 2148
+      }
+    },
+    {
+      "end": "2026-07-17T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.4436685288640596,
+        "brier": 0.6098322781190736,
+        "directional_events": 2148,
+        "directional_net_utility_pct": -0.06159483847039967,
+        "events": 2148
+      },
+      "start": "2026-06-17T00:00:00+00:00",
+      "training_rows": 8628,
+      "with_derivatives": {
+        "accuracy": 0.43528864059590316,
+        "brier": 0.6262348643756417,
+        "directional_events": 2148,
+        "directional_net_utility_pct": -0.0702885873992163,
+        "events": 2148
+      }
+    },
+    {
+      "end": "2026-08-16T00:00:00+00:00",
+      "price_technical_multi_timeframe": {
+        "accuracy": 0.4477969348659004,
+        "brier": 0.6181103178518883,
+        "directional_events": 2082,
+        "directional_net_utility_pct": -0.09817629449589176,
+        "events": 2088
+      },
+      "start": "2026-07-17T00:00:00+00:00",
+      "training_rows": 8628,
+      "with_derivatives": {
+        "accuracy": 0.4363026819923372,
+        "brier": 0.618962147949095,
+        "directional_events": 2084,
+        "directional_net_utility_pct": -0.11504478103597983,
+        "events": 2088
+      }
+    }
+  ],
+  "claim": "HISTORICAL_DEVELOPMENT_EVIDENCE_NOT_FORWARD_PROOF",
+  "data": {
+    "archive_manifest_digest": "3bd4e8bcb74258bd3329f468611f6ed3a554596d4b95d672a5c18dce71a38a72",
+    "eligible_4h_rows": 82664,
+    "end": "2026-08-16T00:00:00+00:00",
+    "source_gap_rate": 0.0004525201893622946,
+    "start": "2025-07-12T00:00:00+00:00",
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "ARKMUSDT",
+      "FIDAUSDT",
+      "WLDUSDT",
+      "TIAUSDT",
+      "ETHFIUSDT",
+      "BIOUSDT",
+      "LQTYUSDT",
+      "ILVUSDT",
+      "UMAUSDT",
+      "IOUSDT"
+    ]
+  },
+  "summary": {
+    "accuracy_block_wins": 3,
+    "action_authority": false,
+    "baseline_accuracy": 0.45382276661172827,
+    "baseline_brier": 0.6048216079864436,
+    "baseline_net_utility_pct": -0.09438419708332768,
+    "brier_block_wins": 2,
+    "production_eligible": false,
+    "selected_for_forward_shadow": false,
+    "utility_block_wins": 3,
+    "with_derivatives_accuracy": 0.4568729175139308,
+    "with_derivatives_brier": 0.6116288384375832,
+    "with_derivatives_net_utility_pct": -0.09421495482911685
+  },
+  "version": "DERIVATIVES_MULTI_TIMEFRAME_4H_V1_FIXED"
+}
