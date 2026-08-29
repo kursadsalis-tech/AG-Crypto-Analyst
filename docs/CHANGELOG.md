@@ -1008,3 +1008,14 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Bounded exploration prevents immediate winner-take-all allocation. Real-order authority remains structurally zero.
 - Full test suite passes (102/102).
 - Extended only the hash-verified PAPER exchange-rule cache window from 2h to 24h so temporary Binance 451/Supabase transport failures do not halt virtual learning; unknown symbols still fail closed.
+
+## 2026-08-29 — Piyasa türüne göre uzman model araştırması
+
+- Yükseliş/düşüş eğilimi, yatay piyasa, geçiş ve sert hareket dönemleri için ayrı
+  yön modelleri; veri yetersizse ortak modele dönme kuralıyla tarihsel olarak sınandı.
+- Sabit kurallı altı ayrı 30 günlük dönemde 4 saatlik yön isabeti altı dönemin
+  altısında arttı (%44,96'dan %46,01'e); 24 saatte dört, 1 saatte iki dönem kazanıldı.
+- Buna karşılık tahmin olasılıklarının güvenilirliği hiçbir zaman diliminde
+  iyileşmedi. Masraflar sonrası ortalama sonuç da üç zaman diliminde ekside kaldı.
+- Bu nedenle uzman modeller canlı veya ileriye dönük gölge tahmine alınmadı.
+  PAPER_ONLY, karar eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.

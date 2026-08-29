@@ -20,6 +20,7 @@ HALF_LIFE_DAYS = 45.0
 RANDOM_STATE = 20260829
 CLASSES = ("UP", "DOWN", "NEUTRAL")
 HORIZONS = (1, 4, 24)
+MIN_EXPERT_ROWS = 500
 
 
 def _features(row, include_multi_timeframe):
@@ -75,6 +76,52 @@ def _fit(rows, cutoff, horizon, include_multi_timeframe):
     return model, len(selected)
 
 
+def _fit_experts(rows, cutoff, horizon):
+    import numpy as np
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    selected = [
+        row for row in rows
+        if int(row["horizon"]) == int(horizon)
+        and cutoff - timedelta(days=TRAINING_DAYS) <= row["as_of"]
+        and row["due_time"] < cutoff
+    ]
+    selected = _non_overlapping(selected, horizon)
+
+    def fit_group(group, seed_offset):
+        labels = np.asarray([_label(row) for row in group])
+        if len(group) < MIN_EXPERT_ROWS or len(set(labels)) < 2:
+            return None
+        matrix = np.asarray([_features(row, True) for row in group], dtype=float)
+        ages = np.asarray([
+            (cutoff - row["as_of"]).total_seconds() / 86400.0
+            for row in group
+        ])
+        weights = np.exp(-math.log(2.0) * ages / HALF_LIFE_DAYS)
+        model = HistGradientBoostingClassifier(
+            max_iter=100, max_leaf_nodes=15, max_depth=3,
+            min_samples_leaf=50, l2_regularization=2.0,
+            learning_rate=0.05, random_state=RANDOM_STATE + seed_offset,
+        )
+        model.fit(matrix, labels, sample_weight=weights)
+        return model
+
+    global_model = fit_group(selected, 0)
+    if global_model is None:
+        raise ValueError("insufficient global expert training rows")
+    experts = {}
+    for offset, regime in enumerate(("TREND", "RANGE", "TRANSITION", "SHOCK"), 1):
+        group = [
+            row for row in selected
+            if row["hierarchical_context"]["regime"] == regime
+        ]
+        experts[regime] = {
+            "model": fit_group(group, offset),
+            "training_rows": len(group),
+        }
+    return {"global": global_model, "experts": experts}, len(selected)
+
+
 def _score(model, rows, include_multi_timeframe):
     import numpy as np
 
@@ -83,14 +130,19 @@ def _score(model, rows, include_multi_timeframe):
     ], dtype=float)
     raw = model.predict_proba(matrix)
     classes = tuple(str(value) for value in model.classes_)
-    hits = []
-    briers = []
+    hits, briers, utilities = [], [], []
     for row, values in zip(rows, raw):
         probabilities = {
             name: float(values[classes.index(name)]) for name in CLASSES
         }
         actual = _label(row)
         hits.append(int(max(probabilities, key=probabilities.get) == actual))
+        predicted = max(probabilities, key=probabilities.get)
+        if predicted != "NEUTRAL":
+            utilities.append((
+                float(row["trade_return_pct"])
+                if predicted == "UP" else -float(row["trade_return_pct"])
+            ) - 0.10)
         briers.append(sum(
             (probabilities[name] - (1.0 if name == actual else 0.0)) ** 2
             for name in CLASSES
@@ -99,6 +151,56 @@ def _score(model, rows, include_multi_timeframe):
         "events": len(rows),
         "accuracy": statistics.fmean(hits),
         "brier": statistics.fmean(briers),
+        "directional_net_utility_pct": (
+            statistics.fmean(utilities) if utilities else 0.0
+        ),
+    }
+
+
+def _score_experts(payload, rows):
+    import numpy as np
+
+    hits, briers, utilities = [], [], []
+    usage = {"GLOBAL_FALLBACK": 0, "TREND": 0, "RANGE": 0, "TRANSITION": 0, "SHOCK": 0}
+    grouped = {}
+    for row in rows:
+        regime = row["hierarchical_context"]["regime"]
+        expert = payload["experts"][regime]["model"]
+        model = expert or payload["global"]
+        label = regime if expert else "GLOBAL_FALLBACK"
+        usage[label] += 1
+        grouped.setdefault((id(model), label), (model, []))[1].append(row)
+    for model, selected in grouped.values():
+        matrix = np.asarray([_features(row, True) for row in selected], dtype=float)
+        raw_rows = model.predict_proba(matrix)
+        classes = tuple(str(value) for value in model.classes_)
+        for row, raw in zip(selected, raw_rows):
+            probabilities = {
+                name: float(raw[classes.index(name)]) if name in classes else 0.0
+                for name in CLASSES
+            }
+            actual = _label(row)
+            predicted = max(probabilities, key=probabilities.get)
+            hits.append(int(predicted == actual))
+            briers.append(sum(
+                (probabilities[name] - (1.0 if name == actual else 0.0)) ** 2
+                for name in CLASSES
+            ))
+            if predicted != "NEUTRAL":
+                utilities.append((
+                    float(row["trade_return_pct"])
+                    if predicted == "UP" else -float(row["trade_return_pct"])
+                ) - 0.10)
+    return {
+        "events": len(rows),
+        "accuracy": statistics.fmean(hits),
+        "brier": statistics.fmean(briers),
+        "directional_net_utility_pct": statistics.fmean(utilities) if utilities else 0.0,
+        "expert_usage": usage,
+        "expert_training_rows": {
+            regime: item["training_rows"]
+            for regime, item in payload["experts"].items()
+        },
     }
 
 
@@ -172,12 +274,14 @@ def _compare_horizon(rows, end, horizon):
         test = _non_overlapping(test, horizon)
         old_model, training_rows = _fit(rows, start, horizon, False)
         new_model, _ = _fit(rows, start, horizon, True)
+        experts, _ = _fit_experts(rows, start, horizon)
         blocks.append({
             "start": core.iso(start), "end": core.iso(stop),
             "training_rows": training_rows,
             "advanced_1h_only": _score(old_model, test, False),
             "top_down_multi_timeframe": _score(new_model, test, True),
             "hierarchical_confirmation": _hierarchy_score(old_model, test),
+            "regime_experts": _score_experts(experts, test),
         })
     old_accuracy = statistics.fmean(
         block["advanced_1h_only"]["accuracy"] for block in blocks
@@ -251,6 +355,37 @@ def _compare_horizon(rows, end, horizon):
         and hierarchy_accuracy_wins >= 4
         and hierarchy_utility_wins >= 4
     )
+    expert_accuracy = statistics.fmean(
+        block["regime_experts"]["accuracy"] for block in blocks
+    )
+    expert_brier = statistics.fmean(
+        block["regime_experts"]["brier"] for block in blocks
+    )
+    expert_utility = statistics.fmean(
+        block["regime_experts"]["directional_net_utility_pct"] for block in blocks
+    )
+    baseline_utility_all = statistics.fmean(
+        block["advanced_1h_only"]["directional_net_utility_pct"] for block in blocks
+    )
+    expert_accuracy_wins = sum(
+        block["regime_experts"]["accuracy"]
+        > block["advanced_1h_only"]["accuracy"] for block in blocks
+    )
+    expert_brier_wins = sum(
+        block["regime_experts"]["brier"]
+        < block["advanced_1h_only"]["brier"] for block in blocks
+    )
+    expert_utility_wins = sum(
+        block["regime_experts"]["directional_net_utility_pct"]
+        > block["advanced_1h_only"]["directional_net_utility_pct"]
+        for block in blocks
+    )
+    experts_selected = bool(
+        expert_accuracy > old_accuracy and expert_brier < old_brier
+        and expert_utility > baseline_utility_all
+        and expert_accuracy_wins >= 4 and expert_brier_wins >= 4
+        and expert_utility_wins >= 4
+    )
     return {
         "blocks": blocks,
         "summary": {
@@ -271,6 +406,14 @@ def _compare_horizon(rows, end, horizon):
             "hierarchy_accuracy_block_wins": hierarchy_accuracy_wins,
             "hierarchy_utility_block_wins": hierarchy_utility_wins,
             "hierarchy_selected_for_forward_shadow": hierarchy_selected,
+            "regime_expert_accuracy": expert_accuracy,
+            "regime_expert_brier": expert_brier,
+            "regime_expert_directional_net_utility_pct": expert_utility,
+            "regime_expert_baseline_net_utility_pct": baseline_utility_all,
+            "regime_expert_accuracy_block_wins": expert_accuracy_wins,
+            "regime_expert_brier_block_wins": expert_brier_wins,
+            "regime_expert_utility_block_wins": expert_utility_wins,
+            "regime_experts_selected_for_forward_shadow": experts_selected,
             "production_eligible": False,
             "action_authority": False,
         },
