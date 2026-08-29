@@ -913,6 +913,19 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   utility stayed negative at all horizons and the fixed gate rejected it.
 - The hierarchy remains auditable rejected research with zero production,
   policy-mutation, action or real-order authority.
+- Replaced the overly conservative all-or-nothing agreement rule with a fixed
+  regime-aware soft confidence system. Only invalid data and enforced risk are
+  hard blocks; ordinary disagreements change confidence according to TREND,
+  RANGE, TRANSITION or SHOCK state. The audit now measures coverage, accuracy,
+  net-after-cost utility and captured positive utility together.
+- Soft selection retained 14.5%/15.7%/17.3% of directional opportunities at
+  1h/4h/24h. It improved average accuracy and utility at 1h and 24h, but failed
+  the stability gate: accuracy improved in only 3/6 blocks at both horizons;
+  4h accuracy declined and improved in only 2/6 blocks. Positive-utility capture
+  was only about 14%/14%/18%.
+- Moving the six-block boundary by one hour also changed the raw 4h feature
+  decision, demonstrating boundary sensitivity. No live or forward promotion
+  was made from this unstable development result.
 
 ## 2026-08-28 — Fixed rolling 1h direction ensemble
 

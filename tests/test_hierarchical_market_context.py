@@ -68,6 +68,24 @@ class HierarchicalMarketContextTests(unittest.TestCase):
         self.assertEqual(context["flow"]["state"], "MISSING")
         self.assertLess(context["confirmations"], 4)
 
+    def test_soft_disagreement_reduces_confidence_without_hard_block(self):
+        index = len(self.candles) - 1
+        context = hierarchy.build(
+            self.candles, index, self.candles, index, True
+        )
+        opposite = hierarchy.assess_forecast(context, "DOWN")
+        self.assertIn(opposite["tier"], {"LOW", "MEDIUM"})
+        self.assertNotEqual(opposite["tier"], "BLOCK")
+
+    def test_risk_remains_a_hard_block_in_soft_grading(self):
+        index = len(self.candles) - 1
+        context = hierarchy.build(
+            self.candles, index, self.candles, index, False
+        )
+        self.assertEqual(
+            hierarchy.assess_forecast(context, "UP")["tier"], "BLOCK"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -110,7 +110,9 @@ def _hierarchy_score(model, rows):
     raw = model.predict_proba(matrix)
     classes = tuple(str(value) for value in model.classes_)
     baseline = []
-    confirmed = []
+    selected = []
+    tier_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "BLOCK": 0}
+    regime_counts = {}
     for row, values in zip(rows, raw):
         probabilities = {
             name: float(values[classes.index(name)]) for name in CLASSES
@@ -124,10 +126,17 @@ def _hierarchy_score(model, rows):
             float(row["trade_return_pct"])
             if predicted == "UP" else -float(row["trade_return_pct"])
         ) - 0.10
+        assessment = hierarchy.assess_forecast(
+            row["hierarchical_context"], predicted
+        )
+        tier = assessment["tier"]
+        regime = assessment.get("regime", row["hierarchical_context"].get("regime"))
+        tier_counts[tier] += 1
+        regime_counts[regime] = regime_counts.get(regime, 0) + 1
         item = (hit, utility)
         baseline.append(item)
-        if hierarchy.confirms_forecast(row["hierarchical_context"], predicted):
-            confirmed.append(item)
+        if tier in {"HIGH", "MEDIUM"}:
+            selected.append(item)
 
     def metrics(selected):
         return {
@@ -138,8 +147,14 @@ def _hierarchy_score(model, rows):
 
     return {
         "all_directional": metrics(baseline),
-        "hierarchy_confirmed": metrics(confirmed),
-        "coverage": len(confirmed) / len(baseline) if baseline else 0.0,
+        "hierarchy_confirmed": metrics(selected),
+        "coverage": len(selected) / len(baseline) if baseline else 0.0,
+        "tier_counts": tier_counts,
+        "regime_counts": regime_counts,
+        "positive_utility_capture": (
+            sum(max(0.0, item[1]) for item in selected)
+            / max(sum(max(0.0, item[1]) for item in baseline), 1e-12)
+        ),
     }
 
 

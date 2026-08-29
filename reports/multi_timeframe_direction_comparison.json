@@ -5,579 +5,813 @@
       "blocks": [
         {
           "advanced_1h_only": {
-            "accuracy": 0.3964908526800043,
-            "brier": 0.6454557618631724,
+            "accuracy": 0.39381619771049536,
+            "brier": 0.6449024620078572,
             "events": 9347
           },
-          "end": "2026-04-01T00:00:00+00:00",
+          "end": "2026-04-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.39592382225192113,
-              "events": 8979,
-              "net_utility_pct": -0.10582631262824882
+              "accuracy": 0.39285714285714285,
+              "events": 8988,
+              "net_utility_pct": -0.10433029615091864
             },
-            "coverage": 0.09499944314511638,
+            "coverage": 0.19192256341789052,
             "hierarchy_confirmed": {
-              "accuracy": 0.4091441969519343,
-              "events": 853,
-              "net_utility_pct": -0.12560681977400678
+              "accuracy": 0.4127536231884058,
+              "events": 1725,
+              "net_utility_pct": -0.11516565539877681
+            },
+            "positive_utility_capture": 0.17528356398459904,
+            "regime_counts": {
+              "RANGE": 16,
+              "SHOCK": 211,
+              "TRANSITION": 3675,
+              "TREND": 5086
+            },
+            "tier_counts": {
+              "BLOCK": 5115,
+              "HIGH": 1227,
+              "LOW": 2148,
+              "MEDIUM": 498
             }
           },
-          "start": "2026-03-02T00:00:00+00:00",
+          "start": "2026-03-02T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.40291002460682573,
-            "brier": 0.6489344380755075,
+            "accuracy": 0.39948646624585427,
+            "brier": 0.648502497899814,
             "events": 9347
           },
-          "training_rows": 28392
+          "training_rows": 28405
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.4120038515031561,
-            "brier": 0.6327261725260486,
+            "accuracy": 0.4117898791055954,
+            "brier": 0.6335864042276892,
             "events": 9347
           },
-          "end": "2026-05-01T00:00:00+00:00",
+          "end": "2026-05-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4087403598971722,
-              "events": 8558,
-              "net_utility_pct": -0.11540502078580155
+              "accuracy": 0.40884235020360676,
+              "events": 8595,
+              "net_utility_pct": -0.12017437069904507
             },
-            "coverage": 0.03365272259873802,
+            "coverage": 0.13554392088423503,
             "hierarchy_confirmed": {
-              "accuracy": 0.4236111111111111,
-              "events": 288,
-              "net_utility_pct": -0.07748535679161621
+              "accuracy": 0.40858369098712444,
+              "events": 1165,
+              "net_utility_pct": -0.10186195822948839
+            },
+            "positive_utility_capture": 0.1053140092215838,
+            "regime_counts": {
+              "RANGE": 820,
+              "SHOCK": 269,
+              "TRANSITION": 3797,
+              "TREND": 3709
+            },
+            "tier_counts": {
+              "BLOCK": 4985,
+              "HIGH": 716,
+              "LOW": 2445,
+              "MEDIUM": 449
             }
           },
-          "start": "2026-04-01T00:00:00+00:00",
+          "start": "2026-04-01T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.40879426553974535,
-            "brier": 0.6395599478640531,
+            "accuracy": 0.4076174173531614,
+            "brier": 0.640845790349036,
             "events": 9347
           },
           "training_rows": 37427
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.44720231090189366,
-            "brier": 0.6196758697771306,
+            "accuracy": 0.4493420348775008,
+            "brier": 0.6189826827522665,
             "events": 9347
           },
-          "end": "2026-05-31T00:00:00+00:00",
+          "end": "2026-05-31T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.44021479713603817,
-              "events": 8380,
-              "net_utility_pct": -0.10725559498412308
+              "accuracy": 0.4425287356321839,
+              "events": 8352,
+              "net_utility_pct": -0.09871058967155699
             },
-            "coverage": 0.03233890214797136,
+            "coverage": 0.15361590038314177,
             "hierarchy_confirmed": {
-              "accuracy": 0.3763837638376384,
-              "events": 271,
-              "net_utility_pct": -0.14450581809722005
+              "accuracy": 0.4380358534684334,
+              "events": 1283,
+              "net_utility_pct": -0.030737654574676254
+            },
+            "positive_utility_capture": 0.15441421493141988,
+            "regime_counts": {
+              "RANGE": 571,
+              "SHOCK": 240,
+              "TRANSITION": 3545,
+              "TREND": 3996
+            },
+            "tier_counts": {
+              "BLOCK": 4548,
+              "HIGH": 857,
+              "LOW": 2521,
+              "MEDIUM": 426
             }
           },
-          "start": "2026-05-01T00:00:00+00:00",
+          "start": "2026-05-01T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.4400342355836097,
-            "brier": 0.621684843577023,
+            "accuracy": 0.44089012517385257,
+            "brier": 0.6211626525098183,
             "events": 9347
           },
           "training_rows": 37427
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.4611105167433401,
-            "brier": 0.6059230280010923,
+            "accuracy": 0.46228736492992406,
+            "brier": 0.6055830628616594,
             "events": 9347
           },
-          "end": "2026-06-30T00:00:00+00:00",
+          "end": "2026-06-30T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.46123988022623935,
-              "events": 9017,
-              "net_utility_pct": -0.017778304609246544
+              "accuracy": 0.46180210060807075,
+              "events": 9045,
+              "net_utility_pct": -0.011790691431545002
             },
-            "coverage": 0.04336253742930021,
+            "coverage": 0.1584300718629077,
             "hierarchy_confirmed": {
-              "accuracy": 0.45012787723785164,
-              "events": 391,
-              "net_utility_pct": 0.07662942870171213
+              "accuracy": 0.45987438939288205,
+              "events": 1433,
+              "net_utility_pct": 0.0015188872794379465
+            },
+            "positive_utility_capture": 0.15402755985206099,
+            "regime_counts": {
+              "RANGE": 740,
+              "SHOCK": 358,
+              "TRANSITION": 3933,
+              "TREND": 4014
+            },
+            "tier_counts": {
+              "BLOCK": 4793,
+              "HIGH": 870,
+              "LOW": 2819,
+              "MEDIUM": 563
             }
           },
-          "start": "2026-05-31T00:00:00+00:00",
+          "start": "2026-05-31T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.4515887450518883,
-            "brier": 0.6074831500264224,
+            "accuracy": 0.44923504867872044,
+            "brier": 0.6063258432172588,
             "events": 9347
           },
           "training_rows": 37427
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.4205627474055847,
-            "brier": 0.6392998653669121,
+            "accuracy": 0.41606932705680966,
+            "brier": 0.6402849483019049,
             "events": 9347
           },
-          "end": "2026-07-30T00:00:00+00:00",
+          "end": "2026-07-30T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.42084118016321403,
-              "events": 7965,
-              "net_utility_pct": -0.06785033764997729
+              "accuracy": 0.4142483497322207,
+              "events": 8029,
+              "net_utility_pct": -0.07913596801759124
             },
-            "coverage": 0.023854362837413684,
+            "coverage": 0.12865861252958027,
             "hierarchy_confirmed": {
-              "accuracy": 0.4,
-              "events": 190,
-              "net_utility_pct": -0.056490380954338386
+              "accuracy": 0.43852855759922554,
+              "events": 1033,
+              "net_utility_pct": -0.07029669508972969
+            },
+            "positive_utility_capture": 0.14594963234110434,
+            "regime_counts": {
+              "RANGE": 695,
+              "SHOCK": 169,
+              "TRANSITION": 3339,
+              "TREND": 3826
+            },
+            "tier_counts": {
+              "BLOCK": 5284,
+              "HIGH": 631,
+              "LOW": 1712,
+              "MEDIUM": 402
             }
           },
-          "start": "2026-06-30T00:00:00+00:00",
+          "start": "2026-06-30T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.42013480261046326,
-            "brier": 0.6407983710821521,
+            "accuracy": 0.41617631325559,
+            "brier": 0.6417880659121189,
             "events": 9347
           },
           "training_rows": 37427
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.426928826031965,
-            "brier": 0.6307137616785845,
-            "events": 8697
+            "accuracy": 0.43401658222017503,
+            "brier": 0.6319062325126941,
+            "events": 8684
           },
-          "end": "2026-08-29T00:00:00+00:00",
+          "end": "2026-08-29T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4105163557718302,
-              "events": 7398,
-              "net_utility_pct": -0.12013952727408653
+              "accuracy": 0.42004580358345683,
+              "events": 7423,
+              "net_utility_pct": -0.11185575963561255
             },
-            "coverage": 0.037712895377128956,
+            "coverage": 0.08891283847501011,
             "hierarchy_confirmed": {
-              "accuracy": 0.4014336917562724,
-              "events": 279,
-              "net_utility_pct": -0.1346990471104089
+              "accuracy": 0.4212121212121212,
+              "events": 660,
+              "net_utility_pct": -0.0764278693903822
+            },
+            "positive_utility_capture": 0.08824190120662483,
+            "regime_counts": {
+              "RANGE": 265,
+              "SHOCK": 200,
+              "TRANSITION": 2877,
+              "TREND": 4081
+            },
+            "tier_counts": {
+              "BLOCK": 5357,
+              "HIGH": 466,
+              "LOW": 1406,
+              "MEDIUM": 194
             }
           },
-          "start": "2026-07-30T00:00:00+00:00",
+          "start": "2026-07-30T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.431298148786938,
-            "brier": 0.6293799432040361,
-            "events": 8697
+            "accuracy": 0.4351681252878858,
+            "brier": 0.630488483598682,
+            "events": 8684
           },
           "training_rows": 37427
         }
       ],
       "summary": {
-        "accuracy_block_wins": 2,
+        "accuracy_block_wins": 3,
         "action_authority": false,
-        "advanced_1h_only_accuracy": 0.4273831842109906,
-        "advanced_1h_only_brier": 0.6289657432021568,
+        "advanced_1h_only_accuracy": 0.42788689765008336,
+        "advanced_1h_only_brier": 0.6292076321106785,
         "brier_block_wins": 1,
-        "hierarchy_accuracy_block_wins": 2,
-        "hierarchy_baseline_accuracy": 0.4232856830427262,
-        "hierarchy_baseline_net_utility_pct": -0.08800086784019374,
-        "hierarchy_confirmed_accuracy": 0.41241197183098594,
-        "hierarchy_confirmed_events": 2272,
-        "hierarchy_confirmed_net_utility_pct": -0.08229382774221779,
-        "hierarchy_coverage": 0.04517168021949619,
-        "hierarchy_directional_events": 50297,
+        "hierarchy_accuracy_block_wins": 3,
+        "hierarchy_baseline_accuracy": 0.42358026649746194,
+        "hierarchy_baseline_net_utility_pct": -0.0865994816363878,
+        "hierarchy_confirmed_accuracy": 0.4301959172489382,
+        "hierarchy_confirmed_events": 7299,
+        "hierarchy_confirmed_net_utility_pct": -0.06544028799472011,
+        "hierarchy_coverage": 0.14472953680203046,
+        "hierarchy_directional_events": 50432,
         "hierarchy_selected_for_forward_shadow": false,
-        "hierarchy_utility_block_wins": 3,
+        "hierarchy_utility_block_wins": 5,
         "production_eligible": false,
         "selected_for_forward_shadow": false,
-        "top_down_multi_timeframe_accuracy": 0.42579337036324505,
-        "top_down_multi_timeframe_brier": 0.6313067823048657
+        "top_down_multi_timeframe_accuracy": 0.4247622493325107,
+        "top_down_multi_timeframe_brier": 0.6315188889144546
       }
     },
     "24": {
       "blocks": [
         {
           "advanced_1h_only": {
-            "accuracy": 0.4350132625994695,
-            "brier": 0.6760546677141868,
+            "accuracy": 0.4588859416445623,
+            "brier": 0.5996169551130797,
             "events": 377
           },
-          "end": "2026-04-01T00:00:00+00:00",
+          "end": "2026-04-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4350132625994695,
+              "accuracy": 0.4588859416445623,
               "events": 377,
-              "net_utility_pct": -0.2734130606765934
+              "net_utility_pct": 0.0045087553275271865
             },
-            "coverage": 0.09814323607427056,
+            "coverage": 0.20954907161803712,
             "hierarchy_confirmed": {
-              "accuracy": 0.2972972972972973,
-              "events": 37,
-              "net_utility_pct": -0.786577413024123
+              "accuracy": 0.4050632911392405,
+              "events": 79,
+              "net_utility_pct": -0.28286007131681673
+            },
+            "positive_utility_capture": 0.1631297741146193,
+            "regime_counts": {
+              "RANGE": 2,
+              "SHOCK": 3,
+              "TRANSITION": 154,
+              "TREND": 218
+            },
+            "tier_counts": {
+              "BLOCK": 204,
+              "HIGH": 52,
+              "LOW": 94,
+              "MEDIUM": 27
             }
           },
-          "start": "2026-03-02T00:00:00+00:00",
+          "start": "2026-03-02T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.4350132625994695,
-            "brier": 0.6597164924321158,
+            "accuracy": 0.4854111405835544,
+            "brier": 0.5937086352854182,
             "events": 377
           },
           "training_rows": 1183
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.47214854111405835,
-            "brier": 0.6391861366762123,
+            "accuracy": 0.38461538461538464,
+            "brier": 0.6771820474080076,
             "events": 377
           },
-          "end": "2026-05-01T00:00:00+00:00",
+          "end": "2026-05-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.47214854111405835,
+              "accuracy": 0.38461538461538464,
               "events": 377,
-              "net_utility_pct": -0.19943714948972135
+              "net_utility_pct": -0.8681075339386474
             },
-            "coverage": 0.09018567639257294,
+            "coverage": 0.16976127320954906,
+            "hierarchy_confirmed": {
+              "accuracy": 0.375,
+              "events": 64,
+              "net_utility_pct": -0.6408367473024977
+            },
+            "positive_utility_capture": 0.13226965681206154,
+            "regime_counts": {
+              "RANGE": 32,
+              "SHOCK": 27,
+              "TRANSITION": 155,
+              "TREND": 163
+            },
+            "tier_counts": {
+              "BLOCK": 209,
+              "HIGH": 35,
+              "LOW": 104,
+              "MEDIUM": 29
+            }
+          },
+          "start": "2026-04-01T01:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.3978779840848806,
+            "brier": 0.6772063609371718,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.5145888594164456,
+            "brier": 0.5594445910438781,
+            "events": 377
+          },
+          "end": "2026-05-31T01:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.5145888594164456,
+              "events": 377,
+              "net_utility_pct": -0.11705616423398402
+            },
+            "coverage": 0.1856763925729443,
             "hierarchy_confirmed": {
               "accuracy": 0.5,
-              "events": 34,
-              "net_utility_pct": -0.6727416055716218
-            }
-          },
-          "start": "2026-04-01T00:00:00+00:00",
-          "top_down_multi_timeframe": {
-            "accuracy": 0.5039787798408488,
-            "brier": 0.6199093064810449,
-            "events": 377
-          },
-          "training_rows": 1547
-        },
-        {
-          "advanced_1h_only": {
-            "accuracy": 0.4403183023872679,
-            "brier": 0.6088486109184787,
-            "events": 377
-          },
-          "end": "2026-05-31T00:00:00+00:00",
-          "hierarchical_confirmation": {
-            "all_directional": {
-              "accuracy": 0.4403183023872679,
-              "events": 377,
-              "net_utility_pct": -0.3783151949419896
+              "events": 70,
+              "net_utility_pct": 0.44644147839466714
             },
-            "coverage": 0.07161803713527852,
-            "hierarchy_confirmed": {
-              "accuracy": 0.37037037037037035,
-              "events": 27,
-              "net_utility_pct": -0.6270357109192505
+            "positive_utility_capture": 0.1985102562704854,
+            "regime_counts": {
+              "RANGE": 27,
+              "SHOCK": 22,
+              "TRANSITION": 155,
+              "TREND": 173
+            },
+            "tier_counts": {
+              "BLOCK": 182,
+              "HIGH": 50,
+              "LOW": 125,
+              "MEDIUM": 20
             }
           },
-          "start": "2026-05-01T00:00:00+00:00",
+          "start": "2026-05-01T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.46419098143236076,
-            "brier": 0.6053906330432232,
-            "events": 377
-          },
-          "training_rows": 1547
-        },
-        {
-          "advanced_1h_only": {
             "accuracy": 0.5092838196286472,
-            "brier": 0.5877107117045904,
-            "events": 377
-          },
-          "end": "2026-06-30T00:00:00+00:00",
-          "hierarchical_confirmation": {
-            "all_directional": {
-              "accuracy": 0.5092838196286472,
-              "events": 377,
-              "net_utility_pct": 0.09343720299119207
-            },
-            "coverage": 0.07957559681697612,
-            "hierarchy_confirmed": {
-              "accuracy": 0.7,
-              "events": 30,
-              "net_utility_pct": 1.7846055995618495
-            }
-          },
-          "start": "2026-05-31T00:00:00+00:00",
-          "top_down_multi_timeframe": {
-            "accuracy": 0.4986737400530504,
-            "brier": 0.5932453728025164,
+            "brier": 0.5775962320909648,
             "events": 377
           },
           "training_rows": 1547
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.5278514588859416,
-            "brier": 0.5527255160112857,
+            "accuracy": 0.47745358090185674,
+            "brier": 0.5766150811156266,
             "events": 377
           },
-          "end": "2026-07-30T00:00:00+00:00",
+          "end": "2026-06-30T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.5278514588859416,
+              "accuracy": 0.47745358090185674,
               "events": 377,
-              "net_utility_pct": 0.32479789496302053
+              "net_utility_pct": -0.1524191042752825
             },
-            "coverage": 0.034482758620689655,
+            "coverage": 0.1830238726790451,
             "hierarchy_confirmed": {
-              "accuracy": 0.38461538461538464,
-              "events": 13,
-              "net_utility_pct": -1.1205511775760328
+              "accuracy": 0.5507246376811594,
+              "events": 69,
+              "net_utility_pct": 0.5651758659001133
+            },
+            "positive_utility_capture": 0.23342865871255325,
+            "regime_counts": {
+              "RANGE": 28,
+              "SHOCK": 16,
+              "TRANSITION": 174,
+              "TREND": 159
+            },
+            "tier_counts": {
+              "BLOCK": 192,
+              "HIGH": 42,
+              "LOW": 116,
+              "MEDIUM": 27
             }
           },
-          "start": "2026-06-30T00:00:00+00:00",
+          "start": "2026-05-31T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.5278514588859416,
-            "brier": 0.5408988655396572,
+            "accuracy": 0.47480106100795755,
+            "brier": 0.5876709110699192,
             "events": 377
           },
           "training_rows": 1547
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.4725274725274725,
-            "brier": 0.6026030421710297,
+            "accuracy": 0.4217506631299735,
+            "brier": 0.638452347779043,
+            "events": 377
+          },
+          "end": "2026-07-30T01:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4217506631299735,
+              "events": 377,
+              "net_utility_pct": -0.530275750313719
+            },
+            "coverage": 0.15649867374005305,
+            "hierarchy_confirmed": {
+              "accuracy": 0.5254237288135594,
+              "events": 59,
+              "net_utility_pct": -0.0997735667739909
+            },
+            "positive_utility_capture": 0.23067707632126924,
+            "regime_counts": {
+              "RANGE": 27,
+              "SHOCK": 4,
+              "TRANSITION": 163,
+              "TREND": 183
+            },
+            "tier_counts": {
+              "BLOCK": 240,
+              "HIGH": 36,
+              "LOW": 78,
+              "MEDIUM": 23
+            }
+          },
+          "start": "2026-06-30T01:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4376657824933687,
+            "brier": 0.6030689795317744,
+            "events": 377
+          },
+          "training_rows": 1547
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4340659340659341,
+            "brier": 0.6022354068198313,
             "events": 364
           },
-          "end": "2026-08-29T00:00:00+00:00",
+          "end": "2026-08-29T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4725274725274725,
+              "accuracy": 0.4340659340659341,
               "events": 364,
-              "net_utility_pct": -0.531032301110388
+              "net_utility_pct": -0.7798719354983268
             },
-            "coverage": 0.057692307692307696,
+            "coverage": 0.1346153846153846,
             "hierarchy_confirmed": {
-              "accuracy": 0.42857142857142855,
-              "events": 21,
-              "net_utility_pct": -0.3665925386513985
+              "accuracy": 0.4489795918367347,
+              "events": 49,
+              "net_utility_pct": -0.5288811957041816
+            },
+            "positive_utility_capture": 0.11570057292944236,
+            "regime_counts": {
+              "RANGE": 19,
+              "SHOCK": 16,
+              "TRANSITION": 129,
+              "TREND": 200
+            },
+            "tier_counts": {
+              "BLOCK": 245,
+              "HIGH": 34,
+              "LOW": 70,
+              "MEDIUM": 15
             }
           },
-          "start": "2026-07-30T00:00:00+00:00",
+          "start": "2026-07-30T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.4725274725274725,
-            "brier": 0.6044487849194036,
+            "accuracy": 0.45604395604395603,
+            "brier": 0.5938012809215597,
             "events": 364
           },
           "training_rows": 1547
         }
       ],
       "summary": {
-        "accuracy_block_wins": 2,
+        "accuracy_block_wins": 4,
         "action_authority": false,
-        "advanced_1h_only_accuracy": 0.4761904761904762,
-        "advanced_1h_only_brier": 0.6111881141992973,
-        "brier_block_wins": 4,
-        "hierarchy_accuracy_block_wins": 2,
-        "hierarchy_baseline_accuracy": 0.47621164962205426,
-        "hierarchy_baseline_net_utility_pct": -0.15851955687028627,
-        "hierarchy_confirmed_accuracy": 0.4506172839506173,
-        "hierarchy_confirmed_events": 162,
-        "hierarchy_confirmed_net_utility_pct": -0.2323085413546899,
-        "hierarchy_coverage": 0.07203201422854602,
+        "advanced_1h_only_accuracy": 0.44856006062902615,
+        "advanced_1h_only_brier": 0.6089244048799111,
+        "brier_block_wins": 3,
+        "hierarchy_accuracy_block_wins": 3,
+        "hierarchy_baseline_accuracy": 0.4486438417074255,
+        "hierarchy_baseline_net_utility_pct": -0.4050494700551573,
+        "hierarchy_confirmed_accuracy": 0.4666666666666667,
+        "hierarchy_confirmed_events": 390,
+        "hierarchy_confirmed_net_utility_pct": -0.06388020065595953,
+        "hierarchy_coverage": 0.17341040462427745,
         "hierarchy_directional_events": 2249,
         "hierarchy_selected_for_forward_shadow": false,
-        "hierarchy_utility_block_wins": 2,
+        "hierarchy_utility_block_wins": 5,
         "production_eligible": false,
         "selected_for_forward_shadow": false,
-        "top_down_multi_timeframe_accuracy": 0.4837059492231906,
-        "top_down_multi_timeframe_brier": 0.6039349092029935
+        "top_down_multi_timeframe_accuracy": 0.4601806239737274,
+        "top_down_multi_timeframe_brier": 0.6055087333061347
       }
     },
     "4": {
       "blocks": [
         {
           "advanced_1h_only": {
-            "accuracy": 0.4374731413837559,
-            "brier": 0.6178280671466797,
+            "accuracy": 0.400945423291792,
+            "brier": 0.6256289524049018,
             "events": 2327
           },
-          "end": "2026-04-01T00:00:00+00:00",
+          "end": "2026-04-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4384151593453919,
-              "events": 2322,
-              "net_utility_pct": -0.11092010812646846
+              "accuracy": 0.4010327022375215,
+              "events": 2324,
+              "net_utility_pct": -0.2686079478004714
             },
-            "coverage": 0.0714900947459087,
+            "coverage": 0.173407917383821,
             "hierarchy_confirmed": {
-              "accuracy": 0.42771084337349397,
-              "events": 166,
-              "net_utility_pct": -0.17248628702755836
+              "accuracy": 0.37220843672456577,
+              "events": 403,
+              "net_utility_pct": -0.4444865428136229
+            },
+            "positive_utility_capture": 0.14928548870877084,
+            "regime_counts": {
+              "RANGE": 4,
+              "SHOCK": 13,
+              "TRANSITION": 965,
+              "TREND": 1342
+            },
+            "tier_counts": {
+              "BLOCK": 1279,
+              "HIGH": 266,
+              "LOW": 642,
+              "MEDIUM": 137
             }
           },
-          "start": "2026-03-02T00:00:00+00:00",
+          "start": "2026-03-02T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.45251396648044695,
-            "brier": 0.6176262062946724,
+            "accuracy": 0.42329179200687583,
+            "brier": 0.6207983867913247,
             "events": 2327
           },
           "training_rows": 7098
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.47142243231628705,
-            "brier": 0.5977403344246167,
+            "accuracy": 0.4486463257412978,
+            "brier": 0.611449229533177,
             "events": 2327
           },
-          "end": "2026-05-01T00:00:00+00:00",
+          "end": "2026-05-01T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4717794054286945,
-              "events": 2321,
-              "net_utility_pct": -0.07823975719837876
+              "accuracy": 0.4488734835355286,
+              "events": 2308,
+              "net_utility_pct": -0.16754661246878952
             },
-            "coverage": 0.04739336492890995,
+            "coverage": 0.15381282495667245,
             "hierarchy_confirmed": {
-              "accuracy": 0.4727272727272727,
-              "events": 110,
-              "net_utility_pct": 0.13855030049158454
+              "accuracy": 0.4112676056338028,
+              "events": 355,
+              "net_utility_pct": -0.18767767435692076
+            },
+            "positive_utility_capture": 0.11069210480789127,
+            "regime_counts": {
+              "RANGE": 222,
+              "SHOCK": 95,
+              "TRANSITION": 1001,
+              "TREND": 990
+            },
+            "tier_counts": {
+              "BLOCK": 1271,
+              "HIGH": 208,
+              "LOW": 682,
+              "MEDIUM": 147
             }
           },
-          "start": "2026-04-01T00:00:00+00:00",
-          "top_down_multi_timeframe": {
-            "accuracy": 0.46669531585732704,
-            "brier": 0.6027378289287063,
-            "events": 2327
-          },
-          "training_rows": 9347
-        },
-        {
-          "advanced_1h_only": {
-            "accuracy": 0.43403523850451226,
-            "brier": 0.6066935409329804,
-            "events": 2327
-          },
-          "end": "2026-05-31T00:00:00+00:00",
-          "hierarchical_confirmation": {
-            "all_directional": {
-              "accuracy": 0.4354769097971515,
-              "events": 2317,
-              "net_utility_pct": -0.25724319288188713
-            },
-            "coverage": 0.0466119982736297,
-            "hierarchy_confirmed": {
-              "accuracy": 0.2962962962962963,
-              "events": 108,
-              "net_utility_pct": -0.5897321549777609
-            }
-          },
-          "start": "2026-05-01T00:00:00+00:00",
-          "top_down_multi_timeframe": {
-            "accuracy": 0.4374731413837559,
-            "brier": 0.6105273829114687,
-            "events": 2327
-          },
-          "training_rows": 9347
-        },
-        {
-          "advanced_1h_only": {
-            "accuracy": 0.45938977223893424,
-            "brier": 0.5860512829811789,
-            "events": 2327
-          },
-          "end": "2026-06-30T00:00:00+00:00",
-          "hierarchical_confirmation": {
-            "all_directional": {
-              "accuracy": 0.46037898363479757,
-              "events": 2322,
-              "net_utility_pct": -0.13671528957241022
-            },
-            "coverage": 0.059431524547803614,
-            "hierarchy_confirmed": {
-              "accuracy": 0.4057971014492754,
-              "events": 138,
-              "net_utility_pct": 0.21391813760278922
-            }
-          },
-          "start": "2026-05-31T00:00:00+00:00",
-          "top_down_multi_timeframe": {
-            "accuracy": 0.47142243231628705,
-            "brier": 0.5867988189863754,
-            "events": 2327
-          },
-          "training_rows": 9347
-        },
-        {
-          "advanced_1h_only": {
-            "accuracy": 0.4426299957026214,
-            "brier": 0.6119872001630354,
-            "events": 2327
-          },
-          "end": "2026-07-30T00:00:00+00:00",
-          "hierarchical_confirmation": {
-            "all_directional": {
-              "accuracy": 0.44282029234737746,
-              "events": 2326,
-              "net_utility_pct": -0.1137233329691807
-            },
-            "coverage": 0.026655202063628546,
-            "hierarchy_confirmed": {
-              "accuracy": 0.3709677419354839,
-              "events": 62,
-              "net_utility_pct": -0.2669588750266009
-            }
-          },
-          "start": "2026-06-30T00:00:00+00:00",
+          "start": "2026-04-01T01:00:00+00:00",
           "top_down_multi_timeframe": {
             "accuracy": 0.4426299957026214,
-            "brier": 0.612013913836348,
+            "brier": 0.6159193071815784,
             "events": 2327
           },
           "training_rows": 9347
         },
         {
           "advanced_1h_only": {
-            "accuracy": 0.44047619047619047,
-            "brier": 0.6088254085521343,
-            "events": 2184
+            "accuracy": 0.4679845294370434,
+            "brier": 0.5822900227541958,
+            "events": 2327
           },
-          "end": "2026-08-29T00:00:00+00:00",
+          "end": "2026-05-31T01:00:00+00:00",
           "hierarchical_confirmation": {
             "all_directional": {
-              "accuracy": 0.4420323325635104,
-              "events": 2165,
-              "net_utility_pct": -0.17800040244791107
+              "accuracy": 0.4700520833333333,
+              "events": 2304,
+              "net_utility_pct": -0.14630906020771894
             },
-            "coverage": 0.04295612009237875,
+            "coverage": 0.1818576388888889,
             "hierarchy_confirmed": {
-              "accuracy": 0.3655913978494624,
-              "events": 93,
-              "net_utility_pct": -0.1977658512335172
+              "accuracy": 0.441527446300716,
+              "events": 419,
+              "net_utility_pct": -0.05013313709356938
+            },
+            "positive_utility_capture": 0.139369588179646,
+            "regime_counts": {
+              "RANGE": 154,
+              "SHOCK": 69,
+              "TRANSITION": 972,
+              "TREND": 1109
+            },
+            "tier_counts": {
+              "BLOCK": 1142,
+              "HIGH": 285,
+              "LOW": 743,
+              "MEDIUM": 134
             }
           },
-          "start": "2026-07-30T00:00:00+00:00",
+          "start": "2026-05-01T01:00:00+00:00",
           "top_down_multi_timeframe": {
-            "accuracy": 0.44871794871794873,
-            "brier": 0.6056020229471286,
-            "events": 2184
+            "accuracy": 0.46841426729694885,
+            "brier": 0.588794977049022,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.5049419853889128,
+            "brier": 0.5676571352481511,
+            "events": 2327
+          },
+          "end": "2026-06-30T01:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.5047332185886403,
+              "events": 2324,
+              "net_utility_pct": 0.09366049036686207
+            },
+            "coverage": 0.1923407917383821,
+            "hierarchy_confirmed": {
+              "accuracy": 0.5100671140939598,
+              "events": 447,
+              "net_utility_pct": 0.27746277820933235
+            },
+            "positive_utility_capture": 0.20799861886011065,
+            "regime_counts": {
+              "RANGE": 200,
+              "SHOCK": 117,
+              "TRANSITION": 1004,
+              "TREND": 1003
+            },
+            "tier_counts": {
+              "BLOCK": 1198,
+              "HIGH": 272,
+              "LOW": 679,
+              "MEDIUM": 175
+            }
+          },
+          "start": "2026-05-31T01:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.5272883541039965,
+            "brier": 0.5621705358283052,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4258702191663086,
+            "brier": 0.6232196752218696,
+            "events": 2327
+          },
+          "end": "2026-07-30T01:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.42560553633217996,
+              "events": 2312,
+              "net_utility_pct": -0.16552939037188136
+            },
+            "coverage": 0.12629757785467127,
+            "hierarchy_confirmed": {
+              "accuracy": 0.4075342465753425,
+              "events": 292,
+              "net_utility_pct": -0.2630882183278358
+            },
+            "positive_utility_capture": 0.13203412581681995,
+            "regime_counts": {
+              "RANGE": 187,
+              "SHOCK": 26,
+              "TRANSITION": 1005,
+              "TREND": 1094
+            },
+            "tier_counts": {
+              "BLOCK": 1474,
+              "HIGH": 177,
+              "LOW": 546,
+              "MEDIUM": 115
+            }
+          },
+          "start": "2026-06-30T01:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.44821658788139235,
+            "brier": 0.6197162237657541,
+            "events": 2327
+          },
+          "training_rows": 9347
+        },
+        {
+          "advanced_1h_only": {
+            "accuracy": 0.4454168585905113,
+            "brier": 0.6034374010197237,
+            "events": 2171
+          },
+          "end": "2026-08-29T01:00:00+00:00",
+          "hierarchical_confirmation": {
+            "all_directional": {
+              "accuracy": 0.4474431818181818,
+              "events": 2112,
+              "net_utility_pct": -0.12394902733805244
+            },
+            "coverage": 0.109375,
+            "hierarchy_confirmed": {
+              "accuracy": 0.49783549783549785,
+              "events": 231,
+              "net_utility_pct": 0.041711560432201
+            },
+            "positive_utility_capture": 0.10721265073143876,
+            "regime_counts": {
+              "RANGE": 93,
+              "SHOCK": 57,
+              "TRANSITION": 790,
+              "TREND": 1172
+            },
+            "tier_counts": {
+              "BLOCK": 1448,
+              "HIGH": 163,
+              "LOW": 433,
+              "MEDIUM": 68
+            }
+          },
+          "start": "2026-07-30T01:00:00+00:00",
+          "top_down_multi_timeframe": {
+            "accuracy": 0.4514048825426071,
+            "brier": 0.6016091785626261,
+            "events": 2171
           },
           "training_rows": 9347
         }
       ],
       "summary": {
-        "accuracy_block_wins": 4,
+        "accuracy_block_wins": 5,
         "action_authority": false,
-        "advanced_1h_only_accuracy": 0.4475711284370502,
-        "advanced_1h_only_brier": 0.6048543057001042,
-        "brier_block_wins": 2,
-        "hierarchy_accuracy_block_wins": 1,
-        "hierarchy_baseline_accuracy": 0.448558774413708,
-        "hierarchy_baseline_net_utility_pct": -0.1453951711034348,
-        "hierarchy_confirmed_accuracy": 0.39586410635155095,
-        "hierarchy_confirmed_events": 677,
-        "hierarchy_confirmed_net_utility_pct": -0.12187036153217136,
-        "hierarchy_coverage": 0.04915414216220141,
-        "hierarchy_directional_events": 13773,
+        "advanced_1h_only_accuracy": 0.4489675569359776,
+        "advanced_1h_only_brier": 0.6022804026970031,
+        "brier_block_wins": 4,
+        "hierarchy_accuracy_block_wins": 2,
+        "hierarchy_baseline_accuracy": 0.449649225372698,
+        "hierarchy_baseline_net_utility_pct": -0.12970299938979943,
+        "hierarchy_confirmed_accuracy": 0.4392175128085701,
+        "hierarchy_confirmed_events": 2147,
+        "hierarchy_confirmed_net_utility_pct": -0.0977736204122592,
+        "hierarchy_coverage": 0.15689856767027185,
+        "hierarchy_directional_events": 13684,
         "hierarchy_selected_for_forward_shadow": false,
-        "hierarchy_utility_block_wins": 2,
+        "hierarchy_utility_block_wins": 3,
         "production_eligible": false,
-        "selected_for_forward_shadow": false,
-        "top_down_multi_timeframe_accuracy": 0.4532421334097312,
-        "top_down_multi_timeframe_brier": 0.6058843623174499
+        "selected_for_forward_shadow": true,
+        "top_down_multi_timeframe_accuracy": 0.46020764658907365,
+        "top_down_multi_timeframe_brier": 0.6015014348631017
       }
     }
   },
