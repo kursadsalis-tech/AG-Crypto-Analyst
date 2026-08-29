@@ -1,5 +1,27 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — FOMC resmî saati ile gerçek gözlem saati nedensel olarak ayrıldı
+
+`955bb08` checkpoint'inden devam edildi. Kesin-zamanlı makro sözleşmesinde kritik
+bir lookahead riski kapatıldı: resmî belge yayın saati ile AGCA'nın kaydı ilk
+kez gördüğü saat artık ayrı saklanıyor. Nedensel `available_at` bu iki zamanın
+geç olanıdır. Böylece önceden bilinen takvim olayı yayın anına kadar görünmez;
+yayından sonra geç bulunan belge ise geçmiş yayın dakikasını yeniden yazamaz ve
+yalnız gerçek gözlem dakikasında kullanılabilir olur. Eski tablo iki nullable
+kolonla geriye uyumlu yükselir; aynı olay tekrar görülürse en erken gerçek gözlem
+korunur.
+
+Mevcut macro cycle altı saatlik cadence kullanıyor. FOMC kaynağını bu cycle'a
+doğrudan bağlamak olayı saatler geç yakalayabilir; bu nedenle anlık kanıt gibi
+yanlış sunacak bir bağlantı yapılmadı. Sıradaki dar iş, resmî FOMC yayın
+pencerelerini düşük istek bütçesiyle izleyen ayrı bir cadence tasarlamak ve
+yerelde sahte saatle erken/ zamanında/ geç gözlem senaryolarını doğrulamaktır.
+Kullanıcının açık onayı olmadan hiçbir timer buluta kurulmayacak veya
+başlatılmayacaktır.
+
+Bulut ve runtime DB durumu değiştirilmedi. PAPER_ONLY, kanıt eşikleri, strateji
+politikası ve gerçek emir yetkisi değişmedi; model/eşik araması açılmadı.
+
 # 2026-08-30 — Forward olay/davranış ölçüm zemini hazır, doğal kapsam henüz sıfır
 
 `fdc8fac` checkpoint'inden temiz devam edildi. Kanonik yerel

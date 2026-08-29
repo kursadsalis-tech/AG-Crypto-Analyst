@@ -36,11 +36,14 @@ class CausalEvidenceStoreTests(unittest.TestCase):
         self.con.close()
 
     def test_existing_sources_use_actual_availability(self):
-        save_exact_macro_event(self.con, {
+        macro = {
             "event_id": "fed-1", "source": "Federal Reserve",
             "event_name": "FOMC", "occurred_at": "2026-08-30T10:00:00Z",
             "available_at": "2026-08-30T10:00:12Z",
-        })
+        }
+        save_exact_macro_event(
+            self.con, macro, observed_at="2026-08-30T10:00:15Z"
+        )
         events = load_events(self.con)
         self.assertEqual({row["kind"] for row in events}, {
             "NEWS", "MACRO", "ONCHAIN", "WHALE"
@@ -49,6 +52,32 @@ class CausalEvidenceStoreTests(unittest.TestCase):
         whale = next(row for row in events if row["kind"] == "WHALE")
         self.assertEqual(news["available_at"], "2026-08-30T10:00:09+00:00")
         self.assertEqual(whale["available_at"], "2026-08-30T10:00:11+00:00")
+        macro_row = next(row for row in events if row["kind"] == "MACRO")
+        self.assertEqual(macro_row["available_at"], "2026-08-30T10:00:15+00:00")
+
+    def test_preloaded_macro_waits_for_release_and_late_collection_stays_late(self):
+        event = {
+            "event_id": "scheduled", "source": "Federal Reserve",
+            "event_name": "FOMC", "occurred_at": "2026-09-16T18:00:00Z",
+            "available_at": "2026-09-16T18:00:00Z",
+        }
+        save_exact_macro_event(
+            self.con, event, observed_at="2026-09-15T12:00:00Z"
+        )
+        row = self.con.execute(
+            "SELECT official_release_at,observed_at,available_at "
+            "FROM exact_time_macro_events WHERE event_id='scheduled'"
+        ).fetchone()
+        self.assertEqual(row[2], "2026-09-16T18:00:00+00:00")
+
+        late = dict(event, event_id="late")
+        save_exact_macro_event(
+            self.con, late, observed_at="2026-09-16T18:07:00Z"
+        )
+        available = self.con.execute(
+            "SELECT available_at FROM exact_time_macro_events WHERE event_id='late'"
+        ).fetchone()[0]
+        self.assertEqual(available, "2026-09-16T18:07:00+00:00")
 
 
 if __name__ == "__main__":

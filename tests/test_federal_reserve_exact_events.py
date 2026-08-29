@@ -57,7 +57,7 @@ class FederalReserveExactEventsTests(unittest.TestCase):
         )[0]
         con = sqlite3.connect(":memory:")
         try:
-            save_exact_macro_event(con, parsed)
+            save_exact_macro_event(con, parsed, observed_at=parsed["available_at"])
             stored = load_events(con)
         finally:
             con.close()

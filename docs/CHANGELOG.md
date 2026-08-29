@@ -15,6 +15,9 @@
   `Released <date> at <time>` evidence, converts America/New_York time to UTC
   with daylight-saving rules, and records source URLs and HTML SHA-256 values.
   A three-page 2026 sample yielded 10 exact-time documents.
+- Separated an official macro release timestamp from AGCA's actual observation
+  timestamp. Causal availability is now the later value: preloaded scheduled
+  events wait for release, while late discoveries cannot rewrite past minutes.
 - Persisted exact external events idempotently beside local behavior minutes
   under the same 30-day retention boundary; this table is not remotely mirrored.
 - Added observational first/last midpoint prices to closed behavior minutes so

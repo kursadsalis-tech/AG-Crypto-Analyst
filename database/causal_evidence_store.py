@@ -49,26 +49,51 @@ def ensure_macro_table(con):
             source TEXT NOT NULL,
             event_name TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
+            official_release_at TEXT,
+            observed_at TEXT,
             available_at TEXT NOT NULL,
             detail_json TEXT NOT NULL
         )
     """)
+    columns = {
+        row[1] for row in con.execute(f"PRAGMA table_info({MACRO_TABLE})").fetchall()
+    }
+    for column in ("official_release_at", "observed_at"):
+        if column not in columns:
+            con.execute(f"ALTER TABLE {MACRO_TABLE} ADD COLUMN {column} TEXT")
 
 
-def save_exact_macro_event(con, event):
+def save_exact_macro_event(con, event, observed_at=None):
     occurred = parse_exact_utc(event["occurred_at"])
-    available = parse_exact_utc(event["available_at"])
-    if available < occurred:
+    official_release = parse_exact_utc(event["available_at"])
+    if official_release < occurred:
         raise ValueError("AVAILABLE_BEFORE_OCCURRENCE")
+    observed = parse_exact_utc(
+        observed_at or datetime.now(timezone.utc).isoformat()
+    )
+    available = max(official_release, observed)
     ensure_macro_table(con)
     con.execute(f"""
         INSERT INTO {MACRO_TABLE}(
-            event_id,source,event_name,occurred_at,available_at,detail_json
-        ) VALUES(?,?,?,?,?,?)
-        ON CONFLICT(event_id) DO NOTHING
+            event_id,source,event_name,occurred_at,official_release_at,
+            observed_at,available_at,detail_json
+        ) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(event_id) DO UPDATE SET
+            official_release_at=COALESCE({MACRO_TABLE}.official_release_at,
+                                         excluded.official_release_at),
+            observed_at=CASE
+                WHEN {MACRO_TABLE}.observed_at IS NULL
+                  OR julianday(excluded.observed_at)<julianday({MACRO_TABLE}.observed_at)
+                THEN excluded.observed_at ELSE {MACRO_TABLE}.observed_at END,
+            available_at=CASE
+                WHEN {MACRO_TABLE}.observed_at IS NULL
+                THEN excluded.available_at
+                WHEN julianday(excluded.available_at)<julianday({MACRO_TABLE}.available_at)
+                THEN excluded.available_at ELSE {MACRO_TABLE}.available_at END
     """, (
         str(event["event_id"]), str(event["source"]), str(event["event_name"]),
-        occurred.isoformat(), available.isoformat(),
+        occurred.isoformat(), official_release.isoformat(), observed.isoformat(),
+        available.isoformat(),
         json.dumps(event.get("detail") or {}, sort_keys=True, separators=(",", ":")),
     ))
 
@@ -137,13 +162,17 @@ def load_events(con, start_at=None, end_at=None):
     if MACRO_TABLE in tables:
         where = " WHERE julianday(available_at)>=julianday(?) AND julianday(available_at)<julianday(?)" if window else ""
         for row in con.execute(f"""
-            SELECT event_id,source,event_name,occurred_at,available_at,detail_json
+            SELECT event_id,source,event_name,occurred_at,available_at,detail_json,
+                   official_release_at,observed_at
             FROM {MACRO_TABLE}
         """ + where, window or ()).fetchall():
             events.append({
                 "event_id": f"macro:{row[0]}", "kind": "MACRO", "source": row[1],
                 "occurred_at": row[3], "available_at": row[4], "symbols": [],
-                "detail": {"event_name": row[2], **json.loads(row[5])},
+                "detail": {
+                    "event_name": row[2], **json.loads(row[5]),
+                    "official_release_at": row[6], "observed_at": row[7],
+                },
             })
     return events
 
