@@ -16,6 +16,13 @@ def _average(values):
     return sum(values) / len(values) if values else 0.0
 
 
+def _mid_price(row):
+    book = row.get("order_book") or {}
+    bid = float(book.get("best_bid") or 0.0)
+    ask = float(book.get("best_ask") or 0.0)
+    return (bid + ask) / 2.0 if bid > 0 and ask > 0 and ask >= bid else None
+
+
 def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25_000):
     minute_start_ms = int(minute_end_ms) - MINUTE_MS
     samples = defaultdict(list)
@@ -50,11 +57,14 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                   if event["instrument"] == instrument]
         first_oi = instrument_samples[0]["open_interest"]["usd"]
         last_oi = instrument_samples[-1]["open_interest"]["usd"]
+        first_mid = _mid_price(instrument_samples[0])
+        last_mid = _mid_price(instrument_samples[-1])
         gates = {
             "minimum_samples": len(instrument_samples) >= min_samples,
             "maximum_gap": not gaps or max(gaps) <= max_gap_ms,
             "required_sources": len(complete) == len(instrument_samples),
             "liquidation_channel": bool(channel_states) and all(channel_states),
+            "valid_mid_price": first_mid is not None and last_mid is not None,
         }
         rows.append({
             "instrument": instrument,
@@ -70,6 +80,8 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
             "taker_imbalance_snapshot_last": instrument_samples[-1]["recent_trades"]["taker_imbalance"],
             "spread_bps_mean": _average([
                 row["order_book"]["spread_bps"] for row in instrument_samples]),
+            "mid_price_first": first_mid,
+            "mid_price_last": last_mid,
             "open_interest_usd_first": first_oi,
             "open_interest_usd_last": last_oi,
             "open_interest_usd_change": last_oi - first_oi,

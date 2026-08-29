@@ -16,6 +16,7 @@ def report(end, instrument="AAA"):
         "book_imbalance_20_mean": 0.1, "book_imbalance_20_last": 0.2,
         "taker_imbalance_snapshot_mean": -0.1, "taker_imbalance_snapshot_last": -0.2,
         "spread_bps_mean": 1, "open_interest_usd_first": 100,
+        "mid_price_first": 10, "mid_price_last": 11,
         "open_interest_usd_last": 110, "open_interest_usd_change": 10,
         "funding_rate_last": 0.0001,
         "long_liquidation_notional_usd_estimate": 0,

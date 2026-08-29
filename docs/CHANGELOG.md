@@ -17,6 +17,10 @@
   A three-page 2026 sample yielded 10 exact-time documents.
 - Persisted exact external events idempotently beside local behavior minutes
   under the same 30-day retention boundary; this table is not remotely mirrored.
+- Added observational first/last midpoint prices to closed behavior minutes so
+  future event outcomes can eventually be measured without reconstructing raw
+  payloads. Added a read-only coverage audit for exact-minute joins and the
+  already established 1h/4h/24h horizons; it opens no model or threshold search.
 - This evidence remains observational. PAPER_ONLY, action thresholds, strategy
   policy, allocation gates, and real-order authority are unchanged.
 

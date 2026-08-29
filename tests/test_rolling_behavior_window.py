@@ -7,7 +7,8 @@ def sample(timestamp, oi, imbalance=0.2):
     return {
         "instrument": "AAA-USDT-SWAP", "collected_timestamp_ms": timestamp,
         "required_sources_available": True,
-        "order_book": {"spread_bps": 1, "depths": {"20": {"imbalance": imbalance}}},
+        "order_book": {"best_bid": 99, "best_ask": 101, "spread_bps": 1,
+                       "depths": {"20": {"imbalance": imbalance}}},
         "recent_trades": {"taker_imbalance": -0.1},
         "open_interest": {"usd": oi}, "funding": {"rate": 0.0001},
         "liquidations": {"events": []},

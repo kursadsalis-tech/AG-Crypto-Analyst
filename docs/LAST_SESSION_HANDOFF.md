@@ -1,5 +1,34 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Forward olay/davranış ölçüm zemini hazır, doğal kapsam henüz sıfır
+
+`fdc8fac` checkpoint'inden temiz devam edildi. Kanonik yerel
+`crypto_data.db` salt-okunur ve değişmez modda denetlendi. Yeni
+`market_behavior_minute_features` ve `causal_minute_external_evidence` tabloları
+bu veritabanında henüz oluşmamış; dolayısıyla doğal davranış dakikası, dış olay,
+aynı-dakika eşleşmesi ve kapanmış forward sonuç sayısı sıfırdır. Bu durum sonuç
+veya başarı gibi sunulmadı; `reports/behavior_event_forward_coverage.json`
+dosyasında açık blocker olarak kaydedildi.
+
+Forward sonucu ileride ölçebilmek için kapanmış davranış dakikasına ilk ve son
+alış/satış orta fiyatı eklendi. Orta fiyat yalnız geçerli en iyi alış ve satıştan
+üretiliyor; yoksa satırın mevcut kalite kapısı kapanıyor. Ham payload saklama,
+işlem sinyali veya model girdisi eklenmedi. Eski SQLite şeması iki nullable
+kolonla geriye uyumlu biçimde yükseltilebiliyor.
+
+`BEHAVIOR_EVENT_FORWARD_MEASUREMENT_V1` salt-okunur denetimi, dış olayın
+`available_at` dakikasındaki uygun davranış satırını ve değişmeyen mevcut
+1h/4h/24h ufuklarda kapanmış fiyat satırı bulunup bulunmadığını sayıyor. Coin
+etiketli olay yalnız ilgili coinle; global makro olay bütün gözlenen piyasalarla
+eşleşiyor. Bu yalnız kapsam/ölçülebilirlik sayımıdır; yeni eşik, model, sinyal,
+işlem veya politika araması değildir.
+
+Buluta kurulum/başlatma ve runtime DB mutasyonu yapılmadı. PAPER_ONLY, kanıt
+eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi. Sıradaki doğru
+adım yeni araştırma açmak değil, kullanıcının açık bulut onayı olmadan yerel
+sözleşme/test kalitesini korumak ve doğal gözlem verisi oluşmadığı sürece
+forward performans sonucu üretmemektir.
+
 # 2026-08-30 — Resmî FOMC saatleri gerçek örnekle doğrulandı ve dakika deposuna eklendi
 
 `526277b` checkpoint'inden devam edildi. Federal Reserve'in resmî FOMC toplantı

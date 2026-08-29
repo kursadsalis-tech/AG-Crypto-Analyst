@@ -25,6 +25,8 @@ def ensure_table(connection):
             taker_imbalance_snapshot_mean REAL NOT NULL,
             taker_imbalance_snapshot_last REAL NOT NULL,
             spread_bps_mean REAL NOT NULL,
+            mid_price_first REAL,
+            mid_price_last REAL,
             open_interest_usd_first REAL NOT NULL,
             open_interest_usd_last REAL NOT NULL,
             open_interest_usd_change REAL NOT NULL,
@@ -42,6 +44,12 @@ def ensure_table(connection):
         CREATE INDEX IF NOT EXISTS ix_market_behavior_minute_end
         ON {TABLE}(minute_end_timestamp_ms)
     """)
+    existing_columns = {
+        row[1] for row in connection.execute(f"PRAGMA table_info({TABLE})").fetchall()
+    }
+    for column in ("mid_price_first", "mid_price_last"):
+        if column not in existing_columns:
+            connection.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} REAL")
     connection.execute(f"""
         CREATE TABLE IF NOT EXISTS {EXTERNAL_EVIDENCE_TABLE} (
             event_id TEXT NOT NULL,
@@ -78,12 +86,13 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     sample_count,max_sample_gap_ms,book_imbalance_20_mean,
                     book_imbalance_20_last,taker_imbalance_snapshot_mean,
                     taker_imbalance_snapshot_last,spread_bps_mean,
+                    mid_price_first,mid_price_last,
                     open_interest_usd_first,open_interest_usd_last,
                     open_interest_usd_change,funding_rate_last,
                     long_liquidation_notional_usd_estimate,
                     short_liquidation_notional_usd_estimate,liquidation_event_count,
                     quality_gates_json,eligible_for_learning,created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(instrument,minute_end_timestamp_ms) DO UPDATE SET
                     sample_count=excluded.sample_count,
                     max_sample_gap_ms=excluded.max_sample_gap_ms,
@@ -92,6 +101,8 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     taker_imbalance_snapshot_mean=excluded.taker_imbalance_snapshot_mean,
                     taker_imbalance_snapshot_last=excluded.taker_imbalance_snapshot_last,
                     spread_bps_mean=excluded.spread_bps_mean,
+                    mid_price_first=excluded.mid_price_first,
+                    mid_price_last=excluded.mid_price_last,
                     open_interest_usd_first=excluded.open_interest_usd_first,
                     open_interest_usd_last=excluded.open_interest_usd_last,
                     open_interest_usd_change=excluded.open_interest_usd_change,
@@ -107,7 +118,8 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                 row["sample_count"], row["max_sample_gap_ms"],
                 row["book_imbalance_20_mean"], row["book_imbalance_20_last"],
                 row["taker_imbalance_snapshot_mean"], row["taker_imbalance_snapshot_last"],
-                row["spread_bps_mean"], row["open_interest_usd_first"],
+                row["spread_bps_mean"], row.get("mid_price_first"),
+                row.get("mid_price_last"), row["open_interest_usd_first"],
                 row["open_interest_usd_last"], row["open_interest_usd_change"],
                 row["funding_rate_last"], row["long_liquidation_notional_usd_estimate"],
                 row["short_liquidation_notional_usd_estimate"], row["liquidation_event_count"],
