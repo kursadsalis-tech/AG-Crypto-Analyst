@@ -1,0 +1,38 @@
+{
+  "actions": {
+    "snapshot": 96,
+    "update": 419589
+  },
+  "archive": {
+    "compressed_size_bytes": 7229386,
+    "member_name": "TIA-USDT-SWAP-L2orderbook-400lv-2026-08-01.data",
+    "path_name": "agca-TIA-USDT-2026-08-01.tar.gz",
+    "sha256": "b83792cd87ceb87576e160bcdc0b882d687981b819a33136d710d24f2f63ab7d"
+  },
+  "backwards_timestamps": 0,
+  "created_at": "2026-08-29T12:04:07.745786+00:00",
+  "first_snapshot_ask_levels": 400,
+  "first_snapshot_bid_levels": 400,
+  "first_timestamp_ms": 1785542400001,
+  "instrument": "TIA-USDT-SWAP",
+  "invalid_rows": 0,
+  "last_timestamp_ms": 1785628799580,
+  "maximum_observed_gap_ms": 7290,
+  "model_or_policy_changed": false,
+  "next_gate": "MULTI_DAY_MULTI_COIN_COVERAGE_AND_GAP_AUDIT",
+  "quality_gates": {
+    "all_rows_schema_valid": true,
+    "covers_at_least_23_hours": true,
+    "first_event_is_snapshot": true,
+    "has_incremental_updates": true,
+    "rows_gte_100000": true,
+    "snapshot_has_400_ask_levels": true,
+    "snapshot_has_400_bid_levels": true,
+    "timestamps_never_go_backwards": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 419685,
+  "schema_and_sequence_ready": true,
+  "span_hours": 23.999883055555557,
+  "version": "OKX_L2_ARCHIVE_AUDIT_V1"
+}

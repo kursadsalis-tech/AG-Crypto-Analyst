@@ -1,0 +1,38 @@
+{
+  "actions": {
+    "snapshot": 96,
+    "update": 1497079
+  },
+  "archive": {
+    "compressed_size_bytes": 28720463,
+    "member_name": "WLD-USDT-SWAP-L2orderbook-400lv-2026-08-01.data",
+    "path_name": "agca-WLD-USDT-2026-08-01.tar.gz",
+    "sha256": "1c47ccb4b841c0ea0c3e41e514e6de402a51e400a514b5a281a7b9d26b730696"
+  },
+  "backwards_timestamps": 0,
+  "created_at": "2026-08-29T12:03:57.552477+00:00",
+  "first_snapshot_ask_levels": 400,
+  "first_snapshot_bid_levels": 400,
+  "first_timestamp_ms": 1785542400003,
+  "instrument": "WLD-USDT-SWAP",
+  "invalid_rows": 0,
+  "last_timestamp_ms": 1785628799557,
+  "maximum_observed_gap_ms": 2520,
+  "model_or_policy_changed": false,
+  "next_gate": "MULTI_DAY_MULTI_COIN_COVERAGE_AND_GAP_AUDIT",
+  "quality_gates": {
+    "all_rows_schema_valid": true,
+    "covers_at_least_23_hours": true,
+    "first_event_is_snapshot": true,
+    "has_incremental_updates": true,
+    "rows_gte_100000": true,
+    "snapshot_has_400_ask_levels": true,
+    "snapshot_has_400_bid_levels": true,
+    "timestamps_never_go_backwards": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 1497175,
+  "schema_and_sequence_ready": true,
+  "span_hours": 23.99987611111111,
+  "version": "OKX_L2_ARCHIVE_AUDIT_V1"
+}

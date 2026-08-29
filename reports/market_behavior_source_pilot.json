@@ -1,0 +1,84 @@
+{
+  "book_depth": {
+    "bands": [
+      -5,
+      -4,
+      -3,
+      -2,
+      -1,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "complete_snapshots": 2880,
+    "first_timestamp": "2025-01-01T00:00:07+00:00",
+    "last_timestamp": "2025-01-01T23:59:31+00:00",
+    "maximum_gap_seconds": 47.0,
+    "median_cadence_seconds": 30.0,
+    "monotonic_snapshots": 2880,
+    "rows": 28800,
+    "snapshots": 2880
+  },
+  "book_depth_ready_for_feature_feasibility": true,
+  "cohort_ready_for_historical_model_test": false,
+  "created_at": "2026-08-29T11:28:59.467728+00:00",
+  "full_l2_order_book_available": false,
+  "historical_liquidations_available": false,
+  "liquidation_archive_probe": {
+    "http_status": 404,
+    "usable": false
+  },
+  "model_or_policy_changed": false,
+  "quality_gates": {
+    "all_depth_bands_are_monotonic": true,
+    "all_snapshots_have_10_bands": true,
+    "checksum_matches": true,
+    "maximum_gap_lte_120_seconds": true,
+    "median_cadence_lte_35_seconds": true,
+    "snapshots_gte_2800": true
+  },
+  "source": {
+    "archive_sha256": "fa37c9f66c96a95cf3081c5812d8e1d8fdbb0fc0df1c05989fd973492eaebd48",
+    "data_contract": "PERCENTAGE_BAND_DEPTH_SUMMARY_NOT_FULL_L2",
+    "expected_sha256": "fa37c9f66c96a95cf3081c5812d8e1d8fdbb0fc0df1c05989fd973492eaebd48",
+    "provider": "Binance Vision",
+    "url": "https://data.binance.vision/data/futures/um/daily/bookDepth/BTCUSDT/BTCUSDT-bookDepth-2025-01-01.zip"
+  },
+  "symbol_coverage_probe": {
+    "available_count": 11,
+    "available_symbols": [
+      "ARKMUSDT",
+      "BTCUSDT",
+      "ETHFIUSDT",
+      "ETHUSDT",
+      "FIDAUSDT",
+      "ILVUSDT",
+      "IOUSDT",
+      "LQTYUSDT",
+      "TIAUSDT",
+      "UMAUSDT",
+      "WLDUSDT"
+    ],
+    "coverage_ratio": 0.8461538461538461,
+    "date_contract": "same archive day as the audited sample",
+    "http_status_by_symbol": {
+      "ARKMUSDT": 200,
+      "BIOUSDT": 404,
+      "BTCUSDT": 200,
+      "ETHFIUSDT": 200,
+      "ETHUSDT": 200,
+      "FIDAUSDT": 200,
+      "ILVUSDT": 200,
+      "IOUSDT": 200,
+      "LQTYUSDT": 200,
+      "SLPUSDT": 404,
+      "TIAUSDT": 200,
+      "UMAUSDT": 200,
+      "WLDUSDT": 200
+    },
+    "requested_count": 13
+  },
+  "version": "MARKET_BEHAVIOR_SOURCE_AUDIT_V1"
+}

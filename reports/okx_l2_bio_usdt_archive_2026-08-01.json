@@ -1,0 +1,38 @@
+{
+  "actions": {
+    "snapshot": 96,
+    "update": 361224
+  },
+  "archive": {
+    "compressed_size_bytes": 5025195,
+    "member_name": "BIO-USDT-SWAP-L2orderbook-400lv-2026-08-01.data",
+    "path_name": "agca-BIO-USDT-2026-08-01.tar.gz",
+    "sha256": "d3384d891d01b98bb8be90c7acb32ed145b91b82a22954f81ec2017683f60242"
+  },
+  "backwards_timestamps": 0,
+  "created_at": "2026-08-29T12:04:21.045948+00:00",
+  "first_snapshot_ask_levels": 400,
+  "first_snapshot_bid_levels": 400,
+  "first_timestamp_ms": 1785542400005,
+  "instrument": "BIO-USDT-SWAP",
+  "invalid_rows": 0,
+  "last_timestamp_ms": 1785628799542,
+  "maximum_observed_gap_ms": 16090,
+  "model_or_policy_changed": false,
+  "next_gate": "MULTI_DAY_MULTI_COIN_COVERAGE_AND_GAP_AUDIT",
+  "quality_gates": {
+    "all_rows_schema_valid": true,
+    "covers_at_least_23_hours": true,
+    "first_event_is_snapshot": true,
+    "has_incremental_updates": true,
+    "rows_gte_100000": true,
+    "snapshot_has_400_ask_levels": true,
+    "snapshot_has_400_bid_levels": true,
+    "timestamps_never_go_backwards": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 361320,
+  "schema_and_sequence_ready": true,
+  "span_hours": 23.999871388888888,
+  "version": "OKX_L2_ARCHIVE_AUDIT_V1"
+}

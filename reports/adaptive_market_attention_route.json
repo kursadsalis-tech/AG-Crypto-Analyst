@@ -1,0 +1,125 @@
+{
+  "broad_scan_instrument_count": 74,
+  "context_instruments": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP"
+  ],
+  "created_at": "2026-08-29T13:31:19.652426+00:00",
+  "deep_stream_instrument_count": 12,
+  "deep_stream_instruments": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "ENA-USDT-SWAP",
+    "EDEN-USDT-SWAP",
+    "BEAT-USDT-SWAP",
+    "LIGHT-USDT-SWAP",
+    "CHIP-USDT-SWAP",
+    "HYPE-USDT-SWAP",
+    "WLD-USDT-SWAP",
+    "ZRO-USDT-SWAP",
+    "LINK-USDT-SWAP",
+    "BICO-USDT-SWAP"
+  ],
+  "opportunity_candidates": [
+    {
+      "absolute_change_24h_pct": 4.81549815498155,
+      "attention_score": 0.82739726,
+      "instrument": "ENA-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 147286474.2888,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 0.6460991762235503
+    },
+    {
+      "absolute_change_24h_pct": 8.11833987661245,
+      "attention_score": 0.75890411,
+      "instrument": "EDEN-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 22458223.18851,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 1.5261350629530714
+    },
+    {
+      "absolute_change_24h_pct": 13.402889245585875,
+      "attention_score": 0.75479452,
+      "instrument": "BEAT-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 110572931.1078,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 7.079646017699115
+    },
+    {
+      "absolute_change_24h_pct": 11.130434782608695,
+      "attention_score": 0.74520548,
+      "instrument": "LIGHT-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 39658640.504,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 4.893564962074872
+    },
+    {
+      "absolute_change_24h_pct": 9.359494812810103,
+      "attention_score": 0.73835616,
+      "instrument": "CHIP-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 44981423.667,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 4.978839930296241
+    },
+    {
+      "absolute_change_24h_pct": 3.0339112211849875,
+      "attention_score": 0.7369863,
+      "instrument": "HYPE-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 377568135.8132,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 0.12279506118263923
+    },
+    {
+      "absolute_change_24h_pct": 5.110043005312421,
+      "attention_score": 0.71643836,
+      "instrument": "WLD-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 73001091.0178,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 2.6663111585121984
+    },
+    {
+      "absolute_change_24h_pct": 6.8768663270683295,
+      "attention_score": 0.69315068,
+      "instrument": "ZRO-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 9017951.1682,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 0.9432627458378532
+    },
+    {
+      "absolute_change_24h_pct": 3.307975040601761,
+      "attention_score": 0.69178082,
+      "instrument": "LINK-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 38312204.4368,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 0.8840560491535163
+    },
+    {
+      "absolute_change_24h_pct": 8.02364864864865,
+      "attention_score": 0.67808219,
+      "instrument": "BICO-USDT-SWAP",
+      "quote_volume_24h_estimate_usd": 23318534.99646,
+      "role": "OPPORTUNITY_CANDIDATE",
+      "spread_bps": 4.592422502870264
+    }
+  ],
+  "paper_only_changed": false,
+  "routing_contract": {
+    "liquidity_weight": 0.3,
+    "movement_weight": 0.5,
+    "purpose": "ATTENTION_ROUTING_NOT_TRADE_SIGNAL",
+    "tight_spread_weight": 0.2,
+    "uses_future_returns_or_model_scores": false,
+    "uses_user_example_coin_list": false
+  },
+  "source_universe_snapshot_timestamp_ms": 1788010279575,
+  "storage_contract": {
+    "historical_archives": "LOCAL_TRANSIENT_ONE_AT_A_TIME_DELETE_AFTER_EXTRACTION",
+    "persist_raw_order_book": false,
+    "persisted_form": "ONE_MINUTE_CAUSAL_FEATURES_AND_PROVENANCE",
+    "raw_deep_stream_buffer": "MEMORY_ONLY_ROLLING_WINDOW",
+    "upload_historical_archives_to_runtime_or_supabase": false
+  },
+  "trade_signal_generated": false,
+  "trading_authority_changed": false,
+  "version": "ADAPTIVE_MARKET_SCANNER_V1"
+}

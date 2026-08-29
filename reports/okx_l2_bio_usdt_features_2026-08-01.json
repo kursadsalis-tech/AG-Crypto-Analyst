@@ -1,0 +1,18 @@
+{
+  "causal_feature_dataset_ready": true,
+  "feature_csv_sha256": "47eee2104314312f07b88ea80411eabb47e0d8109f14e4073d9d16eaa71dc8a5",
+  "first_boundary": "2026-08-01T00:01:00+00:00",
+  "instrument": "BIO-USDT-SWAP",
+  "last_boundary": "2026-08-02T00:00:00+00:00",
+  "model_or_policy_changed": false,
+  "quality_gates": {
+    "all_values_finite": true,
+    "boundaries_unique": true,
+    "rows_between_1439_and_1441": true,
+    "spreads_positive": true
+  },
+  "rows": 1440,
+  "source_archive_sha256": "d3384d891d01b98bb8be90c7acb32ed145b91b82a22954f81ec2017683f60242",
+  "source_url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/BIO-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz",
+  "version": "OKX_L2_CAUSAL_FEATURES_V1"
+}

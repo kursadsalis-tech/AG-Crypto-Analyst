@@ -1,0 +1,101 @@
+{
+  "actual_file_schema_verified": false,
+  "artifacts": {
+    "ARKM-USDT": [
+      {
+        "date_timestamp": "1754006400000",
+        "filename": "ARKM-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz",
+        "size_mb": 88.84,
+        "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/ARKM-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+      }
+    ],
+    "BTC-USDT": [
+      {
+        "date_timestamp": "1754006400000",
+        "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz",
+        "size_mb": 610.44,
+        "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/BTC-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+      }
+    ],
+    "ETH-USDT": [
+      {
+        "date_timestamp": "1754006400000",
+        "filename": "ETH-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz",
+        "size_mb": 922.26,
+        "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/ETH-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+      }
+    ],
+    "LQTY-USDT": [
+      {
+        "date_timestamp": "1754006400000",
+        "filename": "LQTY-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz",
+        "size_mb": 76.13,
+        "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/LQTY-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+      }
+    ],
+    "WLD-USDT": [
+      {
+        "date_timestamp": "1754006400000",
+        "filename": "WLD-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz",
+        "size_mb": 187.23,
+        "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/WLD-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+      }
+    ]
+  },
+  "cohort": {
+    "artifact_verified_count": 5,
+    "artifact_verified_symbols": [
+      "ARKM-USDT",
+      "BTC-USDT",
+      "ETH-USDT",
+      "LQTY-USDT",
+      "WLD-USDT"
+    ],
+    "listed": [
+      "ARKM-USDT",
+      "BIO-USDT",
+      "BTC-USDT",
+      "ETH-USDT",
+      "ETHFI-USDT",
+      "LQTY-USDT",
+      "SLP-USDT",
+      "TIA-USDT",
+      "UMA-USDT",
+      "WLD-USDT"
+    ],
+    "listed_count": 10,
+    "listed_ratio": 0.7692307692307693,
+    "missing": [
+      "FIDA-USDT",
+      "ILV-USDT",
+      "IO-USDT"
+    ],
+    "requested": [
+      "BTC-USDT",
+      "ETH-USDT",
+      "ARKM-USDT",
+      "FIDA-USDT",
+      "WLD-USDT",
+      "TIA-USDT",
+      "ETHFI-USDT",
+      "BIO-USDT",
+      "LQTY-USDT",
+      "ILV-USDT",
+      "SLP-USDT",
+      "UMA-USDT",
+      "IO-USDT"
+    ],
+    "requested_count": 13
+  },
+  "created_at": "2026-08-29T11:50:57.828867+00:00",
+  "model_or_policy_changed": false,
+  "next_gate": "DOWNLOAD_SMALLEST_ARTIFACT_AND_VALIDATE_L2_SCHEMA_SEQUENCE_GAPS",
+  "ready_for_historical_model_test": false,
+  "source": {
+    "data_contract": "HIGH_RESOLUTION_L2_400_LEVEL_METADATA",
+    "download_endpoint": "/priapi/v5/broker/public/trade-data/download-link",
+    "instruments_endpoint": "/priapi/v5/broker/public/trade-data/instruments",
+    "provider": "OKX"
+  },
+  "version": "OKX_L2_SOURCE_AUDIT_V1"
+}

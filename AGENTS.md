@@ -53,3 +53,30 @@ mirrors or temporary folders.
 - Keep real-order authority fail-closed. Do not weaken PAPER_ONLY, governance,
   hash, freshness, reconciliation, or approval gates to make a check pass.
 - Never commit credentials or print secret values in diagnostics.
+
+## Persistent problem-solving principle
+
+- Treat a blocked first approach as a routing problem, not as proof that the
+  objective is impossible. Preserve the user's actual goal, search broadly for
+  alternative official, open, or reproducible paths, and test them with small
+  concrete samples before concluding that no workable route exists.
+- Use "there is usually another route" as the default working stance. Do not
+  use it to invent evidence, bypass permissions, weaken safety gates, or hide a
+  genuine limitation. Report failure only after materially different safe
+  approaches have been checked and their evidence recorded.
+
+## Product mission
+
+- Build AGCA into an adaptive, market-wide trading system that can read public
+  market behavior, combine advanced technical and fundamental analysis with
+  order flow, derivatives, liquidation, on-chain, whale, macro, and critical
+  news evidence, discover opportunities beyond a fixed coin list, manage risk,
+  and keep learning from measured outcomes.
+- Judge success by reproducible, cost-after live PAPER performance across
+  enough trades and different market regimes, including drawdown and execution
+  realism. Reports, backtests, prediction accuracy, or isolated wins are not
+  proof of a successful trader.
+- The intended destination is real-money profitability, but this is a goal,
+  never a guarantee or present capability. Real orders remain impossible until
+  the evidence gates pass and the user gives separate explicit approval. Do
+  not optimize appearances, activity, or report volume instead of this mission.

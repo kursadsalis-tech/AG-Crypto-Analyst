@@ -1,0 +1,80 @@
+{
+  "common_minutes": 1440,
+  "dataset_sha256": "dec7e91bcfc4e89826245bbd599bd5eeed0849519676e908829c3d2d48b22603",
+  "deferred_for_bulk_cost": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP"
+  ],
+  "excluded_for_archive_unavailability": [
+    "SLP-USDT-SWAP"
+  ],
+  "first_boundary": "2026-08-01T00:01:00+00:00",
+  "fixed_cohort_feature_research_ready": true,
+  "instruments": [
+    "ARKM-USDT-SWAP",
+    "BIO-USDT-SWAP",
+    "ETHFI-USDT-SWAP",
+    "LQTY-USDT-SWAP",
+    "TIA-USDT-SWAP",
+    "UMA-USDT-SWAP",
+    "WLD-USDT-SWAP"
+  ],
+  "last_boundary": "2026-08-02T00:00:00+00:00",
+  "model_or_policy_changed": false,
+  "next_gate": "SAME_FIXED_COHORT_ACROSS_MULTIPLE_PREDECLARED_DATES",
+  "quality_gates": {
+    "all_instruments_share_same_boundaries": true,
+    "at_least_5_instruments": true,
+    "exactly_1440_common_minutes": true,
+    "exactly_1440_rows_per_instrument": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 10080,
+  "rows_by_instrument": {
+    "ARKM-USDT-SWAP": 1440,
+    "BIO-USDT-SWAP": 1440,
+    "ETHFI-USDT-SWAP": 1440,
+    "LQTY-USDT-SWAP": 1440,
+    "TIA-USDT-SWAP": 1440,
+    "UMA-USDT-SWAP": 1440,
+    "WLD-USDT-SWAP": 1440
+  },
+  "sources": [
+    {
+      "path_name": "okx_l2_arkm_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "fb176813ed7841fcd0c433aac145da2c8b6cf2deb19dacaed16f27108d6ba7bb"
+    },
+    {
+      "path_name": "okx_l2_wld_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "90542797d84e243e2855d860a57a0bcf3c06c694f3d62c3d7d43ba634c3f8d88"
+    },
+    {
+      "path_name": "okx_l2_tia_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "9ab82dbd312c1dc6dd03e2def612f6237e18cc86957e42767cdd5e99326cfb6a"
+    },
+    {
+      "path_name": "okx_l2_ethfi_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "baa4e8b1a585ebfb4015dce640d387336a0839f188f7d03df74c1f96eb073701"
+    },
+    {
+      "path_name": "okx_l2_bio_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "47eee2104314312f07b88ea80411eabb47e0d8109f14e4073d9d16eaa71dc8a5"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "f3cd7319e97689ef017edbae631e8dc87902c17dc787587ba2f1930bc3bf6146"
+    },
+    {
+      "path_name": "okx_l2_uma_usdt_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "31dc161319da3801076beeb8a94dd3082b3a36883fc3c667219c6ea0213930d4"
+    }
+  ],
+  "version": "OKX_L2_FIXED_COHORT_V1"
+}

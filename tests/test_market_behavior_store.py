@@ -1,0 +1,52 @@
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from database.market_behavior_store import TABLE, persist_closed_minute
+from database.runtime_store import REMOTE_RUNTIME_TABLES
+
+
+def report(end, instrument="AAA"):
+    row = {
+        "instrument": instrument, "minute_start_timestamp_ms": end - 60_000,
+        "sample_count": 4, "max_sample_gap_ms": 10_000,
+        "book_imbalance_20_mean": 0.1, "book_imbalance_20_last": 0.2,
+        "taker_imbalance_snapshot_mean": -0.1, "taker_imbalance_snapshot_last": -0.2,
+        "spread_bps_mean": 1, "open_interest_usd_first": 100,
+        "open_interest_usd_last": 110, "open_interest_usd_change": 10,
+        "funding_rate_last": 0.0001,
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0, "liquidation_event_count": 0,
+        "quality_gates": {"ok": True}, "eligible_for_learning": True,
+    }
+    return {"minute_is_closed": True, "minute_end_timestamp_ms": end, "rows": [row]}
+
+
+class MarketBehaviorStoreTests(unittest.TestCase):
+    def test_idempotent_upsert_and_local_only_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            persist_closed_minute(path, report(100_000))
+            persist_closed_minute(path, report(100_000))
+            with sqlite3.connect(path) as connection:
+                count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+            self.assertEqual(count, 1)
+            self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
+
+    def test_retention_prunes_old_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            persist_closed_minute(path, report(100_000), retention_days=1)
+            result = persist_closed_minute(path, report(200_000_000, "BBB"), retention_days=1)
+            self.assertEqual(result["pruned"], 1)
+            self.assertEqual(result["row_count"], 1)
+
+    def test_rejects_open_minute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                persist_closed_minute(Path(tmp) / "test.db", {"minute_is_closed": False})
+
+
+if __name__ == "__main__":
+    unittest.main()

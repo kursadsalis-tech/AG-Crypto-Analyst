@@ -1,0 +1,38 @@
+{
+  "actions": {
+    "snapshot": 1440,
+    "update": 1353146
+  },
+  "archive": {
+    "compressed_size_bytes": 21293435,
+    "member_name": "LQTY-USDT-SWAP-L2orderbook-400lv-2025-05-01.data",
+    "path_name": "agca-LQTY-2025-05-01.tar.gz",
+    "sha256": "5bd0f077c0e30dcb252bb4b688fbba9e19b3d1f249c6490bf0789e0e82f7d4d1"
+  },
+  "backwards_timestamps": 0,
+  "created_at": "2026-08-29T12:01:19.454093+00:00",
+  "first_snapshot_ask_levels": 400,
+  "first_snapshot_bid_levels": 400,
+  "first_timestamp_ms": 1746057600074,
+  "instrument": "LQTY-USDT-SWAP",
+  "invalid_rows": 0,
+  "last_timestamp_ms": 1746143999585,
+  "maximum_observed_gap_ms": 1430,
+  "model_or_policy_changed": false,
+  "next_gate": "MULTI_DAY_MULTI_COIN_COVERAGE_AND_GAP_AUDIT",
+  "quality_gates": {
+    "all_rows_schema_valid": true,
+    "covers_at_least_23_hours": true,
+    "first_event_is_snapshot": true,
+    "has_incremental_updates": true,
+    "rows_gte_100000": true,
+    "snapshot_has_400_ask_levels": true,
+    "snapshot_has_400_bid_levels": true,
+    "timestamps_never_go_backwards": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 1354586,
+  "schema_and_sequence_ready": true,
+  "span_hours": 23.999864166666665,
+  "version": "OKX_L2_ARCHIVE_AUDIT_V1"
+}

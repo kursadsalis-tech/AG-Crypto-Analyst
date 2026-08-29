@@ -1,2 +1,4 @@
+certifi>=2026.5.20,<2027.0
 psycopg[binary]>=3.2,<4.0
 requests>=2.32,<3.0
+websockets>=16.0,<17.0

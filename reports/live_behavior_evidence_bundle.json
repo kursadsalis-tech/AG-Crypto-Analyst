@@ -1,0 +1,795 @@
+{
+  "alignment_contract": "REST snapshots and WebSocket liquidation observation windows are recorded separately; no event is claimed to precede a snapshot unless its timestamp proves it.",
+  "attention_escalation_instruments": [],
+  "created_at": "2026-08-29T13:37:38.080474+00:00",
+  "instrument_count": 12,
+  "instruments": [
+    {
+      "collected_timestamp_ms": 1788010429769,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 4.35552137445e-05
+      },
+      "instrument": "BTC-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 28905.554900000076,
+        "contracts": 2890555.4900000077,
+        "exchange_timestamp_ms": 1788010429351,
+        "usd": 2243533549.118406
+      },
+      "order_book": {
+        "age_ms": 1065,
+        "best_ask": 77616.1,
+        "best_bid": 77616.0,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 905090.8775299999,
+            "bid_visible_notional_usd_estimate": 107224.03762,
+            "imbalance": -0.7881607076704742
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 786957.49338,
+            "bid_visible_notional_usd_estimate": 23672.8129,
+            "imbalance": -0.9415940590510733
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 1234762.692,
+            "bid_visible_notional_usd_estimate": 441025.92671,
+            "imbalance": -0.47364969330141893
+          }
+        },
+        "exchange_timestamp_ms": 1788010428704,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 0.012883933156327946
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 38978.80638000001,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010425015,
+        "oldest_exchange_timestamp_ms": 1788010383498,
+        "sell_notional_usd_estimate": 88707.86374000002,
+        "taker_imbalance": -0.38946161970755916
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429770,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 0.0001
+      },
+      "instrument": "ETH-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 628852.396000002,
+        "contracts": 6288523.96000002,
+        "exchange_timestamp_ms": 1788010429354,
+        "usd": 1529865820.464845
+      },
+      "order_book": {
+        "age_ms": 1065,
+        "best_ask": 2432.8,
+        "best_bid": 2432.79,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 624146.7252100001,
+            "bid_visible_notional_usd_estimate": 537056.0418100001,
+            "imbalance": -0.07500040981085603
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 336736.76240000007,
+            "bid_visible_notional_usd_estimate": 442101.98513000004,
+            "imbalance": 0.1352850292363522
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 1256272.87351,
+            "bid_visible_notional_usd_estimate": 1345044.8119,
+            "imbalance": 0.034125758221648525
+          }
+        },
+        "exchange_timestamp_ms": 1788010428705,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 0.04110498418575457
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 153660.51369000005,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010426043,
+        "oldest_exchange_timestamp_ms": 1788010388483,
+        "sell_notional_usd_estimate": 79818.17266999997,
+        "taker_imbalance": 0.31627015797982866
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429755,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 5e-05
+      },
+      "instrument": "ENA-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 96827940.0,
+        "contracts": 9682794.0,
+        "exchange_timestamp_ms": 1788010429365,
+        "usd": 14971536.0828
+      },
+      "order_book": {
+        "age_ms": 1049,
+        "best_ask": 0.15469,
+        "best_bid": 0.15467,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 83454.3802,
+            "bid_visible_notional_usd_estimate": 54933.1395,
+            "imbalance": -0.2060969136655464
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 4969.4222,
+            "bid_visible_notional_usd_estimate": 4099.5568,
+            "imbalance": -0.09591657451186068
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 233044.8137,
+            "bid_visible_notional_usd_estimate": 236874.9575,
+            "imbalance": 0.008150633437318951
+          }
+        },
+        "exchange_timestamp_ms": 1788010428706,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 1.2929919834492014
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 10214.330100000001,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010424920,
+        "oldest_exchange_timestamp_ms": 1788010414632,
+        "sell_notional_usd_estimate": 761.1092,
+        "taker_imbalance": 0.8613068362557478
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429766,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 5e-05
+      },
+      "instrument": "EDEN-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 23474080.0,
+        "contracts": 23474080.0,
+        "exchange_timestamp_ms": 1788010429352,
+        "usd": 1536848.0176
+      },
+      "order_book": {
+        "age_ms": 1062,
+        "best_ask": 0.0655,
+        "best_bid": 0.06547,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 13948.829529999999,
+            "bid_visible_notional_usd_estimate": 13590.86038,
+            "imbalance": -0.012998299950720068
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 1339.11733,
+            "bid_visible_notional_usd_estimate": 1389.3945199999998,
+            "imbalance": 0.018426597634164498
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 49906.69386,
+            "bid_visible_notional_usd_estimate": 56426.89269,
+            "imbalance": 0.06131833827437095
+          }
+        },
+        "exchange_timestamp_ms": 1788010428704,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 4.581201801939718
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 1210.3697400000003,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010423941,
+        "oldest_exchange_timestamp_ms": 1788010375468,
+        "sell_notional_usd_estimate": 7049.1265300000005,
+        "taker_imbalance": -0.7069143927345098
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429763,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 0.0001045131093051
+      },
+      "instrument": "BEAT-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 62199991.000000015,
+        "contracts": 6219999.1000000015,
+        "exchange_timestamp_ms": 1788010429365,
+        "usd": 8757758.732800001
+      },
+      "order_book": {
+        "age_ms": 1057,
+        "best_ask": 0.1405,
+        "best_bid": 0.1404,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 170665.3192,
+            "bid_visible_notional_usd_estimate": 151980.2051,
+            "imbalance": -0.057912206098437446
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 38702.342000000004,
+            "bid_visible_notional_usd_estimate": 56663.8447,
+            "imbalance": 0.1883424652020819
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 340274.7598,
+            "bid_visible_notional_usd_estimate": 321943.8761,
+            "imbalance": -0.027681014556600467
+          }
+        },
+        "exchange_timestamp_ms": 1788010428706,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 7.119971520115111
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 53.70910000000001,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010427423,
+        "oldest_exchange_timestamp_ms": 1788010425193,
+        "sell_notional_usd_estimate": 1697.3437999999985,
+        "taker_imbalance": -0.9386550800378446
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429764,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 0.0001710719156597
+      },
+      "instrument": "LIGHT-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 8767991.0,
+        "contracts": 8767991.0,
+        "exchange_timestamp_ms": 1788010429350,
+        "usd": 1783409.3694
+      },
+      "order_book": {
+        "age_ms": 1058,
+        "best_ask": 0.2037,
+        "best_bid": 0.2036,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 31675.4874,
+            "bid_visible_notional_usd_estimate": 32250.7317,
+            "imbalance": 0.008998565973378496
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 6692.2053000000005,
+            "bid_visible_notional_usd_estimate": 6709.3102,
+            "imbalance": 0.0012763407243008718
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 67757.0001,
+            "bid_visible_notional_usd_estimate": 104463.18089999999,
+            "imbalance": 0.21313518884293817
+          }
+        },
+        "exchange_timestamp_ms": 1788010428706,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 4.910385465258482
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 8047.958199999998,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010425245,
+        "oldest_exchange_timestamp_ms": 1788010410018,
+        "sell_notional_usd_estimate": 132.1458,
+        "taker_imbalance": 0.9676909242229682
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429767,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 5e-05
+      },
+      "instrument": "CHIP-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 84542300.0,
+        "contracts": 845423.0,
+        "exchange_timestamp_ms": 1788010429365,
+        "usd": 3421426.881
+      },
+      "order_book": {
+        "age_ms": 1058,
+        "best_ask": 0.04058,
+        "best_bid": 0.04057,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 54751.928,
+            "bid_visible_notional_usd_estimate": 60393.135,
+            "imbalance": 0.04899217433230292
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 3658.4700000000003,
+            "bid_visible_notional_usd_estimate": 3689.1539999999995,
+            "imbalance": 0.004176043847643713
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 214528.58000000002,
+            "bid_visible_notional_usd_estimate": 173858.679,
+            "imbalance": -0.10471481764029754
+          }
+        },
+        "exchange_timestamp_ms": 1788010428709,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 2.464571780652156
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 2238.2350000000006,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010413726,
+        "oldest_exchange_timestamp_ms": 1788010392572,
+        "sell_notional_usd_estimate": 3397.8549999999996,
+        "taker_imbalance": -0.20574902104118262
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010429767,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 2.44119659814e-05
+      },
+      "instrument": "HYPE-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 1454476.8,
+        "contracts": 14544768.0,
+        "exchange_timestamp_ms": 1788010429360,
+        "usd": 118435136.8704
+      },
+      "order_book": {
+        "age_ms": 1064,
+        "best_ask": 81.413,
+        "best_bid": 81.412,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 20064.3684,
+            "bid_visible_notional_usd_estimate": 25771.1212,
+            "imbalance": 0.12450511273692169
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 1791.2290000000003,
+            "bid_visible_notional_usd_estimate": 5128.7276,
+            "imbalance": 0.4823005103818136
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 100307.10500000001,
+            "bid_visible_notional_usd_estimate": 117705.9752,
+            "imbalance": 0.07980654272687987
+          }
+        },
+        "exchange_timestamp_ms": 1788010428703,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 0.12283126055465242
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 20348.141300000003,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010424109,
+        "oldest_exchange_timestamp_ms": 1788010383328,
+        "sell_notional_usd_estimate": 8931.597500000003,
+        "taker_imbalance": 0.3899127611070081
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010431069,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": -0.0001004288070952
+      },
+      "instrument": "WLD-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 82340033.0,
+        "contracts": 82340033.0,
+        "exchange_timestamp_ms": 1788010430659,
+        "usd": 30836342.3585
+      },
+      "order_book": {
+        "age_ms": 1064,
+        "best_ask": 0.3746,
+        "best_bid": 0.3745,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 309861.5476,
+            "bid_visible_notional_usd_estimate": 355457.2091,
+            "imbalance": 0.06853205480957093
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 83798.8671,
+            "bid_visible_notional_usd_estimate": 69074.37580000001,
+            "imbalance": -0.09631830280222303
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 554584.4432,
+            "bid_visible_notional_usd_estimate": 907369.8271,
+            "imbalance": 0.24131082008988336
+          }
+        },
+        "exchange_timestamp_ms": 1788010430005,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 2.669870511279909
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 49.1177,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010404492,
+        "oldest_exchange_timestamp_ms": 1788010316797,
+        "sell_notional_usd_estimate": 8258.987299999995,
+        "taker_imbalance": -0.9881759558888578
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010431064,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": 1.83602748531e-05
+      },
+      "instrument": "ZRO-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 3127066.0,
+        "contracts": 3127066.0,
+        "exchange_timestamp_ms": 1788010430661,
+        "usd": 3313126.427
+      },
+      "order_book": {
+        "age_ms": 1055,
+        "best_ask": 1.059,
+        "best_bid": 1.0589,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 12366.8729,
+            "bid_visible_notional_usd_estimate": 19064.7759,
+            "imbalance": 0.2130942300424278
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 623.8866999999999,
+            "bid_visible_notional_usd_estimate": 804.5797,
+            "imbalance": 0.1264943998682784
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 34545.5095,
+            "bid_visible_notional_usd_estimate": 49910.7638,
+            "imbalance": 0.18193147411821686
+          }
+        },
+        "exchange_timestamp_ms": 1788010430009,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 0.9443316492751216
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 123.97049999999999,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010420799,
+        "oldest_exchange_timestamp_ms": 1788010242292,
+        "sell_notional_usd_estimate": 4922.4403999999995,
+        "taker_imbalance": -0.9508678534282651
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010431063,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": -1.32092968549e-05
+      },
+      "instrument": "LINK-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 2505357.6999999997,
+        "contracts": 2505357.6999999997,
+        "exchange_timestamp_ms": 1788010430659,
+        "usd": 28338100.9447
+      },
+      "order_book": {
+        "age_ms": 1061,
+        "best_ask": 11.311,
+        "best_bid": 11.31,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 174188.5008,
+            "bid_visible_notional_usd_estimate": 163683.206,
+            "imbalance": -0.031092555513144854
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 24243.5131,
+            "bid_visible_notional_usd_estimate": 16286.6745,
+            "imbalance": -0.19631881990104585
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 504423.7569,
+            "bid_visible_notional_usd_estimate": 540679.3681,
+            "imbalance": 0.03469094133653077
+          }
+        },
+        "exchange_timestamp_ms": 1788010430002,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 0.8841342115728267
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 1666.0763,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010403211,
+        "oldest_exchange_timestamp_ms": 1788010148751,
+        "sell_notional_usd_estimate": 6865.5858,
+        "taker_imbalance": -0.6094368763151087
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    },
+    {
+      "collected_timestamp_ms": 1788010431077,
+      "funding": {
+        "next_funding_timestamp_ms": 1788019200000,
+        "observation_time_basis": "HTTP_RETRIEVAL_TIME",
+        "rate": -6.94933722941e-05
+      },
+      "instrument": "BICO-USDT-SWAP",
+      "liquidations": {
+        "channel_state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+        "event_count": 0,
+        "events": [],
+        "long_liquidation_notional_usd_estimate": 0,
+        "short_liquidation_notional_usd_estimate": 0
+      },
+      "open_interest": {
+        "base_currency": 149772996.0,
+        "contracts": 149772996.0,
+        "exchange_timestamp_ms": 1788010430664,
+        "usd": 3257562.663
+      },
+      "order_book": {
+        "age_ms": 1073,
+        "best_ask": 0.02176,
+        "best_bid": 0.02175,
+        "depths": {
+          "20": {
+            "ask_visible_notional_usd_estimate": 63245.79207,
+            "bid_visible_notional_usd_estimate": 92480.98191,
+            "imbalance": 0.1877338693457727
+          },
+          "5": {
+            "ask_visible_notional_usd_estimate": 18100.53633,
+            "bid_visible_notional_usd_estimate": 18534.82706,
+            "imbalance": 0.011854413053769374
+          },
+          "50": {
+            "ask_visible_notional_usd_estimate": 151560.24541,
+            "bid_visible_notional_usd_estimate": 177494.97026,
+            "imbalance": 0.07881572336482637
+          }
+        },
+        "exchange_timestamp_ms": 1788010430004,
+        "levels_ask": 50,
+        "levels_bid": 50,
+        "spread_bps": 4.596644449553235
+      },
+      "recent_trades": {
+        "buy_notional_usd_estimate": 956.07176,
+        "count": 100,
+        "newest_exchange_timestamp_ms": 1788010422610,
+        "oldest_exchange_timestamp_ms": 1788010385958,
+        "sell_notional_usd_estimate": 902.67036,
+        "taker_imbalance": 0.028729859524569273
+      },
+      "required_sources_available": true,
+      "source_states": {
+        "funding": "AVAILABLE",
+        "liquidations": "NOT_IN_REST_CONTRACT",
+        "open_interest": "AVAILABLE",
+        "order_book": "AVAILABLE",
+        "recent_trades": "AVAILABLE"
+      },
+      "trade_signal_generated": false
+    }
+  ],
+  "liquidation_channel_healthy": true,
+  "outside_deep_stream_liquidation_events": [],
+  "paper_only_changed": false,
+  "raw_market_payloads_persisted": false,
+  "trade_signal_generated": false,
+  "trading_authority_changed": false,
+  "version": "LIVE_BEHAVIOR_EVIDENCE_BUNDLE_V1"
+}

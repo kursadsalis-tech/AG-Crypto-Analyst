@@ -1,0 +1,18 @@
+{
+  "causal_feature_dataset_ready": true,
+  "feature_csv_sha256": "806a7f91dbccb590a31fde2bf90ca11115c94c7cf5b82645676e33da9cc4d2be",
+  "first_boundary": "2025-05-01T00:01:00+00:00",
+  "instrument": "LQTY-USDT-SWAP",
+  "last_boundary": "2025-05-02T00:00:00+00:00",
+  "model_or_policy_changed": false,
+  "quality_gates": {
+    "all_values_finite": true,
+    "boundaries_unique": true,
+    "rows_between_1439_and_1441": true,
+    "spreads_positive": true
+  },
+  "rows": 1440,
+  "source_archive_sha256": "5bd0f077c0e30dcb252bb4b688fbba9e19b3d1f249c6490bf0789e0e82f7d4d1",
+  "source_url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250501/LQTY-USDT-SWAP-L2orderbook-400lv-2025-05-01.tar.gz",
+  "version": "OKX_L2_CAUSAL_FEATURES_V1"
+}

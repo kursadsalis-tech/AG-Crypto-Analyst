@@ -1,5 +1,92 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-29 — Piyasa-geneli davranış okuma zemini ve hafif canlı gözlem hazır
+
+Ana ürün amacı kök `AGENTS.md` çalışma sözleşmesine kalıcı olarak yazıldı:
+AGCA sabit coin listesini tahmin eden bir rapor sistemi değil; teknik/temel
+analiz, emir akışı, vadeli veriler, tasfiyeler, on-chain, balina, makro ve kritik
+haber kanıtlarını birleştirerek piyasayı okuyan, fırsatı kendisi bulan, risk
+yöneten ve sonuçlarından öğrenen piyasa-geneli bir trader sistemi olmalıdır.
+Başarı; rapor, backtest veya tekil kazanç değil, farklı piyasa rejimlerinde
+yeterli sayıda canlı PAPER işlemde bütün masraflar sonrası getiri ve kontrollü
+düşüşle kanıtlanacaktır. Gerçek para hedeflenen son aşamadır; garanti veya mevcut
+yetki değildir. Kanıt kapıları ve kullanıcının ayrıca açık onayı olmadan gerçek
+emir mümkün değildir.
+
+Bu oturumda önce ücretsiz veri kaynakları gerçek dosya/API örnekleriyle
+araştırıldı. OKX'in resmi ücretsiz arşivinde Mart 2023'ten beri 400 seviyeli L2
+emir defteri bulundu. Gerçek LQTY arşivi tam tarandı: 3.491.606 olay, 1.440 tam
+snapshot, 400 alış + 400 satış seviyesi, 24 saat, en büyük zaman boşluğu 1.099
+ms, sıfır bozuk/geri giden zaman damgası. Gelecek olayın kapanmış dakikayı
+değiştiremediğini kanıtlayan nedensel 1 dakikalık özellik çıkarıcı yazıldı.
+Altı LQTY günü ve yedi coinlik ilk boru-hattı örneklemi üretildi; bunlar başarı
+kanıtı veya hedef coin evreni değildir. Aynı veride model/eşik araması açılmadı.
+
+Örnek coin listesi bağımlılığı kaldırıldı. OKX'in bütün aktif USDT sürekli
+vadeli piyasalarından, yalnız anlık işlem yapılabilirlik ölçüleriyle dinamik
+kripto evreni kuruluyor; OKX `instCategory` kullanılarak hisse/emtia bağlantılı
+sözleşmeler dışlanıyor. Son gerçek gözlem 74 geniş piyasa buldu. Hafif tarayıcı
+BTC/ETH bağlamı ve 10 dinamik fırsat adayı olmak üzere yalnız 12 piyasayı derin
+incelemeye yönlendiriyor. Bu dikkat yönlendirmesidir, işlem sinyali değildir.
+
+Seçilen piyasalarda ücretsiz resmi OKX REST verisinden 50 kademe emir defteri,
+son 100 işlem, OI ve funding birlikte alındı; 12/12 kaynak sözleşmesi geçti.
+Tasfiye `liquidation-orders` WebSocket kanalı gerçek bağlantıda aboneliği kabul
+etti ve olay da gözlendi. Kanal erişilemiyor / kanal sağlıklı fakat olay yok /
+olay var durumları ayrıldı; böylece sağlıklı boş pencere artık `VERİ EKSİK`
+sayılmaz. Tasfiye coin, yön, iflas fiyatı, miktar, zaman ve yaklaşık notional
+olarak ayrıştırılır; derin listenin dışındaki olay yeni dikkat yükseltmesi olur.
+
+Kayan canlı pencere ham payload saklamadan kapanmış dakika üretir: 5/20/50
+kademe dengesizliği, son işlem baskısı snapshot'ları, spread, OI değişimi,
+funding ve tekilleştirilmiş tasfiyeler. Gelecek örnek geçmiş dakikayı değiştiremez;
+eksik kaynak, büyük örnek boşluğu veya tasfiye kanal arızası satırı öğrenmeye
+kapatır. İki ayrı gerçek dakikada 12/12 satır kalite kapılarını geçti. Nihai JSON
+yaklaşık 13 KB; geçici SQLite deneyi 12 satırla 36 KB idi, Supabase outbox'a bu
+tablodan sıfır satır girdi ve geçici DB silindi.
+
+Yerel-only `market_behavior_minute_features` SQLite tablosu idempotent upsert ve
+30 günlük otomatik saklama sınırıyla hazırlandı; `REMOTE_RUNTIME_TABLES` dışında
+olduğu için Supabase'e aynalanmaz. Sürekli gözlem servis/timer dosyaları depoda
+hazırdır: her çevrimde canlı evreni yeniler, tek WebSocket'i dakika boyunca açık
+tutar, çakışmayı kilitler, 384 MB bellek ve %50 CPU sınırı kullanır, atomik özel
+izinli SHA-256 sağlık kaydı üretir ve yalnız PAPER_ONLY kabul eder. Kullanıcı
+onayı olmadan Google Cloud'a kurulmadı veya başlatılmadı. Son okuma: mevcut GCE
+`agca-runtime` 30 GB disk, 11 GB kullanım, 18 GB boş alan. Ham tarihsel arşivler
+bu üretim diskine veya Supabase'e konmayacaktır; gerekirse yerelde/geçici olarak
+tek tek işlenip silinecektir.
+
+Ücretsiz tarihsel kaynak durumu: OKX L2 kullanılabilir; Coin Metrics community
+tasfiye kataloğu gerçek çağrıda boş döndüğü için ücretsiz geçmiş tasfiye kabul
+edilmedi. CoinGlass geçmiş tasfiye sunar fakat plan/geçmiş sınırları vardır;
+Tardis tick tasfiye/funding/L2 sunar ve yaklaşık 350 USD/aydan başlar. Hiçbir
+abonelik/satın alma yapılmadı. Federal Reserve kesin yayın saati veren ücretsiz
+birinci kaynak olarak doğrulandı. Haber/on-chain/balina zaman çizgisi bir sonraki
+uygulama aşamasıdır.
+
+Güvenlik ve doğrulama: PAPER_ONLY, kanıt eşikleri, strateji politikası ve gerçek
+emir yetkisi değiştirilmedi. `may_send_real_orders=False`. `requirements-runtime`
+içine `certifi` ve `websockets` eklendi. Yeni odaklı testler 43/43, tam proje
+testleri 184/184 geçti; `git diff --check` temizdi. Mac'te `systemd-analyze`
+bulunmadığı için systemd birimleri o araçla yerelde doğrulanamadı. Bulut dış
+durumu bu servis açısından değişmedi.
+
+Başlangıç checkpoint'i `a5d2df7`; dal
+`checkpoint/agca-20260826-supabase-recovery`. Bu bölümün bulunduğu temiz kapanış
+commit'i oturumun nihai checkpoint'idir; `git rev-parse HEAD` ile doğrulanmalıdır.
+
+Bir sonraki oturumda yapılacaklar: önce bu handoff ve kök `AGENTS.md` tamamen
+okunmalı, Git'in temiz checkpoint'te olduğu doğrulanmalı. Piyasa davranış gözlem
+sağlığını mevcut cloud attestation sözleşmesine bağla; ardından kesin zamanlı
+haber/makro, on-chain ve balina kanıtlarını aynı nedensel dakika çizgisine ekle.
+Kullanıcının açık onayı olmadan hazırlanan market-behavior service/timer'ı buluta
+kurma veya başlatma. Yeni model/eşik araması açma ve tarihsel boru-hattı
+örneklerini başarı gibi sunma.
+
+Tam kopyalanabilir açılış mesajı:
+
+> AGCA yerel projesinde çalış: /Users/elifzilan/Documents/AG-Crypto-Analyst. Kök AGENTS.md ile docs/LAST_SESSION_HANDOFF.md dosyasını tamamen oku ve Git durumunu kontrol et. 2026-08-29 temiz piyasa-davranışı checkpoint'inden devam et. Önce hafif market-behavior gözlem sağlığını mevcut cloud attestation sözleşmesine bağla; sonra kesin zamanlı haber/makro, on-chain ve balina kanıtlarını aynı nedensel dakika çizgisine ekle. Hazırlanmış service/timer dosyalarını açık onayım olmadan buluta kurma veya başlatma. PAPER_ONLY, kanıt eşikleri, strateji politikası ve gerçek emir yetkisini değiştirme; yeni model/eşik araması açma; sade Türkçe kullan.
+
 # 2026-08-29 — Çoklu zaman dilimi ve vadeli veri araştırması kapandı
 
 Kullanıcıya rapor verirken sade Türkçe kullanılmalı; teknik bir ölçü yazılırsa

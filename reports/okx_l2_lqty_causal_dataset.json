@@ -1,0 +1,53 @@
+{
+  "dataset_sha256": "3aa6f34dc37ec7885bd277708d55947c5dda9bc9b1e3464673cdc9adc7dc7437",
+  "feature_version": "OKX_L2_CAUSAL_FEATURES_V1",
+  "first_boundary": "2025-05-01T00:01:00+00:00",
+  "instruments": [
+    "LQTY-USDT-SWAP"
+  ],
+  "last_boundary": "2026-08-02T00:00:00+00:00",
+  "model_or_policy_changed": false,
+  "next_gate": "MULTI_COIN_COVERAGE_WITH_FIXED_DATE_COHORT",
+  "quality_gates": {
+    "at_least_6_source_days": true,
+    "at_least_8640_rows": true,
+    "single_instrument_pilot": true
+  },
+  "ready_for_historical_model_test": false,
+  "rows": 8640,
+  "single_coin_pilot_ready": true,
+  "source_days": 6,
+  "sources": [
+    {
+      "path_name": "okx_l2_lqty_features_2025-05-01.csv",
+      "rows": 1440,
+      "sha256": "806a7f91dbccb590a31fde2bf90ca11115c94c7cf5b82645676e33da9cc4d2be"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2025-08-01.csv",
+      "rows": 1440,
+      "sha256": "f4d81df522a0ee5312f2961c9eeeb3a4b5a4bd5a70aa1a57955a05f8b89d5583"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2025-11-01.csv",
+      "rows": 1440,
+      "sha256": "3c5241c711a4f21ec437f1958771122a61d15b42cbae3b461b019edf7f63d1db"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2026-02-01.csv",
+      "rows": 1440,
+      "sha256": "53773e43b0420578b43c47886af9a37ad017073773bcb39ef86c9f6b81a6238d"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2026-05-01.csv",
+      "rows": 1440,
+      "sha256": "e7a423973404946e8179a226cd61307005c200f6f2e873808030d0b7a247edd5"
+    },
+    {
+      "path_name": "okx_l2_lqty_features_2026-08-01.csv",
+      "rows": 1440,
+      "sha256": "f3cd7319e97689ef017edbae631e8dc87902c17dc787587ba2f1930bc3bf6146"
+    }
+  ],
+  "version": "OKX_L2_CAUSAL_DATASET_V1"
+}

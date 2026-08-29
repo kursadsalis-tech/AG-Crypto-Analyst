@@ -1,0 +1,205 @@
+{
+  "compressed_bytes": 2975620775,
+  "created_at": "2026-08-29T12:50:09.333419+00:00",
+  "dates": [
+    "2025-08-01",
+    "2025-11-01",
+    "2026-02-01",
+    "2026-05-01",
+    "2026-08-01"
+  ],
+  "paper_only_changed": false,
+  "ready_for_download": true,
+  "ready_for_unbiased_historical_model_test": false,
+  "selected": [
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 640089917,
+      "date": "2025-08-01",
+      "instrument": "BTC-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/BTC-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 588024412,
+      "date": "2025-08-01",
+      "instrument": "DOGE-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/DOGE-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 209452883,
+      "date": "2025-08-01",
+      "instrument": "ADA-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/ADA-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 85936157,
+      "date": "2025-08-01",
+      "instrument": "BCH-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20250801/BCH-USDT-SWAP-L2orderbook-400lv-2025-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 252667171,
+      "date": "2025-11-01",
+      "instrument": "ETH-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20251101/ETH-USDT-SWAP-L2orderbook-400lv-2025-11-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 164759553,
+      "date": "2025-11-01",
+      "instrument": "HYPE-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20251101/HYPE-USDT-SWAP-L2orderbook-400lv-2025-11-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 18082417,
+      "date": "2025-11-01",
+      "instrument": "BICO-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20251101/BICO-USDT-SWAP-L2orderbook-400lv-2025-11-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 23322643,
+      "date": "2025-11-01",
+      "instrument": "ETC-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20251101/ETC-USDT-SWAP-L2orderbook-400lv-2025-11-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 262718205,
+      "date": "2026-02-01",
+      "instrument": "SOL-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260201/SOL-USDT-SWAP-L2orderbook-400lv-2026-02-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 44490867,
+      "date": "2026-02-01",
+      "instrument": "TRUMP-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260201/TRUMP-USDT-SWAP-L2orderbook-400lv-2026-02-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 46681762,
+      "date": "2026-02-01",
+      "instrument": "H-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260201/H-USDT-SWAP-L2orderbook-400lv-2026-02-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 61164436,
+      "date": "2026-02-01",
+      "instrument": "ICP-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260201/ICP-USDT-SWAP-L2orderbook-400lv-2026-02-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 59792223,
+      "date": "2026-05-01",
+      "instrument": "XRP-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260501/XRP-USDT-SWAP-L2orderbook-400lv-2026-05-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 153090644,
+      "date": "2026-05-01",
+      "instrument": "ZEC-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260501/ZEC-USDT-SWAP-L2orderbook-400lv-2026-05-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 14576530,
+      "date": "2026-05-01",
+      "instrument": "NEAR-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260501/NEAR-USDT-SWAP-L2orderbook-400lv-2026-05-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 14709279,
+      "date": "2026-05-01",
+      "instrument": "OP-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260501/OP-USDT-SWAP-L2orderbook-400lv-2026-05-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 192619853,
+      "date": "2026-08-01",
+      "instrument": "BTC-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/BTC-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 79515198,
+      "date": "2026-08-01",
+      "instrument": "DOGE-USDT-SWAP",
+      "liquidity_role": "CORE",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/DOGE-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 6012031,
+      "date": "2026-08-01",
+      "instrument": "OPG-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/OPG-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz"
+    },
+    {
+      "availability": "UNPROBED",
+      "content_length_bytes": 57914594,
+      "date": "2026-08-01",
+      "instrument": "PEPE-USDT-SWAP",
+      "liquidity_role": "EXPLORATION",
+      "status": 200,
+      "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/PEPE-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz"
+    }
+  ],
+  "selected_count": 20,
+  "selection_contract": {
+    "method": "ROUND_ROBIN_WITHIN_PREDECLARED_LIQUIDITY_ROLES",
+    "per_date_per_role": 2,
+    "uses_archive_file_size_for_selection": false,
+    "uses_future_returns_or_model_scores": false
+  },
+  "trading_authority_changed": false,
+  "version": "BOUNDED_ARCHIVE_PLAN_V1"
+}

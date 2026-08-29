@@ -1,0 +1,20 @@
+{
+  "channel": "liquidation-orders",
+  "created_at": "2026-08-29T13:37:38.013703+00:00",
+  "data_message_count": 0,
+  "error_count": 0,
+  "event_row_count": 0,
+  "events": [],
+  "instrument_type": "SWAP",
+  "invalid_event_count": 0,
+  "normalized_event_count": 0,
+  "observation_window_seconds": 15,
+  "paper_only_changed": false,
+  "provider": "OKX",
+  "raw_messages_persisted": false,
+  "state": "AVAILABLE_NO_EVENT_IN_WINDOW",
+  "subscription_confirmed": true,
+  "trade_signal_generated": false,
+  "trading_authority_changed": false,
+  "version": "OKX_LIQUIDATION_CHANNEL_V1"
+}

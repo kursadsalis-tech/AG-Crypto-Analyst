@@ -1,0 +1,18 @@
+{
+  "causal_feature_dataset_ready": true,
+  "feature_csv_sha256": "9ab82dbd312c1dc6dd03e2def612f6237e18cc86957e42767cdd5e99326cfb6a",
+  "first_boundary": "2026-08-01T00:01:00+00:00",
+  "instrument": "TIA-USDT-SWAP",
+  "last_boundary": "2026-08-02T00:00:00+00:00",
+  "model_or_policy_changed": false,
+  "quality_gates": {
+    "all_values_finite": true,
+    "boundaries_unique": true,
+    "rows_between_1439_and_1441": true,
+    "spreads_positive": true
+  },
+  "rows": 1440,
+  "source_archive_sha256": "b83792cd87ceb87576e160bcdc0b882d687981b819a33136d710d24f2f63ab7d",
+  "source_url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20260801/TIA-USDT-SWAP-L2orderbook-400lv-2026-08-01.tar.gz",
+  "version": "OKX_L2_CAUSAL_FEATURES_V1"
+}
