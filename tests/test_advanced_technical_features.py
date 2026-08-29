@@ -29,6 +29,27 @@ class AdvancedTechnicalFeatureTests(unittest.TestCase):
         self.assertEqual(len(before), len(technical.FEATURE_NAMES))
         self.assertTrue(all(math.isfinite(value) for value in before))
 
+    def test_sparse_zero_volume_candle_is_valid(self):
+        candles = self.candles()
+        candles[150].update({
+            "open": candles[149]["close"],
+            "high": candles[149]["close"],
+            "low": candles[149]["close"],
+            "close": candles[149]["close"],
+            "quote_volume": 0.0,
+        })
+        values = technical.vector(candles, 168)
+        self.assertTrue(all(math.isfinite(value) for value in values))
+
+    def test_zero_volume_lookback_fails_closed(self):
+        candles = self.candles()
+        for candle in candles[145:169]:
+            candle["quote_volume"] = 0.0
+        with self.assertRaisesRegex(
+            ValueError, "insufficient advanced technical volume"
+        ):
+            technical.vector(candles, 168)
+
 
 if __name__ == "__main__":
     unittest.main()

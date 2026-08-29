@@ -42,8 +42,16 @@ def vector(candles, index):
     lows = [float(row["low"]) for row in window]
     opens = [float(row["open"]) for row in window]
     volumes = [float(row["quote_volume"]) for row in window]
-    if min(closes + highs + lows + volumes) <= 0:
+    price_values = opens + highs + lows + closes
+    if (
+        not all(math.isfinite(value) for value in price_values + volumes)
+        or min(price_values) <= 0
+        or min(volumes) < 0
+    ):
         raise ValueError("invalid advanced technical candle")
+    volume24 = sum(volumes[-24:])
+    if volume24 <= 0:
+        raise ValueError("insufficient advanced technical volume")
 
     changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
     gains = [max(value, 0.0) for value in changes[-14:]]
@@ -90,7 +98,10 @@ def vector(candles, index):
             negative_flow += flow
     money_ratio = _safe_ratio(positive_flow, negative_flow)
     mfi = 100.0 if not negative_flow else 100.0 - 100.0 / (1.0 + money_ratio)
-    vwap24 = sum(typical[i] * volumes[i] for i in range(len(window) - 24, len(window))) / sum(volumes[-24:])
+    vwap24 = sum(
+        typical[i] * volumes[i]
+        for i in range(len(window) - 24, len(window))
+    ) / volume24
 
     obv = [0.0]
     for i in range(1, len(window)):
