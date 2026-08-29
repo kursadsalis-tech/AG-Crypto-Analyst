@@ -890,6 +890,18 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   improved from 0.630754 to 0.628099 and in all six blocks.
 - 4h/24h and every strategy, evidence, risk and order-authority gate are unchanged.
 
+## 2026-08-29 — Top-down multi-timeframe technical development result
+
+- Built a causal monthly, weekly, daily, 4h and 1h feature layer using only
+  fully closed higher-timeframe bars. Tests prove future and incomplete bars
+  cannot change an earlier feature vector.
+- Compared the fixed top-down layer with the existing advanced 1h model across
+  six sequential 30-day blocks. Accuracy moved from 42.705% to 42.776%, but
+  Brier worsened from 0.628869 to 0.631139; it won accuracy in only 2/6 blocks
+  and Brier in only 1/6.
+- The predeclared gate rejected it. The layer remains reproducible research and
+  is not connected to live forecasts, PAPER policy, thresholds or authority.
+
 ## 2026-08-28 — Fixed rolling 1h direction ensemble
 
 - Added a 50/50 incumbent + rolling HistGradientBoosting probability ensemble
