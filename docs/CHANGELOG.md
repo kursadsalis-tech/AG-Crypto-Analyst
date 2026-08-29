@@ -17,6 +17,10 @@
   result that appears only after its fixed forward horizon closes.
 - Added a canonical self-hash to market-behavior health records. Cloud
   attestation now rejects a fresh-looking but modified observer health payload.
+- Added a deterministic observer deployment preflight covering all transferred
+  source/dependency SHA-256 values, unit resource/safety contracts, runtime
+  dependencies, health-version alignment, local-only tables, and PAPER
+  governance. It reports readiness but cannot install or start cloud units.
 
 ## 2026-08-30 causal minute evidence and observer attestation
 

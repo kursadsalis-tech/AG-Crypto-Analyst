@@ -1,5 +1,25 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Observer dağıtım preflight'i deterministik ve sıfır hatalı
+
+`5ada909` checkpoint'inden devam edildi. Bulut onayı öncesi son operasyonel
+boşluk kapatıldı: `scripts/observer_deployment_readiness.py` iki observer'ın
+service güvenlik/resource sözleşmelerini, runtime bağımlılıklarını, health sürüm
+eşleşmelerini, üç tablonun Supabase allowlist dışında kalmasını, PAPER yönetişim
+yetkisini ve aktarılması gereken bütün doğrudan/yerel yardımcı kaynakların
+SHA-256 değerlerini tek raporda doğruluyor. Ana dosya yeni fakat yardımcı modül
+eski kalmış bir parçalı dağıtım hash karşılaştırmasıyla yakalanabilir.
+
+Gerçek yerel preflight sonucu: `failure_count=0`,
+`ready_for_controlled_cloud_install=true`, `paper_authority_safe=true`;
+`cloud_install_performed=false` ve `timers_started=false`. Eksik dosyalı sahte
+paketin fail-closed reddedildiği de test edildi. Preflight komutu ve transfer
+sonrası aynı hash kontrolü `docs/CLOUD_PAPER_RUNTIME.md` kurulum sırasına eklendi.
+
+Buluta hiçbir dosya aktarılmadı; service/timer kurulmadı veya başlatılmadı.
+Runtime DB, Supabase, PAPER_ONLY, kanıt eşikleri, strateji ve gerçek emir yetkisi
+değişmedi. Sıradaki dış adım hâlâ kullanıcının açık bulut onayıdır.
+
 # 2026-08-30 — Davranış hattı uçtan uca ve sağlık kaydı kurcalamaya karşı doğrulandı
 
 `234f537` checkpoint'inden devam edildi. Bulut öncesi sentetik entegrasyon testi

@@ -83,6 +83,16 @@ checkpoint, then copy the four unit files and the changed Python sources. The
 intended unit installation commands are:
 
 ```bash
+python3 scripts/observer_deployment_readiness.py
+```
+
+This preflight must return `failure_count=0`,
+`ready_for_controlled_cloud_install=true`, `paper_authority_safe=true`, and
+`cloud_install_performed=false`. Its SHA-256 map covers both observer entry
+points and their local source/database dependencies; compare the same files
+after transfer before running either service.
+
+```bash
 sudo install -m 0644 deploy/agca-market-behavior-observer.service /etc/systemd/system/
 sudo install -m 0644 deploy/agca-market-behavior-observer.timer /etc/systemd/system/
 sudo install -m 0644 deploy/agca-exact-macro-observer.service /etc/systemd/system/
