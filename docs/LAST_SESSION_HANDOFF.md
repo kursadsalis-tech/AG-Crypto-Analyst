@@ -1,5 +1,26 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Davranış hattı uçtan uca ve sağlık kaydı kurcalamaya karşı doğrulandı
+
+`234f537` checkpoint'inden devam edildi. Bulut öncesi sentetik entegrasyon testi
+tek SQLite üzerinde bütün yolu doğruladı: olay öncesi kapanmış davranış dakikası,
+FOMC'nin resmî yayın saati, AGCA'nın beş saniye sonraki gerçek gözlemi, olay
+dakikasındaki defter/işlem/OI/tasfiye kanıtı ve yalnız 5 dakikalık ufuk kapandıktan
+sonra oluşan fiyat tepkisi. Olay geçmiş dakikaya yazılmadı; tepki olay öncesi
+fiyata göre tam +%2 ölçüldü. Bu sentetik değer başarı kanıtı değildir, yalnız
+zaman ve veri sözleşmesi doğrulamasıdır.
+
+Market-behavior sağlık kaydı artık yalnız çıktı raporunun SHA-256 değerini değil,
+kendi kanonik içeriğinin `health_sha256` değerini de taşıyor. Cloud attestation
+bu self-hash'i yeniden hesaplıyor; satır sayısı gibi tek bir alan sonradan
+değiştirilirse kayıt taze görünse bile `INVALID` oluyor. Exact-macro sağlık
+kaydındaki mevcut self-hash sözleşmesiyle iki observer aynı kurcalama korumasına
+geldi.
+
+Tam suite 208/208 geçti. Bulut, service/timer, runtime DB, Supabase, PAPER_ONLY,
+kanıt eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi. Observer
+paketi hâlâ yalnız yerelde hazırdır; kurulum için açık bulut onayı beklenir.
+
 # 2026-08-30 — Davranış-önce piyasa okuma ilkesi ölçüm sözleşmesine dönüştürüldü
 
 Kullanıcının bilgi asimetrisinin haber erişiminden davranış/akış okumasına

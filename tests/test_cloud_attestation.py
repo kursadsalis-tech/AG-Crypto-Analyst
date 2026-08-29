@@ -71,6 +71,10 @@ class CloudAttestationTests(unittest.TestCase):
                 "raw_market_payloads_persisted": False,
                 "may_send_real_orders": False,
             }
+            canonical = json.dumps(
+                health, sort_keys=True, separators=(",", ":")
+            ).encode()
+            health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(health, handle)
             payload, _, _ = cloud_attestation.build(
@@ -80,6 +84,29 @@ class CloudAttestationTests(unittest.TestCase):
         self.assertEqual(observer["state"], "CURRENT")
         self.assertEqual(observer["eligible_row_count"], 12)
         self.assertFalse(observer["may_send_real_orders"])
+
+    def test_tampered_market_behavior_health_is_invalid(self):
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "health.json")
+            health = {
+                "health_contract_version": "AGCA_MARKET_BEHAVIOR_HEALTH_V1",
+                "status": "HEALTHY", "completed_at": now.isoformat(),
+                "execution_mode": "PAPER_ONLY", "row_count": 12,
+                "eligible_row_count": 12, "minute_end_timestamp_ms": 1,
+                "report_sha256": "a" * 64,
+                "raw_market_payloads_persisted": False,
+                "may_send_real_orders": False,
+            }
+            canonical = json.dumps(
+                health, sort_keys=True, separators=(",", ":")
+            ).encode()
+            health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
+            health["eligible_row_count"] = 11
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(health, handle)
+            result = cloud_attestation.market_behavior_health(now, path)
+        self.assertEqual(result["state"], "INVALID")
 
     def test_exact_macro_health_hash_is_bound_to_attestation(self):
         now = datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc)

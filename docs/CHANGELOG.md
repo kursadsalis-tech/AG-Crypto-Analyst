@@ -12,6 +12,11 @@
   model search, policy mutation, or action authority was introduced.
 - Explicitly marks instruments sharing one global event/minute as correlated,
   preventing market-wide rows from being presented as independent evidence.
+- Added an end-to-end causal integration test covering pre-event baseline,
+  actual macro observation time, event-minute behavior persistence, and a
+  result that appears only after its fixed forward horizon closes.
+- Added a canonical self-hash to market-behavior health records. Cloud
+  attestation now rejects a fresh-looking but modified observer health payload.
 
 ## 2026-08-30 causal minute evidence and observer attestation
 

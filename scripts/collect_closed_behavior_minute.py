@@ -148,6 +148,10 @@ def main():
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
         }
+        health_canonical = json.dumps(
+            health, sort_keys=True, separators=(",", ":")
+        ).encode()
+        health["health_sha256"] = hashlib.sha256(health_canonical).hexdigest()
         write_json_atomic(args.health_output, health)
     print(json.dumps({
         "row_count": result["row_count"],

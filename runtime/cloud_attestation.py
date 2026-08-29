@@ -82,6 +82,12 @@ def market_behavior_health(now=None, path=None):
         ).astimezone(timezone.utc)
         age = max(0.0, (now - completed).total_seconds())
         max_age = float(os.getenv("AGCA_MARKET_BEHAVIOR_HEALTH_MAX_AGE_SECONDS", "180"))
+        claimed_hash = str(raw.get("health_sha256") or "")
+        unhashed = dict(raw)
+        unhashed.pop("health_sha256", None)
+        canonical = json.dumps(
+            unhashed, sort_keys=True, separators=(",", ":")
+        ).encode()
         valid = (
             raw.get("health_contract_version") == MARKET_BEHAVIOR_HEALTH_VERSION
             and raw.get("execution_mode") == "PAPER_ONLY"
@@ -91,6 +97,7 @@ def market_behavior_health(now=None, path=None):
             and len(raw["report_sha256"]) == 64
             and all(character in string.hexdigits for character in raw["report_sha256"])
             and int(raw.get("row_count") or 0) >= int(raw.get("eligible_row_count") or 0) >= 0
+            and hashlib.sha256(canonical).hexdigest() == claimed_hash
         )
         state = "INVALID" if not valid else ("STALE" if age > max_age else "CURRENT")
         return {
