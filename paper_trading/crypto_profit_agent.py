@@ -29,6 +29,7 @@ from paper_trading.futures_costs import (
 from paper_trading import trade_learning
 from paper_trading import strategy_allocator
 from paper_trading import experience_memory
+from paper_trading import behavior_decision_core
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -174,6 +175,8 @@ def ensure_tables(con):
         ("evidence_eligible", "INTEGER NOT NULL DEFAULT 0"),
         ("partial_fill", "INTEGER NOT NULL DEFAULT 0"),
         ("strategy_id", "TEXT NOT NULL DEFAULT 'CHAMPION_BASELINE'"),
+        ("decision_source", "TEXT NOT NULL DEFAULT 'UNIFIED_FORECAST_BASELINE'"),
+        ("decision_reference_id", "INTEGER"),
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -227,6 +230,7 @@ def ensure_tables(con):
         """, (reset_at, INITIAL_CAPITAL, INITIAL_CAPITAL, FORWARD_COHORT, reset_at))
     experience_memory.ensure_tables(con)
     experience_memory.record_legacy_summary(con)
+    behavior_decision_core.ensure_tables(con)
     con.commit()
 
 
@@ -605,17 +609,13 @@ def latest_candidates(con, now=None):
 
 
 def select_new_positions(con, now):
-    weights = strategy_allocator.rebalance(con, now)
+    behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
     """).fetchall()
     active_symbols = {row[0] for row in active}
-    strategy_exposure = dict(con.execute("""
-        SELECT strategy_id,coalesce(sum(notional),0) FROM paper_agent_positions
-        WHERE status IN ('PENDING_ENTRY','OPEN') GROUP BY strategy_id
-    """).fetchall())
     capacity = max(0, MAX_OPEN_POSITIONS - len(active))
     if capacity <= 0:
         return 0
@@ -625,58 +625,54 @@ def select_new_positions(con, now):
     base_notional = snapshot["equity"] * POSITION_FRACTION
     selected = 0
     planned_entry = next_tradable_hour_open(now)
-    for row in latest_candidates(con, now):
+    for row in behavior_result["candidates"]:
         if selected >= max_new or row["symbol"] in active_symbols:
             continue
-        if planned_entry >= parse_time(row["due_time"]):
-            continue
-        matches = strategy_allocator.matching_strategies(con, row["direction"])
-        if not matches:
-            continue
-        strategy_id, strategy_weight = min(
-            matches,
-            key=lambda item: float(strategy_exposure.get(item[0], 0.0)) /
-            max(snapshot["equity"] * item[1], 1e-9),
-        )
-        sleeve_room = max(
-            0.0, snapshot["equity"] * strategy_weight -
-            float(strategy_exposure.get(strategy_id, 0.0))
-        )
+        strategy_id = behavior_decision_core.STRATEGY_ID
+        strategy_weight = 1.0
+        due_time = planned_entry + timedelta(hours=row["horizon"])
+        risk_room = snapshot["equity"] * row["risk_cap_pct"] / 100.0
         notional = min(
             base_notional,
             available_exposure,
-            sleeve_room,
+            risk_room,
             snapshot["cash"] / (1.0 + FEE_RATE),
         )
         if notional < max(10.0, snapshot["equity"] * 0.01):
             break
         reason = (
-            f"{row['horizon']}h {row['direction']} | "
-            f"p={100*row['confidence']:.1f}% | "
-            f"gap={100*row['gap']:.1f}pp | "
-            f"q50_move={row['predicted_move_pct']:.3f}%"
-            f" | strategy={strategy_id} | virtual_weight={100*strategy_weight:.1f}%"
+            f"BEHAVIOR {row['horizon']}h {row['direction']} | "
+            f"cost_after_win={100*row['confidence']:.1f}% | "
+            f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
+            f"strategy={strategy_id}"
         )
+        p_up = row["confidence"] if row["direction"] == "LONG" else 1.0 - row["confidence"]
+        p_down = row["confidence"] if row["direction"] == "SHORT" else 1.0 - row["confidence"]
         cursor = con.execute("""
             INSERT OR IGNORE INTO paper_agent_positions(
                 forecast_id,agent_version,policy_version,symbol,horizon_hours,
                 direction,status,selected_at,as_of,planned_entry_time,due_time,
                 notional,confidence,p_up,p_down,target_price,model_version,
                 artifact_hash,selection_reason,market_type,validation_cohort,evidence_eligible,
-                strategy_id
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                strategy_id,decision_source,decision_reference_id
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
-            row["forecast_id"], AGENT_VERSION, POLICY_VERSION, row["symbol"],
+            -row["decision_id"], AGENT_VERSION,
+            behavior_decision_core.POLICY_VERSION, row["symbol"],
             row["horizon"], row["direction"], "PENDING_ENTRY", iso(now),
-            row["as_of"], iso(planned_entry), row["due_time"], notional,
-            row["confidence"], row["p_up"], row["p_down"],
-            row["target_price"], row["model_version"], row["artifact_hash"],
-            reason, PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
+            datetime.fromtimestamp(
+                row["evidence"]["evidence_minute_end_ms"] / 1000, timezone.utc
+            ).isoformat(), iso(planned_entry), iso(due_time), notional,
+            row["confidence"], p_up, p_down, row["target_price"],
+            behavior_decision_core.VERSION, row["evidence_sha256"], reason,
+            PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
+            row["decision_source"], row["decision_id"],
         ))
         if cursor.rowcount == 1:
             experience_memory.capture_decision_thesis(
                 con, position_id=cursor.lastrowid, row=row,
-                agent_version=AGENT_VERSION, policy_version=POLICY_VERSION,
+                agent_version=AGENT_VERSION,
+                policy_version=behavior_decision_core.POLICY_VERSION,
                 validation_cohort=FORWARD_COHORT, strategy_id=strategy_id,
                 strategy_weight=strategy_weight, selected_at=now,
                 planned_entry_time=planned_entry,
@@ -685,9 +681,6 @@ def select_new_positions(con, now):
             active_symbols.add(row["symbol"])
             available_exposure -= notional
             snapshot["cash"] -= notional * (1.0 + FEE_RATE)
-            strategy_exposure[strategy_id] = (
-                float(strategy_exposure.get(strategy_id, 0.0)) + notional
-            )
     con.commit()
     return selected
 

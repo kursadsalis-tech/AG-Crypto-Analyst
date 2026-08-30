@@ -68,7 +68,9 @@ def ensure_tables(con):
 def load_closed(con, validation_cohort):
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.horizon_hours,p.direction,p.exit_time,
-               p.notional,p.net_pnl,COALESCE(f.regime,'UNKNOWN')
+               p.notional,p.net_pnl,COALESCE(f.regime,'UNKNOWN'),
+               COALESCE(p.policy_version,'UNKNOWN'),
+               COALESCE(p.decision_source,'UNIFIED_FORECAST_BASELINE')
         FROM paper_agent_positions p
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
@@ -80,6 +82,7 @@ def load_closed(con, validation_cohort):
         "horizon": int(row[2]), "direction": str(row[3]),
         "exit_time": str(row[4]), "notional": float(row[5]),
         "net_pnl": float(row[6]), "regime": str(row[7]),
+        "policy_version": str(row[8]), "decision_source": str(row[9]),
     } for row in rows]
 
 
@@ -111,6 +114,8 @@ def grouped_metrics(rows):
         groups[f"HORIZON:{row['horizon']}h"].append(row)
         groups[f"REGIME:{row['regime']}"].append(row)
         groups[f"DIRECTION_HORIZON:{row['direction']}:{row['horizon']}h"].append(row)
+        groups[f"POLICY:{row['policy_version']}"] .append(row)
+        groups[f"DECISION_SOURCE:{row['decision_source']}"] .append(row)
     return {key: metrics(value) for key, value in sorted(groups.items())}
 
 
@@ -121,6 +126,8 @@ def candidate_type(pattern_key):
         return "DIRECTION_SIZING_CHALLENGER"
     if pattern_key.startswith("HORIZON:"):
         return "HORIZON_SELECTION_CHALLENGER"
+    if pattern_key.startswith("POLICY:") or pattern_key.startswith("DECISION_SOURCE:"):
+        return "POLICY_SOURCE_REVIEW_ONLY"
     return "REGIME_CONTEXT_CHALLENGER"
 
 

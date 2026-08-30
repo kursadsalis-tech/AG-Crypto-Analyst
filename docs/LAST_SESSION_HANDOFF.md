@@ -1,5 +1,44 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-31 — Unified Forecast yürütmeden çıkarıldı; davranış çekirdeği aktif yol
+
+Kullanıcının tekrar vurguladığı ana sözleşme uygulandı. PAPER pozisyon seçimi
+artık `latest_candidates()`/Unified Forecast kullanmaz. Unified Forecast kayıt ve
+fonksiyonu baseline araştırması için korunur; aktif yürütme yalnız
+`PAPER_BEHAVIOR_DECISION_CORE_V1` adaylarını kabul eder. Aynı ajan, aynı portföy
+ve 10.000 USDT'den başlayan yaşam boyu kasa devam eder.
+
+Yeni çekirdek kapanmış ve uygun market-behavior dakikalarındaki order-book,
+taker flow, spread, OI, funding ve liquidation kanıtını; yalnız `available_at`
+saatinde bilinen news/on-chain/whale/exact-macro olayıyla birleştirir. 240 dakika
+sonra gerçekten kapanmış outcome'lardan, global olayları `independence_unit`
+başına tek sayarak continuation/reversal yönünü öğrenir. Masraf modeli ücret,
+spread ve ek güvenlik tamponunu sonuçtan düşer.
+
+İşlem kapısı: en az 30 bağımsız örnek, üç UTC günü, %55 masraf-sonrası kazanma
+oranı ve +%0,05 ortalama net edge. Risk/freshness/quality kapıları ayrıca zorunlu.
+Kanıt yetmezse eski forecast'a dönülmez ve işlem açılmaz. Her davranış kararı
+ayrı `paper_behavior_decisions` kaydı, source/reference kimliği ve sonuç-kör tez
+taşır. Trade learning yeni/eski politikayı ve karar kaynağını ayrı gruplar.
+
+Canlı veride salt-okunur şema doğrulaması başarılıdır: beş öğrenilebilir desen,
+en büyük desende 56 bağımsız örnek fakat yalnız bir UTC günü; bu yüzden hazır
+desen ve yeni işlem sıfırdır. Bu faaliyet eksikliği değil, farklı piyasa koşulu
+kapısının doğru çalışmasıdır. Model/strateji görünüşü için eşik gevşetilmedi.
+Odaklı sözleşme testleri 23/23, nihai tam suite 244/244 geçti.
+
+Checkpoint adayı rollback korumalı olarak `agca-runtime` VM'ine dağıtıldı;
+rollback `/var/lib/agca/rollback-9f426d0-behavior-core-20260830T2220Z`
+altındadır. Doğal worker ve saatlik PAPER çevrimi `SUCCESS` tamamlandı. Canlı
+policy review `PAPER_BEHAVIOR_DECISION_CORE_V1`,
+`COLLECTING_INDEPENDENT_EVIDENCE`, beş desen ve `execution_allowed=0` kaydetti.
+Davranış kararı/tezi ve açık-bekleyen pozisyon sıfır; eski 31 pozisyon yalnız
+`UNIFIED_FORECAST_BASELINE` geçmişi olarak duruyor. Kasa 10.276,9678579129
+USDT, gerçekleşmiş P&L +276,96785791286 ve ücret 14,804558465 USDT olarak
+değişmedi. Worker, attestation ve behavior timer active; PAPER sonucu SUCCESS,
+PAPER_ONLY ve `may_send_real_orders=false` doğrulandı.
+
+
 # 2026-08-31 — Ana worker'da yinelenen attestation I/O blokajı kaldırıldı
 
 Tecrübe belleği dağıtımı sonrasında kritik nöbet, ana worker sağlık kaydının

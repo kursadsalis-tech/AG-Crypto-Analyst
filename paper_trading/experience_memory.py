@@ -78,7 +78,26 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
     ).fetchone()
     if not status or status[0] != "PENDING_ENTRY":
         raise ValueError("THESIS_MUST_BE_CAPTURED_WHILE_OUTCOME_UNKNOWN")
-    thesis = {
+    if row.get("decision_source") == "MARKET_BEHAVIOR_CORE":
+        thesis = {
+            "position_id": int(position_id),
+            "decision_source": "MARKET_BEHAVIOR_CORE",
+            "selected_at": iso(selected_at),
+            "context_cutoff_at": datetime.fromtimestamp(
+                row["evidence"]["evidence_minute_end_ms"] / 1000, timezone.utc
+            ).isoformat(),
+            "planned_entry_time": iso(planned_entry_time),
+            "symbol": str(row["symbol"]), "horizon_hours": int(row["horizon"]),
+            "direction": str(row["direction"]),
+            "strategy": {"id": strategy_id, "virtual_weight": float(strategy_weight)},
+            "evidence_used": row["evidence"],
+            "capabilities_under_test": row["evidence"]["capabilities_used"],
+            "capabilities_observed_but_not_decision_inputs": ["UNIFIED_FORECAST_BASELINE"],
+            "claims": {"outcome_used": False, "causal_claim": False,
+                       "skill_already_proven": False},
+        }
+    else:
+        thesis = {
         "position_id": int(position_id),
         "decision_source": "UNIFIED_FORECAST_BASELINE_INPUT",
         "selected_at": iso(selected_at),
@@ -112,7 +131,7 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
             "outcome_used": False, "causal_claim": False,
             "skill_already_proven": False,
         },
-    }
+        }
     digest = _sha(thesis)
     con.execute("""
         INSERT INTO paper_agent_decision_theses(

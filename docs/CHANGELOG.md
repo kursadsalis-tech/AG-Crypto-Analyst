@@ -1118,6 +1118,14 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.
 # 2026-08-31
 
+- Unified Forecast PAPER yürütme girdisi olmaktan çıkarıldı ve baseline-only
+  bırakıldı. Yeni davranış çekirdeği point-in-time event + order-book/taker/OI/
+  funding/liquidation kanıtından, bağımsızlık ve masraf-sonrası kapılarla PAPER
+  deneyi üretir; kanıt yetersizse eski sisteme geri dönmez.
+- Davranış kararlarına ayrı provenance tablosu ve pozisyon source/reference bağı
+  eklendi. Sonuç-kör tez gerçekten kullanılan yetenekleri kaydeder; eski/yeni
+  politika ve karar kaynakları trade-learning özetinde ayrılır. Odaklı testler
+  23/23, tam suite 244/244 geçti.
 - Ana worker'ı çevrim sonunda uzun SQLite/remote I/O beklemesine sokan yinelenen
   senkron attestation çağrısı kaldırıldı. Hash-korumalı attestation mevcut ayrı
   beş dakikalık systemd timer'ında devam eder; gözlem ve güvenlik kapsamı azalmaz.

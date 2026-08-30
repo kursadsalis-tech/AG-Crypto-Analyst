@@ -16,7 +16,8 @@ class TradeLearningTests(unittest.TestCase):
                 position_id INTEGER PRIMARY KEY, forecast_id INTEGER,
                 symbol TEXT, horizon_hours INTEGER, direction TEXT,
                 exit_time TEXT, notional REAL, net_pnl REAL, status TEXT,
-                evidence_eligible INTEGER, validation_cohort TEXT
+                evidence_eligible INTEGER, validation_cohort TEXT,
+                policy_version TEXT,decision_source TEXT
             );
         """)
 
@@ -31,9 +32,9 @@ class TradeLearningTests(unittest.TestCase):
             "INSERT INTO forecast_engine_predictions VALUES(?,?)", (index, "RISK_OFF")
         )
         self.con.execute(
-            "INSERT INTO paper_agent_positions VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO paper_agent_positions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (index, index, "BTCUSDT", 4, "LONG", stamp.isoformat(), 100.0,
-             pnl, "CLOSED", eligible, cohort),
+             pnl, "CLOSED", eligible, cohort, "POLICY", "SOURCE"),
         )
 
     def test_zero_clean_closed_is_collecting(self):

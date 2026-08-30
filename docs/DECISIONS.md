@@ -728,3 +728,32 @@ Bağlayıcı öğrenme ve işlem sözleşmesi:
 - Doğrulanmış dersler PAPER kararlarına taşınabilmelidir; öğrenme yalnız raporda
   kalmaz. Bununla birlikte otomatik kendini kandırma, eşik gevşetme, gerçek emir
   ve kanıtsız politika terfisi mevcut fail-closed kapılarla engellenir.
+
+---
+
+## Karar 031 - Davranış Çekirdeği PAPER Yürütmenin Tek Aktif Karar Kaynağıdır
+
+Unified Forecast geçmiş karşılaştırma baseline'ı olarak korunur; yeni PAPER
+pozisyon seçiminin zorunlu öğretmeni veya yürütme girdisi değildir. Aktif karar
+yolu kapanmış ve kalite kapısından geçmiş piyasa davranışı ile point-in-time dış
+olay kanıtından öğrenir.
+
+- Emir defteri dengesi ve agresif taker akışı yön desenini oluşturur. Spread
+  doğrudan maliyet hesabına; OI, funding, liquidation ve kaynak kalite kapıları
+  karar tezine ve deney bağlamına girer.
+- Haber, on-chain, whale ve exact-macro olayları yalnız AGCA tarafından gerçekten
+  erişilebilir oldukları kapanmış dakikada kullanılabilir. Gelecek outcome veya
+  geç gözlenmiş olay geçmiş karara sızamaz.
+- Öğrenme bir global olayın çok sayıdaki coin satırını bağımsız örnek saymaz;
+  `independence_unit` başına tek örnek kullanır.
+- Bir davranış deseni PAPER deneyi açmadan önce en az 30 bağımsız örnek, en az
+  üç UTC günü, en az %55 masraf-sonrası kazanma oranı ve en az +%0,05 ortalama
+  net edge göstermelidir. Bu kapılar faaliyet üretmek için gevşetilemez.
+- Kanıt yeterli değilse ajan eski Unified Forecast'a geri dönmez; piyasayı
+  okumaya ve outcome toplamaya devam eder, işlem açmaz.
+- Aynı ajan, aynı yaşam boyu kasa ve aynı gerçekçi execution muhasebesi kullanılır.
+  Davranış kararları açık kaynak/reference kimliğiyle ve sonuç-kör tezle bağlanır.
+- Eski ve yeni performans politika/karar kaynağına göre ayrı değerlendirilir.
+  Tek kümülatif kasa korunurken eski kazanç yeni çekirdeğin becerisi sayılamaz.
+- PAPER_ONLY, risk veto, freshness, exact-entry, maliyet, liquidation ve gerçek
+  emir kapıları değişmez; gerçek para yetkisi üretilmez.
