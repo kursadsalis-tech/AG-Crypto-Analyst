@@ -1,5 +1,22 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-31 — Ana worker'da yinelenen attestation I/O blokajı kaldırıldı
+
+Tecrübe belleği dağıtımı sonrasında kritik nöbet, ana worker sağlık kaydının
+`2026-08-30T21:28:23Z` sonrasında yaklaşık 15 dakika yenilenmediğini bildirdi.
+Süreç ölmemişti; son saatlik/PAPER işi `SUCCESS`, açık pozisyon sıfır ve
+PAPER_ONLY kapıları sağlamdı. Süreç `D` durumunda SQLite/I/O bekledi ve ancak
+`21:43:49Z` civarında sonraki ürün çevrimine ilerledi.
+
+Kök neden ana worker'ın her sonuçtan sonra senkron
+`cloud_attestation.record()` çalıştırmasıydı. Aynı attestation zaten ayrı,
+beş dakikalık `agca-cloud-attestation.timer` tarafından yürütülüyordu. Ana
+worker içindeki yinelenen ve bloklayıcı çağrı kaldırıldı; hash-korumalı
+attestation, quick-check ve Supabase audit mirror görevi bağımsız timer'da aynen
+devam eder. Model, strateji, eşik, kasa, PAPER_ONLY ve gerçek emir kapıları
+değişmedi. Odaklı runtime/attestation/bellek testleri 14/14, nihai tam suite
+232/232 geçti.
+
 # 2026-08-31 — Tek ajan için sonuç-kör tez ve tecrübe belleği
 
 Karar 030 uygulandı. PAPER ajanı, portföyü, yaşam boyu kasası, mevcut model,

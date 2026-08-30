@@ -1118,6 +1118,10 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.
 # 2026-08-31
 
+- Ana worker'ı çevrim sonunda uzun SQLite/remote I/O beklemesine sokan yinelenen
+  senkron attestation çağrısı kaldırıldı. Hash-korumalı attestation mevcut ayrı
+  beş dakikalık systemd timer'ında devam eder; gözlem ve güvenlik kapsamı azalmaz.
+  Odaklı testler 14/14 ve tam suite 232/232 geçti.
 - PAPER ajanına ikinci ajan veya portföy oluşturmadan sürümlü tecrübe belleği
   eklendi. Yeni işlemlerin karar tezi sonuçtan önce dondurulur; kapanan işlemler
   net maliyet sonrası, idempotent ve nedensellik iddiası olmadan değerlendirilir.

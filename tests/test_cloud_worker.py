@@ -28,20 +28,14 @@ class CloudWorkerHealthTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             cloud_worker._json_default(object())
 
-    def test_source_attests_only_when_results_exist_or_first_window_error(self):
+    def test_worker_does_not_duplicate_independent_attestation_timer(self):
         source = Path(cloud_worker.__file__).read_text(encoding="utf-8")
-        self.assertIn("if results:", source)
-        self.assertIn('_record_attestation_safely("HEALTHY", last_results)', source)
-        self.assertIn("if five_key != last_attested_five:", source)
-
-    def test_attestation_transport_failure_does_not_escape_to_worker_loop(self):
-        with patch.object(
-            cloud_worker.cloud_attestation,
-            "record",
-            side_effect=TimeoutError("mirror timeout"),
-        ):
-            result = cloud_worker._record_attestation_safely("HEALTHY", {})
-        self.assertIsNone(result)
+        self.assertNotIn("cloud_attestation.record", source)
+        self.assertNotIn("_record_attestation_safely", source)
+        service = Path("deploy/agca-cloud-attestation.service").read_text()
+        timer = Path("deploy/agca-cloud-attestation.timer").read_text()
+        self.assertIn("runtime.cloud_attestation", service)
+        self.assertIn("OnUnitActiveSec=5min", timer)
 
 
 if __name__ == "__main__":

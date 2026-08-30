@@ -12,7 +12,6 @@ from pathlib import Path
 
 from analysis import forward_shadow_cycle
 from decision_engine import hourly_forecast_job
-from runtime import cloud_attestation
 
 
 STATE_DIR = Path(os.getenv("AGCA_STATE_DIR", "/var/lib/agca"))
@@ -43,18 +42,6 @@ def _json_default(value):
     raise TypeError(
         f"Object of type {type(value).__name__} is not JSON serializable"
     )
-
-
-def _record_attestation_safely(status, last_results):
-    """Keep reporting transport failures separate from forecast-worker health."""
-    try:
-        return cloud_attestation.record(status, last_results)
-    except Exception as exc:
-        print(
-            "Cloud attestation delivery failed; worker cycle remains authoritative: "
-            f"{type(exc).__name__}: {str(exc)[:300]}"
-        )
-        return None
 
 
 def _prepare_persistent_state():
@@ -96,7 +83,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("Another AGCA worker owns this persistent volume")
-        last_five = last_hour = last_attested_five = None
+        last_five = last_hour = None
         last_results = {}
         _write_health("STARTING")
         while not STOP:
@@ -114,15 +101,10 @@ def main():
                 if results:
                     last_results.update(results)
                     _write_health("HEALTHY", last_results=last_results)
-                    _record_attestation_safely("HEALTHY", last_results)
-                    last_attested_five = five_key
                 else:
                     _write_health("HEALTHY", last_results=last_results)
             except Exception as exc:
                 _write_health("DEGRADED", error_type=type(exc).__name__, message=str(exc)[:300])
-                if five_key != last_attested_five:
-                    _record_attestation_safely("DEGRADED", last_results)
-                    last_attested_five = five_key
             time.sleep(10)
         _write_health("STOPPED")
 
