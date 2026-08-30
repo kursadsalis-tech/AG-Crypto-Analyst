@@ -1,5 +1,18 @@
 # Latest AGCA Session Handoff
 
+# Kalıcı çalışma disiplini düzeltmesi
+
+Kullanıcının tekrar etmek zorunda kaldığı iki çalışma tercihi kök `AGENTS.md`
+sözleşmesine eklendi. Sorunlarda önce ölçüm ve kök-neden ayrımı yapılacak; art
+arda dar parametre denemeleri yerine farklı hipotezler karşılaştırılacak. Ara
+aşamalarda yalnız odaklı test, nihai adayda bir kez tam suite kullanılacak;
+aynı kanıtı üretmeyen uzun/canlı koşular tekrarlanmayacak.
+
+Kullanıcı bildirimlerinde varsayılan kanal Codex heartbeat/automation'dır;
+kullanıcı açıkça istemedikçe Telegram gündeme getirilmeyecektir. Kullanıcı
+`oturum bitti` demeden kapanış, handoff özeti veya sonraki oturum açılış mesajı
+gönderilmeyecektir.
+
 # 2026-08-30 — Market-behavior sürekliliği ve anlık arıza nöbeti
 
 Salt-okunur gözlemde market-behavior observer'ın OKX istek gecikmeleri sırasında

@@ -66,6 +66,28 @@ mirrors or temporary folders.
   genuine limitation. Report failure only after materially different safe
   approaches have been checked and their evidence recorded.
 
+## Efficiency and user communication
+
+- Diagnose before iterating. Measure the failing stage and separate network,
+  CPU/process, storage, locking, and external-service causes before changing
+  production code or starting a long run.
+- Compare materially different hypotheses first. Do not deploy a sequence of
+  narrow parameter tweaks when the architecture or transport mechanism may be
+  the dominant cause.
+- During development, run the smallest focused test that can reject the current
+  hypothesis. Run the full suite once for the final candidate, plus only any
+  genuinely necessary post-deployment verification required by the risk of the
+  change. Do not rerun the full suite after every small edit.
+- Before a long command, state internally what evidence it will add and whether
+  a cheaper bounded check can provide the same answer. Avoid repeated live
+  trials without first incorporating the evidence from the previous trial.
+- Codex's own heartbeat/automation notifications are the default user-facing
+  monitoring channel. Do not propose or discuss Telegram unless the user
+  explicitly asks for it.
+- Do not send session closeout, handoff instructions, or a next-session opening
+  prompt until the user explicitly says `oturum bitti`. Continue normal work
+  without treating each implementation response as the end of a session.
+
 ## Product mission
 
 - Build AGCA into an adaptive, market-wide trading system that can read public
