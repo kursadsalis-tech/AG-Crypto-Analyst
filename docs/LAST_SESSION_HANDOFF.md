@@ -1,5 +1,28 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Dağınık AGCA oturumları kanonik Proje Merkezi altında toplandı
+
+Kod ve sohbet aynalarını fiziksel olarak birbirine karıştırmadan tek-çatı düzeni
+kuruldu. Yeni `docs/PROJECT_HUB.md`; kanonik checkout'u, belge yetki sırasını,
+ürün misyonunu, sistem katmanlarını, geçmiş oturumların nasıl içeri alınacağını
+ve her çalışmanın kısa başlangıç yolunu tek yerde tanımlıyor. Kök `AGENTS.md`
+artık her çalışmanın başında bu merkezi de okumayı zorunlu tutuyor;
+`docs/REPOSITORY_HYGIENE.md` ve `docs/PROJECT_STATUS.md` merkeze bağlandı.
+
+Codex/ChatGPT görev envanterinde kanonik depoda çalışan AGCA görevlerinin yanı
+sıra ChatGPT proje aynasında iki eski görev ve `Documents/Codex/...` altında
+tarihsel referenced-conversation checkout'ları görüldü. Bunlar silinmedi,
+taşınmadı veya kod kaynağı olarak birleştirilmedi. Bağlam/provenance olarak
+korunuyorlar; içlerinden gelecek yeni iddia ancak kanonik Git, test, SQLite şema
+ve rapor provenance'ıyla doğrulanırsa uygun belgeye alınacak. Böylece eski
+oturum bilgisi kaybolmazken ikinci bir kaynak doğrusu oluşmuyor.
+
+Bu düzenleme yalnız dokümantasyon ve çalışma sözleşmesidir. Bulut servisleri,
+SQLite, Supabase, PAPER_ONLY, kanıt eşikleri, strateji/model politikası ve gerçek
+emir yetkisi değiştirilmedi. Sıradaki ürün işi değişmedi: doğal davranış ve
+kesin-zamanlı olay kapsamını biriktirip ölçmek; yeterli kanıt olmadan performans
+veya model terfisi iddiası üretmemek.
+
 # 2026-08-30 — Davranış ve kesin-makro observer'ları kontrollü olarak buluta alındı
 
 Kullanıcının açık bulut onayıyla `e8705a9` checkpoint'i VM `agca-runtime`

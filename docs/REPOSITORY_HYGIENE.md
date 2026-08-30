@@ -8,6 +8,10 @@ ChatGPT project mirrors are context-only and are not valid development
 checkouts. New Codex coding tasks should be opened against the canonical local
 Git repository.
 
+`docs/PROJECT_HUB.md` is the single navigation entry for project mission,
+document authority, component ownership and historical-context intake. It does
+not replace Git history or the latest handoff.
+
 ## Directory ownership
 
 | Path | Purpose |

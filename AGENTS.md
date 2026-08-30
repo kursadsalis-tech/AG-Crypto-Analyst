@@ -9,7 +9,8 @@ mirrors or temporary folders.
 1. Confirm the working directory is this Git repository before searching for
    project files or making changes. If it is not, locate the canonical checkout
    and state the mismatch immediately.
-2. Read `docs/LAST_SESSION_HANDOFF.md` and inspect `git status --short --branch`.
+2. Read `docs/PROJECT_HUB.md` and `docs/LAST_SESSION_HANDOFF.md`, then inspect
+   `git status --short --branch`.
 3. Preserve existing user changes. Never overwrite, reset, or clean them without
    first identifying their owner and purpose.
 4. Do not infer that a missing file is empty or lost until the canonical checkout

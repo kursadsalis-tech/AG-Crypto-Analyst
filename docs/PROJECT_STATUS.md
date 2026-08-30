@@ -1,5 +1,10 @@
 # AG Crypto Analyst - Project Status
 
+> Güncel navigasyon ve belge yetki sırası için önce `docs/PROJECT_HUB.md`, canlı
+> dış durum için `docs/LAST_SESSION_HANDOFF.md` okunmalıdır. Bu belge geniş
+> bileşen özetidir; eski bölümlerdeki tarihsel deployment ifadeleri güncel dış
+> durumun önüne geçmez.
+
 ## 1. PROJENİN ANA HEDEFİ
 
 AG Crypto Analyst'ın nihai amacı:
