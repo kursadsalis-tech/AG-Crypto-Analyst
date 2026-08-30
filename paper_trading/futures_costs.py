@@ -40,7 +40,11 @@ def fetch_funding_history_via_postgres(
         raise FuturesCostError("INVALID_FUNDING_REQUEST")
     start_ms, end_ms = _milliseconds(start), _milliseconds(end)
     url = FUNDING_ENDPOINT + "?" + urlencode({
-        "symbol": symbol, "startTime": start_ms, "endTime": end_ms, "limit": 1000,
+        # Binance treats startTime as inclusive. Funding at the exact position
+        # entry instant predates exposure, so request the existing (start, end]
+        # contract directly instead of rejecting the otherwise valid response.
+        "symbol": symbol, "startTime": start_ms + 1,
+        "endTime": end_ms, "limit": 1000,
     })
     if not database_url:
         raise FuturesCostError("SUPABASE_DATABASE_URL_UNAVAILABLE")

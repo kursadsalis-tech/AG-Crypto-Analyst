@@ -2,6 +2,7 @@ import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
 from paper_trading.futures_costs import (
@@ -40,6 +41,9 @@ class FuturesCostsTests(unittest.TestCase):
         _, parameters = cursor.execute.call_args.args
         self.assertTrue(parameters[0].startswith(FUNDING_ENDPOINT + "?"))
         self.assertNotIn("postgres://example", parameters[0])
+        query = parse_qs(urlparse(parameters[0]).query)
+        self.assertEqual(int(query["startTime"][0]), int(start.timestamp() * 1000) + 1)
+        self.assertEqual(int(query["endTime"][0]), int(end.timestamp() * 1000))
 
     def test_rejects_bad_symbol_and_out_of_window_event(self):
         now = datetime.now(timezone.utc)

@@ -1,5 +1,54 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Davranış ve kesin-makro observer'ları kontrollü olarak buluta alındı
+
+Kullanıcının açık bulut onayıyla `e8705a9` checkpoint'i VM `agca-runtime`
+(`us-east1-b`, `e2-micro`) üzerine geri alınabilir biçimde dağıtıldı. Yerel ve
+bulut preflight'leri sıfır hatayla geçti; bütün kapsanan kaynakların SHA-256
+değerleri eşleşti. Geri dönüş kopyası bulutta
+`/var/lib/agca/rollback-e8705a9-observer-deploy-20260830T0245Z` altında duruyor.
+`websockets 16.1.1`, kilitli `requirements-runtime.txt` üzerinden mevcut sanal
+ortama eklendi. İki observer service/timer'ı ve güncel cloud attestation service
+kuruldu; `agca-market-behavior-observer.timer` ile
+`agca-exact-macro-observer.timer` artık enabled/active. Önceden enabled olan
+`agca-cloud-attestation.timer` doğrulama sırasında geçici durduruldu ve sonunda
+yeniden active bırakıldı.
+
+İlk kontrollü ve ilk timer koşuları başarılıdır. Son kontrolde market davranış
+sağlığı `2026-08-30T03:58:13Z`, exact-macro sağlığı `03:57:27Z` ve ana worker
+sağlığı `03:56:42Z` zamanında `HEALTHY` idi. Market observer doğal olarak 12
+uygun satır/döngü üretti; yerel tabloda doğrulama sırasında 24 satır vardı.
+Aktif FOMC yayın penceresi olmadığı için exact-macro olay sayısı sıfırdır; bu
+beklenen sonuçtur.
+
+Dağıtım sırasında ana PAPER worker'daki bağımsız bir veri-zaman sınırı sorunu
+fail-closed kapıyı doğru biçimde durdurdu: Binance funding API'si `startTime`
+sınırını dahil ettiği için pozisyonun tam giriş anındaki olay geri dönüyor,
+AGCA'nın mevcut `(giriş, çıkış]` sözleşmesi ise bunu reddediyordu.
+`paper_trading/futures_costs.py` sorgusu sözleşmeyi API tarafında doğrudan
+uygulamak için başlangıcı yalnız 1 ms ileri aldı; strateji, eşik veya maliyet
+politikası değişmedi. Sınır testi eklendi. Engel olan ETHFIUSDT PAPER pozisyonu
+5 geçerli funding olayıyla kapandı; worker ürün/saatlik/PAPER işleri `SUCCESS`
+ve genel sağlık `HEALTHY` oldu.
+
+Son kontrollü attestation: `execution_mode=PAPER_ONLY`,
+`may_send_real_orders=false`, `sqlite_quick_check=ok`, worker/ürün/saatlik/PAPER
+durumları `HEALTHY/SUCCESS`, iki observer `CURRENT` ve payload SHA-256 geçerli.
+`market_behavior_minute_features`, `causal_minute_external_evidence` ve
+`exact_time_macro_events` için Supabase outbox satırı ve mirror trigger'ı
+sıfırdır; SQLite otoritesi korunur. Supabase audit mirror bazı büyük
+`asset_risk_snapshots` partilerinde mevcut `backlog_pending` durumunu taşımaya
+devam ediyor, fakat diğer audit tabloları drain koşularında ilerliyor. Yeni
+observer tabloları mirror'a açılmadı.
+
+Yerel odaklı testler 5/5, tam suite 210/210 geçti; `git diff --check` temizdi.
+PAPER_ONLY, kanıt eşikleri, strateji politikası, model terfisi ve gerçek emir
+yetkisi değiştirilmedi; yeni model/eşik araması açılmadı. Küçük VM'de 1,2 GB
+SQLite `quick_check` taraması I/O sınırı nedeniyle birkaç dakika sürebiliyor;
+tanılamada aynı taramayı paralel başlatma. Sıradaki iş yeni yetki vermek değil,
+doğal davranış ve kesin-zamanlı olay verisinin birikimini gözlemlemek ve yeterli
+olay/dakika oluşmadan performans iddiası üretmemektir.
+
 # 2026-08-30 — Observer dağıtım preflight'i deterministik ve sıfır hatalı
 
 `5ada909` checkpoint'inden devam edildi. Bulut onayı öncesi son operasyonel
