@@ -193,6 +193,16 @@
 
 ## AKTİF GÖREVLER
 
+### Davranış-önce piyasa öğrenimi
+
+- [x] Kapanmış davranış dakikası ile nedensel dış olayı exact-minute eşleştir
+- [x] 1/5/15/60/240/1440 dakikalık sonuçları yalnız hedef kapanınca yaz
+- [x] Sonuçları idempotent ve ilk settlement sonrası değişmez tut
+- [x] Global olay coin satırlarını ortak bağımsızlık birimiyle işaretle
+- [x] Sonuç defterini SQLite-only tut ve observer sağlık özetine bağla
+- [ ] Yeterli doğal olay, ufuk ve farklı piyasa rejimi oluşmadan yorum etiketi,
+  model veya eşik araması açma
+
 ### Unified Forecast yön çöküşü
 
 - [x] Canlı 1h/4h/24h tahminlerde sınıf dağılımını ve çoğunluk baseline'ını denetle

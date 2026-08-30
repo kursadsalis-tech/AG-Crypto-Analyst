@@ -107,9 +107,9 @@ must prove:
 1. both services exit successfully under `AGCA_EXECUTION_MODE=PAPER_ONLY`;
 2. `/var/lib/agca/market-behavior-health.json` and
    `/var/lib/agca/exact-macro-health.json` are mode `0600` and hash-valid;
-3. SQLite contains the three local-only tables
+3. SQLite contains the four local-only tables
    `market_behavior_minute_features`, `causal_minute_external_evidence`, and
-   `exact_time_macro_events`;
+   `exact_time_macro_events`, plus `behavior_event_forward_outcomes`;
 4. none of those tables enters the Supabase outbox/remote allowlist;
 5. a new cloud attestation contains both observer blocks, reports
    `may_send_real_orders=false`, and retains `PAPER_ONLY`;

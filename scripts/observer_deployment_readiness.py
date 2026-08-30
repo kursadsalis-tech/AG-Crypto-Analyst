@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from database.causal_evidence_store import MACRO_TABLE
+from database.behavior_event_outcome_store import OUTCOME_TABLE
 from database.market_behavior_store import EXTERNAL_EVIDENCE_TABLE, TABLE
 from database.runtime_store import REMOTE_RUNTIME_TABLES
 from paper_trading.governance import authority_contract
@@ -34,6 +35,7 @@ REQUIRED_FILES = (
     "runtime/cloud_attestation.py",
     "database/runtime_store.py",
     "database/market_behavior_store.py",
+    "database/behavior_event_outcome_store.py",
     "database/causal_evidence_store.py",
     "data/adaptive_market_scanner.py",
     "data/behavior_event_forward_measurement.py",
@@ -47,7 +49,7 @@ REQUIRED_FILES = (
     "paper_trading/governance.py",
     "requirements-runtime.txt",
 )
-LOCAL_ONLY_TABLES = (TABLE, EXTERNAL_EVIDENCE_TABLE, MACRO_TABLE)
+LOCAL_ONLY_TABLES = (TABLE, EXTERNAL_EVIDENCE_TABLE, MACRO_TABLE, OUTCOME_TABLE)
 
 
 def _sha256(path):

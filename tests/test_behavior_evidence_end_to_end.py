@@ -64,6 +64,9 @@ class BehaviorEvidenceEndToEndTests(unittest.TestCase):
                 result = audit(con)
         self.assertEqual(result["exact_minute_join_events"], 1)
         self.assertEqual(result["forward_outcomes_by_horizon"]["5"], 1)
+        self.assertEqual(result["durable_outcomes_by_horizon"]["1"], 1)
+        self.assertEqual(result["durable_outcomes_by_horizon"]["5"], 1)
+        self.assertEqual(result["durable_independent_event_count"], 1)
         self.assertAlmostEqual(
             result["reaction_summary"]["MACRO:5"]
                   ["mean_return_from_pre_event_pct"],

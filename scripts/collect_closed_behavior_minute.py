@@ -147,6 +147,18 @@ def main():
             "report_sha256": hashlib.sha256(canonical).hexdigest(),
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
+            "forward_outcomes_settled": (
+                result.get("sqlite_persistence", {})
+                .get("forward_outcomes", {}).get("settled", 0)
+            ),
+            "forward_outcome_row_count": (
+                result.get("sqlite_persistence", {})
+                .get("forward_outcomes", {}).get("outcome_row_count", 0)
+            ),
+            "forward_independent_event_count": (
+                result.get("sqlite_persistence", {})
+                .get("forward_outcomes", {}).get("independent_event_count", 0)
+            ),
         }
         health_canonical = json.dumps(
             health, sort_keys=True, separators=(",", ":")

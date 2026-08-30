@@ -1,5 +1,50 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Davranış/olay sonuçları otomatik ve değişmez öğrenme defterine bağlandı
+
+`602fba2` tek-çatı checkpoint'inden devam edildi. Market-behavior observer'ın
+topladığı kapanmış davranış dakikaları ile yalnız gerçek `available_at`
+dakikasında görünen dış olaylar artık yerel-only
+`behavior_event_forward_outcomes` tablosunda otomatik settlement üretir. Her
+observer koşusu bütün geçmişi taramaz; yalnız o kapanan dakikada vadesi dolan
+1/5/15/60/240/1.440 dakikalık sonuçları sorgular.
+
+Her sonuç olay öncesi son kapanmış orta fiyatı, olay dakikası fiyat/davranış
+özelliklerini, hedef kapanış fiyatını ve ham yüzde tepkiyi taşır. Olayın oluşma
+ve gerçek erişim saatleri ayrı korunur. Aynı olay/dakika/enstrüman/ufuk ilk
+settlement sonrasında `ON CONFLICT DO NOTHING` ile değişmez; yeniden çalışma
+geçmiş sonucu yazamaz. Coin kapsamı uygulanır. Global olayın farklı coin
+satırları ortak `independence_unit` taşır ve bağımsız kanıt gibi sayılamaz.
+Ham payload, yorum etiketi, model, eşik, sinyal veya işlem yetkisi eklenmedi.
+
+Observer sağlık kaydı artık o koşuda kapanan forward sonuç sayısını, toplam
+sonuç satırını ve bağımsız olay sayısını taşır; mevcut self-hash/attestation
+sözleşmesi bu ek alanları da kurcalamaya karşı korur. Salt-okunur coverage
+raporu kalıcı defter satırlarını ve ufuk dağılımını ayrıca gösterir. Deployment
+preflight dördüncü tabloyu ve yeni modül hash'ini zorunlu tutar.
+
+Değişiklik rollback korumalı olarak çalışan `agca-runtime` VM'ine dağıtıldı.
+Geri dönüş kopyası
+`/var/lib/agca/rollback-602fba2-behavior-outcomes-20260830T0435Z` altındadır.
+Aktarım öncesindeki eski observer koşusu attestation SQLite taramasıyla
+çakışarak 150 saniyelik timeout aldı; yeni kod henüz kurulu değildi. Attestation
+timer'ı geçici durdurulup I/O boşaltıldıktan sonra yeni kodun kontrollü tek
+koşusu 0 exit ile `HEALTHY` tamamlandı. Yeni tablo bulutta oluştu; outbox satırı
+ve mirror trigger'ı sıfırdır. Doğal exact-minute olay henüz bulunmadığı için
+sonuç satırı sıfırdır; sistem geçmişe veya geleceğe yapay sonuç yazmadı.
+
+Market-behavior, exact-macro ve cloud-attestation timer'ları sonunda yeniden
+enabled/active; ana PAPER worker active bırakıldı. PAPER_ONLY,
+`may_send_real_orders=false`, kanıt eşikleri, strateji/model politikası ve gerçek
+emir yetkisi değişmedi. Yeni model/eşik araması açılmadı.
+
+Lookahead, kapanmamış ufuk, idempotence/değişmezlik, coin kapsamı, global olay
+korelasyonu ve local-only izolasyon testleri eklendi. Odaklı testler 11/11 ve
+5/5; tam suite 212/212 geçti. Yerel ve bulut deployment preflight'leri sıfır
+hatalıdır. Sıradaki doğru iş kod genişletmek değil, doğal olay ve farklı piyasa
+rejimi birikimini izlemektir; yeterli bağımsız kanıt oluşmadan davranış etiketi,
+model veya eşik araması yapılmamalıdır.
+
 # 2026-08-30 — Dağınık AGCA oturumları kanonik Proje Merkezi altında toplandı
 
 Kod ve sohbet aynalarını fiziksel olarak birbirine karıştırmadan tek-çatı düzeni

@@ -648,3 +648,27 @@ Bağlayıcı ölçüm sözleşmesi:
   veya her iyi haber dağıtım kabul edilmez.
 - Bu katman observed-only ölçümdür. Yeni model, eşik, strateji terfisi veya emir
   yetkisi için mevcut forward kanıt ve yönetişim kapıları aynen geçerlidir.
+
+---
+
+## Karar 028 - Değişmez Davranış/Olay Forward Sonuç Defteri
+
+Canlı market-behavior observer'ın topladığı kapanmış dakikalar ile yalnız
+`available_at` saatinde görünen kesin-zamanlı dış olaylar, otomatik ve kalıcı
+bir PAPER sonuç defterinde eşleştirilir.
+
+Bağlayıcı sözleşme:
+
+- Sonuçlar yalnız kapanmış uygun davranış dakikalarından yazılır.
+- Olay öncesi son kapanmış dakika değişmez fiyat tabanıdır.
+- 1, 5, 15, 60, 240 ve 1.440 dakikalık sonuç, ilgili hedef dakika gerçekten
+  kapandıktan sonra yazılır; eksik gelecek veri doldurulmaz.
+- Aynı olay/dakika/enstrüman/ufuk satırı ilk settlement sonrasında değişmez;
+  tekrar çalışma sonucu geriye dönük yeniden yazamaz.
+- Global olayın farklı enstrüman satırları aynı `independence_unit` değerini
+  taşır ve bağımsız olay sayılmaz.
+- Coin kapsamlı olay yalnız ilgili temel sembollere uygulanır.
+- Defter özetlenmiş fiyat ve davranış özellikleri taşır; ham payload saklamaz.
+- Defter SQLite'ta yerel-only kalır ve Supabase mirror/outbox kapsamına girmez.
+- Bu bir öğrenme kanıtı deposudur; tek başına model, eşik, sinyal, strateji
+  terfisi veya işlem yetkisi üretmez.

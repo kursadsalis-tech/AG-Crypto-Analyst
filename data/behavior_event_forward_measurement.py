@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.market_behavior_store import EXTERNAL_EVIDENCE_TABLE, TABLE
+from database.behavior_event_outcome_store import OUTCOME_TABLE
 
 
 VERSION = "BEHAVIOR_EVENT_FORWARD_MEASUREMENT_V2"
@@ -120,12 +121,19 @@ def summarize_behavior(paths):
 def audit(con):
     behavior_exists = _table_exists(con, TABLE)
     evidence_exists = _table_exists(con, EXTERNAL_EVIDENCE_TABLE)
+    outcome_exists = _table_exists(con, OUTCOME_TABLE)
     result = {
         "contract_version": VERSION,
         "behavior_table_exists": behavior_exists,
         "evidence_table_exists": evidence_exists,
         "behavior_rows": 0, "eligible_behavior_rows": 0,
         "evidence_rows": 0, "evidence_by_kind": {},
+        "outcome_table_exists": outcome_exists,
+        "durable_outcome_rows": 0,
+        "durable_independent_event_count": 0,
+        "durable_outcomes_by_horizon": {
+            str(value): 0 for value in FIXED_HORIZON_MINUTES
+        },
         "exact_minute_join_rows": 0, "exact_minute_join_events": 0,
         "forward_outcomes_by_horizon": {
             str(value): 0 for value in FIXED_HORIZON_MINUTES
@@ -156,6 +164,19 @@ def audit(con):
         result["blocking_reasons"].append("EXTERNAL_EVIDENCE_TABLE_MISSING")
     if not behavior_exists or not evidence_exists:
         return result
+
+    if outcome_exists:
+        result["durable_outcome_rows"] = con.execute(
+            f"SELECT COUNT(*) FROM {OUTCOME_TABLE}"
+        ).fetchone()[0]
+        result["durable_independent_event_count"] = con.execute(
+            f"SELECT COUNT(DISTINCT independence_unit) FROM {OUTCOME_TABLE}"
+        ).fetchone()[0]
+        for horizon, count in con.execute(f"""
+            SELECT horizon_minutes,COUNT(*) FROM {OUTCOME_TABLE}
+            GROUP BY horizon_minutes
+        """).fetchall():
+            result["durable_outcomes_by_horizon"][str(horizon)] = count
 
     matches = con.execute(f"""
         SELECT e.event_id,e.kind,e.symbols_json,b.instrument,

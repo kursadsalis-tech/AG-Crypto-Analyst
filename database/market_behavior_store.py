@@ -155,9 +155,17 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
         external_count = connection.execute(
             f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
         ).fetchone()[0]
+        # Import here to keep table constants available without a module cycle.
+        from database.behavior_event_outcome_store import (
+            settle_outcomes_for_closed_minute,
+        )
+        forward_outcomes = settle_outcomes_for_closed_minute(
+            connection, minute_end
+        )
     return {"upserted": len(report.get("rows", [])), "pruned": deleted,
             "row_count": count, "retention_days": int(retention_days),
             "external_evidence_upserted": len(external.get("events", [])),
             "external_evidence_pruned": external_deleted,
             "external_evidence_row_count": external_count,
+            "forward_outcomes": forward_outcomes,
             "remote_mirror_enabled_for_table": False}
