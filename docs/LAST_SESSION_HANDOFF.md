@@ -1,5 +1,42 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Market-behavior sürekliliği ve anlık arıza nöbeti
+
+Salt-okunur gözlemde market-behavior observer'ın OKX istek gecikmeleri sırasında
+tek bir `curl` alt sürecinde 20–25 saniye beklediği, bazı çevrimlerin 150 saniye
+service timeout'una ulaştığı ve bazı kapanmış dakikalarda 12 satırın tamamının
+minimum örnek kapısından kaldığı görüldü. Ana PAPER worker durmadı ve uygunsuz
+dakikalar fail-closed biçimde öğrenmeye alınmadı; fakat canlı mikro-yapı dakikası
+sonradan eksiksiz geri getirilemeyeceği için bu operasyonel boşluk kapatıldı.
+
+OKX'in aynı resmî HTTPS endpoint'leri artık her çağrıda ayrı `curl` süreci
+başlatmak yerine bağlantı havuzlu `requests.Session` üzerinden, sekiz sınırlı
+işçi ve üç saniyelik istek bütçesiyle paralel toplanıyor. Tek endpoint hatası
+bütün çevrimi düşürmez; yalnız ilgili kaynak/enstrüman eksik kalır ve mevcut
+kalite kapısı onu reddeder. Eksik spread artık dakika toplamasında tür hatası
+üretmez. Kapsam, dört örnek, 10 saniye cadence, minimum örnek/gap/source
+kapıları, model, strateji ve eşikler değiştirilmedi.
+
+Servis failure'ı için `OnFailure` alarmı ve dakikalık deduplikasyonlu sağlık
+monitorü eklendi. Servis düşüşü anında; missing/invalid/stale sağlık kaydı veya
+üç ardışık bozuk kontrol tek alarm açar, toparlanma tek recovery üretir. VM'de
+Telegram credential'ı bulunmadığı doğrulandı; dolayısıyla sunucu alarm kaydı
+kalıcıdır fakat doğrudan Telegram teslimi yoktur. Kullanıcıya ulaşan kanal olarak
+bu Codex görevine bağlı `AGCA kritik sistem arıza nöbeti` beş dakikalık
+heartbeat'i aktif edildi. Nöbet ana worker, kritik timer'lar, attestation,
+SQLite, PAPER saatlik/ajan sonucu, mirror tazeliği ve iki observer'ı kapsar;
+sağlıklıyken rutin mesaj üretmez, yalnız kalıcı arıza/doğrulanamama ve toparlanma
+bildirir. Günlük kısa yönetici özeti değişmedi; eski raporlar yeniden
+etkinleştirilmedi.
+
+Yerel odaklı testler ve tam suite 227/227 geçti; deployment preflight sıfır
+hatalıdır. Canlı bağlantı-havuzlu collector art arda üç doğal dakikada 12/12
+`HEALTHY` tamamlandı; son iki doğal çevrimin CPU tüketimi 1,58 ve 1,66 saniyeydi
+(önceki bozuk çevrimlerde yaklaşık 46 saniye). Alarm state recovery ile kapandı.
+Ana worker `HEALTHY`, PAPER_ONLY ve gerçek emir kapalı kaldı. Rollback:
+`/var/lib/agca/rollback-observer-resilience-20260830T1605Z`. Doğal çevrimler
+alarm nöbetiyle izlenmeye devam etmelidir; kalite kapısı gevşetilmemelidir.
+
 # 2026-08-30 — Dış trader gerekçe öğrenmesi ve kalıcı küçük profil kuyruğu
 
 Kamuya açık OKX copy-trader gözlemleri yalnız sonuçlarına göre puanlanmak yerine

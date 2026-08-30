@@ -1,0 +1,13 @@
+[Unit]
+Description=Alert on AGCA market-behavior observer service failure
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=HOME=/home/kursadsalis
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.observer_health_alert --event SERVICE_FAILED
+UMask=0077

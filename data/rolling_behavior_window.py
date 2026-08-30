@@ -79,7 +79,9 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                 row["recent_trades"]["taker_imbalance"] for row in instrument_samples]),
             "taker_imbalance_snapshot_last": instrument_samples[-1]["recent_trades"]["taker_imbalance"],
             "spread_bps_mean": _average([
-                row["order_book"]["spread_bps"] for row in instrument_samples]),
+                row["order_book"]["spread_bps"] for row in instrument_samples
+                if row["order_book"].get("spread_bps") is not None
+            ]),
             "mid_price_first": first_mid,
             "mid_price_last": last_mid,
             "open_interest_usd_first": first_oi,

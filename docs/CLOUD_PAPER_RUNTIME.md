@@ -115,6 +115,27 @@ must prove:
    `may_send_real_orders=false`, and retains `PAPER_ONLY`;
 6. the primary worker and its hourly/PAPER jobs remain healthy.
 
+The market-behavior service also has an operational failure path:
+
+- `agca-market-behavior-observer-failure-alert.service` is triggered by
+  `OnFailure` and records/sends one immediate service-failure alert;
+- `agca-observer-health-monitor.timer` checks once per minute and opens one
+  deduplicated alert for missing/invalid/stale health or three consecutive
+  unhealthy checks, then emits one recovery event;
+- delivery uses the existing optional Telegram environment variables. If they
+  are absent, the private state file still records delivery failure and the
+  separate Codex heartbeat remains the user-facing alarm route.
+
+Install and enable the monitor with the observer deployment:
+
+```bash
+sudo install -m 0644 deploy/agca-market-behavior-observer-failure-alert.service /etc/systemd/system/
+sudo install -m 0644 deploy/agca-observer-health-monitor.service /etc/systemd/system/
+sudo install -m 0644 deploy/agca-observer-health-monitor.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agca-observer-health-monitor.timer
+```
+
 Only after those checks may the approved timers be enabled:
 
 ```bash

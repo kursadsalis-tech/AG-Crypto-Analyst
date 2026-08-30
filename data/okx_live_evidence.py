@@ -3,16 +3,21 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+import requests
+from requests.adapters import HTTPAdapter
+
 
 VERSION = "OKX_LIVE_EVIDENCE_V1"
 BASE_URL = "https://www.okx.com/api/v5"
+_SESSION = requests.Session()
+_SESSION.mount("https://", HTTPAdapter(pool_connections=32, pool_maxsize=32))
 
 
 def _payload_data(payload):
@@ -107,43 +112,55 @@ def summarize_instrument(instrument_row, books, trades, open_interest, funding, 
     }
 
 
-def fetch_json(path, params, timeout=20):
+def fetch_json(path, params, timeout=None):
+    timeout = float(timeout or os.getenv("AGCA_OKX_REQUEST_TIMEOUT_SECONDS", "3"))
     url = f"{BASE_URL}/{path}?{urlencode(params)}"
-    completed = subprocess.run(
-        ["curl", "-sSfL", "--max-time", str(timeout), url],
-        check=False, capture_output=True, text=True, timeout=timeout + 5,
-    )
-    if completed.returncode:
-        return {"code": "TRANSPORT_ERROR", "data": [], "transport_exit": completed.returncode}
     try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return {"code": "INVALID_JSON", "data": []}
+        response = _SESSION.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.Timeout:
+        return {"code": "TRANSPORT_TIMEOUT", "data": []}
+    except (requests.RequestException, ValueError):
+        return {"code": "TRANSPORT_ERROR", "data": []}
 
 
 def collect(route, universe, workers=8, fetch=fetch_json):
     universe_rows = {row["instrument"]: row for row in universe.get("selected", [])}
     instruments = route.get("deep_stream_instruments", [])
 
-    def one(instrument):
-        row = universe_rows[instrument]
-        payloads = {
-            "books": fetch("market/books", {"instId": instrument, "sz": "50"}),
-            "trades": fetch("market/trades", {"instId": instrument, "limit": "100"}),
-            "open_interest": fetch("public/open-interest", {"instType": "SWAP", "instId": instrument}),
-            "funding": fetch("public/funding-rate", {"instId": instrument}),
-        }
-        # The observation becomes available only after every HTTP response has
-        # arrived.  Measuring before the requests can create negative ages.
-        collected_ms = int(time.time() * 1000)
-        return summarize_instrument(row, collected_ms=collected_ms, **payloads)
-
-    results = []
+    requests = {
+        "books": ("market/books", lambda instrument: {"instId": instrument, "sz": "50"}),
+        "trades": ("market/trades", lambda instrument: {"instId": instrument, "limit": "100"}),
+        "open_interest": ("public/open-interest", lambda instrument: {
+            "instType": "SWAP", "instId": instrument,
+        }),
+        "funding": ("public/funding-rate", lambda instrument: {"instId": instrument}),
+    }
+    payloads = {instrument: {} for instrument in instruments}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(one, instrument): instrument for instrument in instruments}
+        futures = {}
+        for instrument in instruments:
+            for name, (path, params) in requests.items():
+                future = pool.submit(fetch, path, params(instrument))
+                futures[future] = (instrument, name)
         for future in as_completed(futures):
-            results.append(future.result())
-    results.sort(key=lambda row: instruments.index(row["instrument"]))
+            instrument, name = futures[future]
+            try:
+                payloads[instrument][name] = future.result()
+            except Exception as exc:
+                payloads[instrument][name] = {
+                    "code": "TRANSPORT_EXCEPTION", "data": [],
+                    "error_type": type(exc).__name__,
+                }
+    collected_ms = int(time.time() * 1000)
+    results = [
+        summarize_instrument(
+            universe_rows[instrument], collected_ms=collected_ms,
+            **payloads[instrument],
+        )
+        for instrument in instruments
+    ]
     return {
         "version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),

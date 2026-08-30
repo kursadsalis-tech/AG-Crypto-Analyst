@@ -1,0 +1,14 @@
+[Unit]
+Description=Monitor AGCA observer health and send deduplicated alerts
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=HOME=/home/kursadsalis
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.observer_health_alert --threshold 3
+UMask=0077
