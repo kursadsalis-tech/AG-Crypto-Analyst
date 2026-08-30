@@ -19,6 +19,7 @@ DB_NAME = "crypto_data.db"
 ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V1"
 MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
+SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
 
 
 def iso(value):
@@ -56,6 +57,33 @@ def ensure_table(con):
 
 def _status(result):
     return result.get("status") if isinstance(result, dict) else None
+
+
+def sqlite_integrity_cache(now=None, path=None):
+    """Validate the last independently produced full SQLite quick-check."""
+    now = now or datetime.now(timezone.utc)
+    path = Path(path or os.getenv(
+        "AGCA_SQLITE_INTEGRITY_CACHE_PATH", "/var/lib/agca/sqlite-integrity-health.json"
+    ))
+    if not path.is_file():
+        return {"state": "MISSING", "result": None, "checked_at": None, "age_seconds": None}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        claimed = str(raw.pop("health_sha256"))
+        canonical = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+        checked = datetime.fromisoformat(str(raw["checked_at"]).replace("Z", "+00:00"))
+        age = max(0.0, (now - checked.astimezone(timezone.utc)).total_seconds())
+        valid = (
+            raw.get("health_contract_version") == SQLITE_INTEGRITY_CACHE_VERSION
+            and raw.get("result") == "ok"
+            and hashlib.sha256(canonical).hexdigest() == claimed
+        )
+        max_age = float(os.getenv("AGCA_SQLITE_INTEGRITY_MAX_AGE_SECONDS", "90000"))
+        state = "INVALID" if not valid else ("STALE" if age > max_age else "CURRENT")
+        return {"state": state, "result": raw.get("result"),
+                "checked_at": checked.isoformat(), "age_seconds": round(age, 3)}
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return {"state": "INVALID", "result": None, "checked_at": None, "age_seconds": None}
 
 
 def market_behavior_health(now=None, path=None):
@@ -168,7 +196,15 @@ def build(
 ):
     now = now or datetime.now(timezone.utc)
     mode = os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY")
-    integrity = con.execute("PRAGMA quick_check").fetchone()[0]
+    integrity_evidence = None
+    if os.getenv("AGCA_ATTESTATION_USE_INTEGRITY_CACHE", "0") == "1":
+        integrity_evidence = sqlite_integrity_cache(now)
+        integrity = (
+            integrity_evidence["result"]
+            if integrity_evidence["state"] == "CURRENT" else integrity_evidence["state"]
+        )
+    else:
+        integrity = con.execute("PRAGMA quick_check").fetchone()[0]
     counts = {row[0]: int(row[1]) for row in con.execute("""
         SELECT status,COUNT(*) FROM paper_agent_positions
         WHERE validation_cohort=? AND evidence_eligible=1 GROUP BY status
@@ -194,6 +230,7 @@ def build(
         "execution_mode": mode,
         "may_send_real_orders": bool(authority["may_send_real_orders"]),
         "sqlite_quick_check": str(integrity),
+        "sqlite_integrity_evidence": integrity_evidence,
         "product_cycle_status": _status(last_results.get("product_cycle", {})),
         "hourly_job_status": _status(hourly),
         "paper_agent_status": _status(paper),

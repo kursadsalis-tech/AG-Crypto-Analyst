@@ -17,6 +17,28 @@ devam eder. Model, strateji, eşik, kasa, PAPER_ONLY ve gerçek emir kapıları
 değişmedi. Odaklı runtime/attestation/bellek testleri 14/14, nihai tam suite
 232/232 geçti.
 
+Canlı ilk doğrulama ikinci fiziksel darboğazı açığa çıkardı: bağımsız
+attestation servisi 16 dakikada yaklaşık 1,24 GB okuyarak 347 MB SQLite üzerinde
+tam `PRAGMA quick_check` yürütüyor ve e2-micro diskte worker'ı yine `D` beklemeye
+sokuyordu. Mevcut tarama kesildi; worker hemen çalışır `S` durumuna döndü.
+
+Nihai mimaride tam quick-check ayrı `agca-sqlite-integrity-check.timer` ile
+günde bir, `Nice=19` ve idle I/O sınıfında çalışır ve hash-korumalı atomik sağlık
+kaydı üretir. Beş dakikalık attestation bu kaydı doğrular; eksik, hash'i bozuk
+veya 25 saatten eski kanıtı fail-closed `MISSING/INVALID/STALE` olarak taşır.
+Önceki hash-geçerli `sqlite_quick_check=ok` attestation yalnız ilk cache'i
+bootstrap etmek için kullanılabilir; sonrasında günlük bağımsız tam tarama
+yeniler. İkinci katman odaklı testleri 12/12, nihai tam suite 236/236 geçti.
+
+İzolasyon VM'e dağıtıldı; rollback
+`/var/lib/agca/rollback-ca5d5c2-integrity-isolation-20260830T2152Z` altındadır.
+İlk integrity cache, `2026-08-30T21:28:23Z` tarihli hash-geçerli son tam
+quick-check attestation'dan `ok` olarak başlatıldı. Yeni hafif attestation
+`21:52:13Z`'de `HEALTHY`, `sqlite_quick_check=ok`, hourly/PAPER `SUCCESS`
+tamamlandı. Worker sağlık kaydı `21:52:27Z`'ye ilerledi; süreç `S`, worker ve
+iki timer active kaldı. PAPER kasası değişmedi: 10.000 başlangıç,
+10.276,9678579129 nakit ve +276,96785791286 gerçekleşmiş P&L.
+
 # 2026-08-31 — Tek ajan için sonuç-kör tez ve tecrübe belleği
 
 Karar 030 uygulandı. PAPER ajanı, portföyü, yaşam boyu kasası, mevcut model,

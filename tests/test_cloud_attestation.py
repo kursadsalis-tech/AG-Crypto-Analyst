@@ -58,6 +58,46 @@ class CloudAttestationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 cloud_attestation.build(self.con, "HEALTHY", {})
 
+    def test_attestation_uses_hash_valid_fresh_integrity_cache(self):
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sqlite-health.json")
+            health = {
+                "health_contract_version": "AGCA_SQLITE_INTEGRITY_CACHE_V1",
+                "checked_at": now.isoformat(), "result": "ok",
+            }
+            health["health_sha256"] = hashlib.sha256(json.dumps(
+                health, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest()
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(health, handle)
+            with patch.dict(os.environ, {
+                "AGCA_EXECUTION_MODE": "PAPER_ONLY",
+                "AGCA_ATTESTATION_USE_INTEGRITY_CACHE": "1",
+                "AGCA_SQLITE_INTEGRITY_CACHE_PATH": path,
+            }):
+                payload, _, _ = cloud_attestation.build(self.con, "HEALTHY", {}, now)
+        self.assertEqual(payload["sqlite_quick_check"], "ok")
+        self.assertEqual(payload["sqlite_integrity_evidence"]["state"], "CURRENT")
+
+    def test_tampered_integrity_cache_fails_closed_without_full_scan(self):
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sqlite-health.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "health_contract_version": "AGCA_SQLITE_INTEGRITY_CACHE_V1",
+                    "checked_at": now.isoformat(), "result": "ok",
+                    "health_sha256": "0" * 64,
+                }, handle)
+            with patch.dict(os.environ, {
+                "AGCA_EXECUTION_MODE": "PAPER_ONLY",
+                "AGCA_ATTESTATION_USE_INTEGRITY_CACHE": "1",
+                "AGCA_SQLITE_INTEGRITY_CACHE_PATH": path,
+            }):
+                payload, _, _ = cloud_attestation.build(self.con, "HEALTHY", {}, now)
+        self.assertEqual(payload["sqlite_quick_check"], "INVALID")
+
     def test_market_behavior_health_is_bound_fail_closed(self):
         now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

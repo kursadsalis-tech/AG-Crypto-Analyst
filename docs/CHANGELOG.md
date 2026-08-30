@@ -1122,6 +1122,11 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   senkron attestation çağrısı kaldırıldı. Hash-korumalı attestation mevcut ayrı
   beş dakikalık systemd timer'ında devam eder; gözlem ve güvenlik kapsamı azalmaz.
   Odaklı testler 14/14 ve tam suite 232/232 geçti.
+- Beş dakikalık attestation içindeki tam SQLite quick-check, düşük IOPS'li VM'de
+  ana worker'ı fiziksel olarak bloke ettiği için ayrı günlük integrity timer'ına
+  taşındı. Tam tarama idle I/O/Nice=19 çalışır; attestation hash-korumalı sonucu
+  okuyup eksik, bozuk veya bayat kanıtta fail-closed kalır. İkinci katman odaklı
+  testleri 12/12, nihai tam suite 236/236 geçti.
 - PAPER ajanına ikinci ajan veya portföy oluşturmadan sürümlü tecrübe belleği
   eklendi. Yeni işlemlerin karar tezi sonuçtan önce dondurulur; kapanan işlemler
   net maliyet sonrası, idempotent ve nedensellik iddiası olmadan değerlendirilir.
