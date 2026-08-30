@@ -1,6 +1,45 @@
 # Latest AGCA Session Handoff
 
-# NEXT SESSION — Tecrübeyi karara taşıyan gerçek öğrenme çekirdeği
+# 2026-08-31 — Tek ajan için sonuç-kör tez ve tecrübe belleği
+
+Karar 030 uygulandı. PAPER ajanı, portföyü, yaşam boyu kasası, mevcut model,
+strateji ve eşikleri değişmedi. Bundan sonra seçilen her PAPER pozisyon için
+sonuç bilinmeden önce değişmez bir karar tezi yazılır. Tez; gerçekten kullanılan
+olasılık, hedef yönü, risk kapısı, model/artifact kimliği ve maliyet-sonrası
+icrayı sınanacak yetenekler olarak kaydeder. Market-behavior, order book ve dış
+trader kanıtları mevcut karar yolunda henüz girdi değilse açıkça
+`observed_but_not_decision_input` olarak işaretlenir; ajan kullanmadığı yeteneği
+kullanmış gibi öğrenemez.
+
+Pozisyon kapandığında yalnız önceden dondurulmuş tez üzerinden idempotent
+tecrübe review'u oluşur. Net P&L, toplam icra maliyetleri, liquidation ve sınanan
+yeteneklerin o işleme özgü sonucu saklanır. Tek bir kazanç veya kayıp beceri,
+nedensellik ya da politika terfisi sayılmaz; skill/rejim/şans ayrımı bağımsız
+işlem ve farklı rejim kohortu birikene kadar `UNRESOLVED` kalır. Öğrenme özeti
+artık en büyük üç mutlak P&L yoğunlaşmasını ve pozitif P&L'nin tek başına beceri
+kanıtı olmadığını da taşır.
+
+Yeni bellek ikinci ajan veya ikinci kasa değildir; `memory_version` yalnız karar
+provenance etiketidir. Eski, tezsiz kapanmış işlemler geriye dönük gerekçe
+uydurulmadan tek retrospektif özette korunur: ekonomik sonuç saklı, beceri ve
+terfi kanıtı yok. Retrospektif V2 yalnız kanıt-uygun 17 temiz işlemi kullanır;
+8 lookahead-karantina işlemi tecrübe/öğrenme kanıtına alınmaz. İlk canlı V1
+oluşumunun 25 satırlık sayımı V2 tarafından açıkça supersede edilmiştir ve terfi
+yetkisi zaten sıfırdır. Yeni tablolar SQLite'ta yerel-only tutulur ve uzak audit mirror
+yetki listesine eklenmemiştir. Odaklı doğrulama 19/19, nihai tam suite 232/232
+geçti; karantina regresyonu eklendikten sonraki nihai suite 233/233'tür.
+
+Kod dosya-seviyesinde ve rollback korumalı biçimde `agca-runtime` VM'ine
+dağıtıldı. Rollback dizini
+`/var/lib/agca/rollback-6559e72-experience-memory-20260831T0023Z` konumundadır.
+Worker yeni PID ile active oldu ve doğal saatlik PAPER aşaması çalıştı. Kasa
+sıfırlanmadı: başlangıç 10.000 USDT, nakit 10.276,9678579129 USDT, gerçekleşmiş
+P&L +276,96785791286 USDT; açık ve bekleyen pozisyon sıfırdı. Tecrübe tabloları
+oluştu; sonuç-kör yeni tez ve review sayısı doğal olarak sıfır. Temiz V2
+retrospektif özetin 17 işlem, skill=0 ve promotion=0 olduğu doğrulandı;
+sonraki doğal yeni işlemde tez sayısı pozisyon seçimiyle atomik artmalıdır.
+
+# Önceki plan — tamamlandı: Tecrübeyi karara taşıyan gerçek öğrenme çekirdeği
 
 Kullanıcının nihai ürün talebi `docs/DECISIONS.md` Karar 030 olarak
 kalıcılaştırıldı. Ajan sıfırlanmayacak ve eski PAPER kasası/hafızası

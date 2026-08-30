@@ -88,14 +88,19 @@ def metrics(rows):
         return {
             "trades": 0, "weeks": 0, "net_pnl_usdt": 0.0,
             "mean_net_return_pct": 0.0, "win_rate_pct": 0.0,
+            "largest_three_abs_pnl_share": 0.0,
         }
     returns = [100.0 * row["net_pnl"] / row["notional"] for row in rows]
+    absolute_pnl = sorted((abs(row["net_pnl"]) for row in rows), reverse=True)
     return {
         "trades": len(rows),
         "weeks": len({week_key(row["exit_time"]) for row in rows}),
         "net_pnl_usdt": sum(row["net_pnl"] for row in rows),
         "mean_net_return_pct": statistics.fmean(returns),
         "win_rate_pct": 100.0 * statistics.fmean(row["net_pnl"] > 0 for row in rows),
+        "largest_three_abs_pnl_share": (
+            sum(absolute_pnl[:3]) / sum(absolute_pnl) if sum(absolute_pnl) else 0.0
+        ),
     }
 
 
@@ -153,6 +158,12 @@ def run(con, validation_cohort, now=None):
         "overall": metrics(rows),
         "groups": groups,
         "patterns": patterns,
+        "skill_claim": {
+            "status": "UNPROVEN_PENDING_INDEPENDENT_REGIME_EVIDENCE",
+            "positive_pnl_alone_is_skill_proof": False,
+            "single_trade_attribution_allowed": False,
+            "concentration_must_be_reported": True,
+        },
         "policy": {
             "legacy_trades_included": False,
             "single_trade_update": False,

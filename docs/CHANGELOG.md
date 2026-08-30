@@ -1116,3 +1116,15 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   kötüleşti (düşük daha iyi), masraf sonrası sonuç -%0,094'te kaldı.
 - Aday reddedildi; canlı veya ileri PAPER tahmine alınmadı. PAPER_ONLY, kanıt
   eşikleri, strateji politikası ve gerçek emir yetkisi değişmedi.
+# 2026-08-31
+
+- PAPER ajanına ikinci ajan veya portföy oluşturmadan sürümlü tecrübe belleği
+  eklendi. Yeni işlemlerin karar tezi sonuçtan önce dondurulur; kapanan işlemler
+  net maliyet sonrası, idempotent ve nedensellik iddiası olmadan değerlendirilir.
+- Eski tezsiz PAPER geçmişi geriye dönük gerekçe uydurulmadan “ekonomik sonuç
+  korunur, beceri kanıtlanmamıştır” özetiyle saklanır. Tek işlem politika
+  değiştiremez veya beceri kanıtlayamaz; P&L yoğunlaşması öğrenme kanıtına eklendi.
+- Lookahead-karantina işlemleri retrospektif tecrübe özetinden çıkarıldı; temiz
+  V2 özet yalnız `evidence_eligible` işlemleri kullanır ve ilk V1'i supersede eder.
+- Model, strateji, PAPER seçim eşikleri, tek kasa ve PAPER_ONLY kapıları
+  değiştirilmedi. Nihai tam test suite 233/233 geçti.

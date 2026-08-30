@@ -28,6 +28,7 @@ from paper_trading.futures_costs import (
 )
 from paper_trading import trade_learning
 from paper_trading import strategy_allocator
+from paper_trading import experience_memory
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -224,6 +225,8 @@ def ensure_tables(con):
                 realized_pnl=0,total_fees=0,validation_cohort=?,evidence_start_at=?
             WHERE portfolio_id=1
         """, (reset_at, INITIAL_CAPITAL, INITIAL_CAPITAL, FORWARD_COHORT, reset_at))
+    experience_memory.ensure_tables(con)
+    experience_memory.record_legacy_summary(con)
     con.commit()
 
 
@@ -671,6 +674,13 @@ def select_new_positions(con, now):
             reason, PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
         ))
         if cursor.rowcount == 1:
+            experience_memory.capture_decision_thesis(
+                con, position_id=cursor.lastrowid, row=row,
+                agent_version=AGENT_VERSION, policy_version=POLICY_VERSION,
+                validation_cohort=FORWARD_COHORT, strategy_id=strategy_id,
+                strategy_weight=strategy_weight, selected_at=now,
+                planned_entry_time=planned_entry,
+            )
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
@@ -992,7 +1002,9 @@ def run(now=None):
         filled, cancelled = fill_pending(con, now, exchange_metadata)
         closed = settle_open(con, now, exchange_metadata)
         selected = select_new_positions(con, now)
+        new_experience_reviews = experience_memory.review_closed_positions(con, now)
         learning = trade_learning.run(con, FORWARD_COHORT, now)
+        learning["new_experience_reviews"] = new_experience_reviews
         daily = maybe_daily_report(con, now)
         snapshot = portfolio_snapshot(con)
         return {
