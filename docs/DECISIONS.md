@@ -692,3 +692,39 @@ davranışını anlamaya yardım eden karantinalı araştırma örnekleridir.
   sağlığını bozmayacak şekilde sınırlanabilir.
 - Bu katman kopyalama, otomatik politika/model değişikliği, terfi, eşik araması
   veya gerçek emir yetkisi üretemez; kayıtları SQLite'ta yerel-only kalır.
+
+---
+
+## Karar 030 - PAPER İşlemi Bir Öğrenme Deneyidir; Ajanın Hafızası Korunur
+
+AGCA ajanı yeni piyasa-davranışı vizyonuna geçerken sıfırlanmayacak, geçmiş
+PAPER portföyü ve bütün karar/sonuç kayıtları korunacaktır. Eski dönemin pozitif
+ekonomik sonucu model becerisi gibi sunulmayacak; zayıf tahmin kalitesi, tek
+yön/rejim yoğunlaşması, korelasyon ve birkaç büyük kazancın etkisiyle birlikte
+kalıcı tecrübe olarak yorumlanacaktır.
+
+Bağlayıcı öğrenme ve işlem sözleşmesi:
+
+- Ajanın PAPER işlem açma eli yalnız işlem sayısını azaltmak amacıyla bağlanmaz.
+  İşlem, ajanın yeteneklerini gerçek zamanda sınayan bir deneydir.
+- İş yapmış görünmek, veri üretmek veya rapor doldurmak için işlem açılmaz.
+  Her işlemden önce kullanılan kanıt, gerekçe, beklenen yön/büyüklük/süre,
+  riskler ve sınanan yetenekler sonuç görülmeden dondurulur.
+- Her kapanıştan sonra yalnız P&L değil; tahmin kalitesi, zamanlama, maliyet,
+  rejim uyumu, korelasyon/yoğunlaşma, karşı-olgusal basit referanslar ve
+  beceri-rejim-şans ayrımı değerlendirilir.
+- Kazanç otomatik başarı, kayıp otomatik başarısız strateji sayılmaz. Ajan;
+  kazanan ve kaybeden kendi işlemlerinden, başarılı ve başarısız dış
+  trader'lardan aynı outcome-blind giriş sözleşmesiyle öğrenir.
+- Ham geçmiş değişmez kalır; çıkarılan ders ayrıca sürümlü tecrübe kaydında
+  `ne öğrenildi`, `hangi koşullarda geçerli`, `kanıt gücü` ve `sonraki sınav`
+  alanlarıyla tutulur. Sonradan görülen sonuca uygun gerekçe yazılmaz.
+- Aynı ajan kimliği ve yaşam boyu kasa muhasebesi sürer. Yeni karar çekirdeği
+  ayrı politika sürümü/kohortuyla ölçülür; böylece geçmiş unutulmaz fakat eski
+  sonuç yeni sistemin performansını maskeleyemez.
+- Eski Unified Forecast yeni çekirdeğin zorunlu öğretmeni veya girdisi değildir;
+  yalnız tarafsız karşılaştırma kollarından biridir. Yeni davranış-temelli
+  çekirdek kendi başına ve basit mekanik referanslara karşı da sınanır.
+- Doğrulanmış dersler PAPER kararlarına taşınabilmelidir; öğrenme yalnız raporda
+  kalmaz. Bununla birlikte otomatik kendini kandırma, eşik gevşetme, gerçek emir
+  ve kanıtsız politika terfisi mevcut fail-closed kapılarla engellenir.

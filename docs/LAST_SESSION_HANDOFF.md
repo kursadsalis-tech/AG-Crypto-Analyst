@@ -1,5 +1,27 @@
 # Latest AGCA Session Handoff
 
+# NEXT SESSION — Tecrübeyi karara taşıyan gerçek öğrenme çekirdeği
+
+Kullanıcının nihai ürün talebi `docs/DECISIONS.md` Karar 030 olarak
+kalıcılaştırıldı. Ajan sıfırlanmayacak ve eski PAPER kasası/hafızası
+korunacaktır. PAPER işlem açması yasaklanmayacak; fakat her işlem sonuçtan önce
+dondurulmuş gerekçe, kanıt, beklenti, risk ve sınanacak yetenekleri olan bir
+öğrenme deneyi olacaktır. İşlem sayısı veya rapor üretimi hedef değildir.
+
+Eski +276,97 USDT döneminin tecrübe yorumu henüz ajan belleğinde kodlanmış
+değildir: pozitif ekonomik sonuç; zayıf genel yön tahmini; 17/17 24h SHORT;
+tek rejim/korelasyon; yaklaşık %80 üç işlem yoğunlaşması; yeni vizyona kanıt
+değil. Sıradaki uygulama bu yorumu geriye dönük P&L silmeden sürümlü tecrübe
+kaydına almak ve bundan sonraki her PAPER işlemde işlem-öncesi tez ile
+işlem-sonrası beceri/rejim/şans değerlendirmesini otomatik üretmektir.
+
+Aynı ajan ve yaşam boyu kasa devam eder; yeni davranış karar çekirdeği ayrı
+politika sürümü/kohortuyla ölçülür. Eski Unified Forecast yalnız karşılaştırma
+koludur, zorunlu öğretmen/girdi değildir. Uygulamadan önce mevcut öğrenme,
+portfolio ve karar tabloları tek seferde incelenip en küçük kalıcı şema/akış
+tasarlanmalı; art arda dar deneme veya gereksiz tam suite çalıştırılmamalıdır.
+PAPER_ONLY ve gerçek emir kapıları değişmez.
+
 # NEXT SESSION — PAPER başarı yorumu ve eşik sözleşmesi denetimi
 
 Kullanıcı bir sonraki oturumda şu konunun öncelikle değerlendirilmesini istedi:
