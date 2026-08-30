@@ -1,5 +1,34 @@
 # Latest AGCA Session Handoff
 
+# NEXT SESSION — PAPER başarı yorumu ve eşik sözleşmesi denetimi
+
+Kullanıcı bir sonraki oturumda şu konunun öncelikle değerlendirilmesini istedi:
+eski raporlarda Unified Forecast yön sınıfı sonuçları bazı paketlerde 11'de 0
+veya 11'de 1 görünürken temiz PAPER kasanın nasıl +276,97 USDT ürettiği.
+
+Salt-okunur denetim mevcut kârın 17 kapanmış işlemin tamamı 24h SHORT iken
+oluştuğunu gösterdi: 12 kazanç, 5 kayıp, ortalama kayıtlı yön güveni %55,31.
+Baseline kolu 12 işlem/7 kazanç/+174,85 USDT; dış-yön SHORT kolu 5 işlem/5
+kazanç/+102,12 USDT üretti. En büyük üç kazanç toplam kârın yaklaşık %80'idir.
+Bu işlemler korelasyonlu, aynı yönlü ve tek kısa rejime yoğun olduğu için 17
+bağımsız başarı veya sürdürülebilir model avantajı sayılamaz.
+
+Kod sözleşmesinde Unified Forecast araştırma/aksiyon eşiği %70 iken PAPER ajanı
+ayrı olarak en az %52 yön olasılığı, en az 5 yüzde-puan UP/DOWN farkı ve hedef
+fiyat yön uyumu ile 4h/24h aday seçebiliyor. Eşikler bu oturumda değiştirilmedi;
+fark mevcut tasarımda zaten vardı fakat kullanıcıya yeterince açık sunulmamıştı.
+Bir sonraki oturum önce bu iki sözleşmenin ürün amacı, ekonomik doğrulama ve
+raporlama açısından tutarlı olup olmadığını incelemeli. Kârı model başarısı gibi
+sunmamalı; rejim yoğunlaşması, bağımsız işlem birimi, seçilim yanlılığı ve
+masraf-sonrası karşı-olgusal kıyas kurulmadan eşik/politika değişikliği önermemeli.
+
+Temiz PAPER portföyü günlük sıfırlanmaz. Tek temiz başlangıç
+`2026-08-24T21:47:27.779873+00:00`, başlangıç sermayesi 10.000 USDT'dir. Eski
+lookahead işlemleri karantinadadır. 17 işlemin tamamı piyasa-geneli davranış
+misyonu kök sözleşmeye yazılmadan önce seçildi; dolayısıyla +276,97 USDT yeni
+hedefin veya yeni observer'ın performansı değildir. Yeni hedef sonrası seçilen
+temiz işlem ve gerçekleşmiş P&L halen sıfırdır.
+
 # Kalıcı çalışma disiplini düzeltmesi
 
 Kullanıcının tekrar etmek zorunda kaldığı iki çalışma tercihi kök `AGENTS.md`
