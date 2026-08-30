@@ -225,7 +225,10 @@
 - [x] Otomatik copy trade, politika mutasyonu, terfi ve gerçek emir yetkisini kapat
 - [x] Araştırma yeterlilik durumunu PAPER trade-learning döngüsüne bağla
 - [x] OKX'in kimlik doğrulamasız kamu web veri yolundan ilk 255/255 tam liderlik cohort'unu topla
-- [x] Tüm açık işlemleri first-seen zamanıyla izle ve günde 30 trader geçmişini maliyetleriyle geri doldur
+- [x] Tam liderlik cohort'unu günlük doğrula; profilleri kalıcı küçük kuyrukla işle ve açık işlemleri first-seen zamanıyla izle
+- [x] İşlem açıkken giriş öncesi piyasa/türev bağlamından olası gerekçeleri dondur; sonucu sonradan ve niyet iddiası olmadan değerlendir
+- [x] Bilinen açık işlemlerin kapanışını sınırsız öncelikle korurken retrospektif history yükünü profil başına sınırla
+- [x] Copy-trader kolektöründeki tam tablo gruplama darboğazını indeksli doğrudan açık/kapanmış sorgusuyla kaldır
 - [ ] 30 trader / 200 kapanmış işlem / 56 gün kapısından sonra ilk insan denetimli araştırma incelemesini yap
 
 ### Truth Engine / Data Validation Gate

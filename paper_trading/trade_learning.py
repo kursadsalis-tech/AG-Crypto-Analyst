@@ -11,7 +11,7 @@ import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from paper_trading import external_trader_learning
+from paper_trading import external_trader_learning, external_trader_rationale
 from paper_trading import continuous_improvement
 
 
@@ -186,6 +186,9 @@ def run(con, validation_cohort, now=None):
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
     con.commit()
     external_research = external_trader_learning.run_review(con, now)
+    external_research["rationale_review"] = (
+        external_trader_rationale.review_available_closed_contexts(con, now)
+    )
     improvement = continuous_improvement.run(con, now)
     return {
         "status": status, "closed": len(rows), "weeks": weeks,

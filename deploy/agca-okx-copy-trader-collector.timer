@@ -1,8 +1,8 @@
 [Unit]
-Description=Collect full public OKX copy-trader cohort daily
+Description=Collect a small resumable OKX copy-trader profile queue twice hourly
 
 [Timer]
-OnCalendar=*-*-* 00:25:00 UTC
+OnCalendar=*-*-* *:00,30:00 UTC
 Persistent=true
 RandomizedDelaySec=300
 Unit=agca-okx-copy-trader-collector.service

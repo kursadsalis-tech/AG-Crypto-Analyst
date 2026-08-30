@@ -672,3 +672,23 @@ Bağlayıcı sözleşme:
 - Defter SQLite'ta yerel-only kalır ve Supabase mirror/outbox kapsamına girmez.
 - Bu bir öğrenme kanıtı deposudur; tek başına model, eşik, sinyal, strateji
   terfisi veya işlem yetkisi üretmez.
+
+---
+
+## Karar 029 - Dış Trader Karar Gerekçesi Araştırma Sözleşmesi
+
+Kamuya açık copy-trader işlemleri kopyalanacak talimatlar değil, piyasa
+davranışını anlamaya yardım eden karantinalı araştırma örnekleridir.
+
+- Olası gerekçe yalnız işlem açıkken, girişten önce kapanmış piyasa ve türev
+  verisinden oluşturulur ve sonuç görülmeden değişmez biçimde dondurulur.
+- Trader'ın gerçek niyeti biliniyormuş gibi sunulmaz; her gerekçe
+  `POSSIBLE_NOT_PROVEN` veya yalnız bağlam olarak işaretlenir.
+- Kazanan ve kaybeden işlemler aynı kuralla değerlendirilir. Kazanç nedensellik
+  kanıtı değildir; kayıp da tek başına hatanın kaynağını kanıtlamaz.
+- Yalnız kapanmış history içinde sonradan görülen işleme geriye dönük giriş
+  hikâyesi yazılmaz. Forward değerlendirme için işlem önce açık görülmelidir.
+- Bilinen açık işlemlerin kapanışları korunur; geriye dönük örnek yükü çalışma
+  sağlığını bozmayacak şekilde sınırlanabilir.
+- Bu katman kopyalama, otomatik politika/model değişikliği, terfi, eşik araması
+  veya gerçek emir yetkisi üretemez; kayıtları SQLite'ta yerel-only kalır.

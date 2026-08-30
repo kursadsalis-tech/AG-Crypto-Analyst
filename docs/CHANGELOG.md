@@ -1,5 +1,18 @@
 # Unreleased — Truth Engine / Data Validation Gate
 
+## 2026-08-30 external trader rationale and resumable collection
+
+- Added immutable, outcome-blind pre-entry context hypotheses for public OKX
+  trader positions and symmetric later win/loss reviews without intent claims.
+- Replaced the timeout-prone monolithic profile run with a persistent queue of
+  six current profiles plus one history profile every 30 minutes.
+- Preserved every causally known open-position closure while bounding unrelated
+  retrospective history to 20 trades per selected profile.
+- Removed a full-table latest-position grouping bottleneck; verified controlled
+  completion in 1.7 seconds and a timer/attestation-overlap run in 24.6 seconds.
+- Kept copying, policy mutation, promotion, threshold search, and real orders
+  disabled; rationale and queue tables remain outside the remote mirror.
+
 ## 2026-08-30 behavior-first event response contract
 
 - Recorded the product decision that exact-time news direction is context, not

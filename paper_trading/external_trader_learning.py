@@ -108,6 +108,11 @@ def ensure_tables(con):
             promotion_allowed INTEGER NOT NULL DEFAULT 0,
             UNIQUE(research_version,trader_count,closed_trade_count,observation_days)
         );
+
+        CREATE INDEX IF NOT EXISTS ix_external_trader_status_identity
+        ON external_trader_trade_observations(
+            exchange,status,source_trader_id,source_trade_id,observation_id
+        );
     """)
 
 

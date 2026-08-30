@@ -18,6 +18,15 @@ class ExternalTraderLearningTests(unittest.TestCase):
     def tearDown(self):
         self.con.close()
 
+    def test_status_identity_index_exists_for_bounded_runtime_queries(self):
+        external.ensure_tables(self.con)
+        indexes = {
+            row[0] for row in self.con.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        self.assertIn("ix_external_trader_status_identity", indexes)
+
     def test_winner_only_social_example_is_quarantined(self):
         payload = dict(self.base, sampling_frame="ANECDOTAL_ONLY")
         result = external.ingest_snapshot(self.con, payload)

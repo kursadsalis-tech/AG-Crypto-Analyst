@@ -1,5 +1,44 @@
 # Latest AGCA Session Handoff
 
+# 2026-08-30 — Dış trader gerekçe öğrenmesi ve kalıcı küçük profil kuyruğu
+
+Kamuya açık OKX copy-trader gözlemleri yalnız sonuçlarına göre puanlanmak yerine
+işlem açıkken dondurulan giriş-öncesi bağlamla araştırılıyor. Yeni yerel-only
+gerekçe defteri; son kapanmış 1h fiyat/hacim/taker akışını, varsa point-in-time
+pozisyonlanma ve funding kanıtını kullanarak olası momentum, tersine dönüş,
+kalabalık uyumu/karşıtlığı ve aktivite gerekçeleri üretir. Bunlar trader niyeti
+veya nedensellik iddiası değildir. Sonuç sonradan ayrı review'a eklenir;
+kazanan/kaybeden aynı kurala tabidir. Yalnız kapanmış history'de sonradan görülen
+işleme geriye dönük gerekçe yazılmaz.
+
+10 dakikada kesilen günlük monolit kolektör kalıcı küçük kuyruğa çevrildi. Tam
+liderlik cohort'u günde bir doğrulanır; her 30 dakikada 6 güncel profil ve 1
+history profili işlenir. Bilinen açık işlemlerin bütün kapanışları korunur;
+yalnız unrelated retrospektif history profil başına 20 satırla sınırlıdır.
+Kuyruk indeksi ancak başarılı SQLite commit'inden sonra ilerler. Ağır review ve
+continuous-improvement hesapları kolektörde tekrar çalışmaz; ana saatlik PAPER
+trade-learning adımında tek kez çalışır.
+
+Aşama telemetrisi gerçek darboğazın ağ değil, bütün dış işlem tablosunu gruplayan
+latest-open sorgusu olduğunu gösterdi. İndeksli `OPEN ve sonrasında CLOSED yok`
+sorgusuna geçildikten sonra kontrollü bulut koşusu 1,709 saniyede; attestation
+çakışmalı ilk doğal timer koşusu 24,582 saniyede `SUCCESS` tamamlandı. Doğal
+koşuda 6 profil, 11 açık pozisyon ve 17 history işlemi işlendi; profil hatası
+yoktu. Kuyruk 12. sıraya ilerledi ve sonraki timer çalışması planlandı.
+
+Bulutta ana worker ile copy-trader, market-behavior, exact-macro ve attestation
+timer'ları active; copy-trader timer enabled. Gerekçe defterinde 225 giriş
+bağlamı ve 27 sonuç review'u bulunuyor; outcome-at-capture, intent, copy ve
+policy-mutation bayraklarının toplamı sıfır. Yeni üç yerel tablo için mirror
+outbox satırı sıfır. Rollback kopyası
+`/var/lib/agca/rollback-7f22be3-copy-rationale-20260830T0500Z` altındadır.
+
+Tam test suite 222/222 geçti. PAPER_ONLY, kanıt eşikleri, strateji/model
+politikası ve gerçek emir yetkisi değişmedi; yeni model/eşik araması açılmadı.
+Sıradaki doğru iş kod genişletmek değil, kuyruğun doğal turlarda tam cohort'u
+tamamlamasını ve dondurulmuş gerekçelerin farklı rejimlerde sonuçlanmasını
+izlemektir.
+
 # 2026-08-30 — Davranış/olay sonuçları otomatik ve değişmez öğrenme defterine bağlandı
 
 `602fba2` tek-çatı checkpoint'inden devam edildi. Market-behavior observer'ın
