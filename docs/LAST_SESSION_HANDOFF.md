@@ -32,6 +32,16 @@ ve aynı SQLite/kasa içinde yalnız hafif ve idempotent davranış seçimi daki
 bir çalışır. Pozisyon dolumu/kapanışı, execution maliyetleri, experience review
 ve tam trade-learning mevcut saatlik akışta kalır.
 
+Canlı dağıtım sonrası V2 politika `PAPER_EXPLORATION_AVAILABLE`,
+`execution_allowed=1` ve dakikalık seçim `SUCCESS` oldu. 23:21 UTC'deki 14
+doğal ONCHAIN olayı yeni yoldan değerlendirildi. O dakikada risk izni olan BTC
+ve ETH'nin book/taker işaretleri uyuşmadığı için doğru biçimde işlem açılmadı.
+Uyumlu 0G/ENA/POL/ZEC/ZKP desenleri ise mevcut sabit risk evreninde yoktu. Bu,
+eşik/cadence kilidinin kapandığını fakat piyasa-geneli davranış evreni ile risk
+kapsamı arasında sonraki dar ürün boşluğu bulunduğunu gösterir; risk veto
+aşılmadı ve yapay işlem üretilmedi. İlk doğal karar–tez–işlem zinciri uygun
+olay + uyumlu akış + risk kapsamı birleştiğinde doğrulanmalıdır.
+
 
 # 2026-08-31 — Unified Forecast yürütmeden çıkarıldı; davranış çekirdeği aktif yol
 

@@ -1156,3 +1156,6 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   PAPER fırsatını gizlemesi engellendi.
 - Dakika düzeyindeki taze davranış fırsatlarını saatlik cadence arasında
   kaçırmamak için aynı ajanın hafif, idempotent seçim adımı dakikada bir bağlandı.
+- İlk canlı doğal olay risk-izinli BTC/ETH'de book/taker uyuşmazlığı nedeniyle
+  güvenli biçimde işlem üretmedi; dinamik davranış ile sabit risk evreni kapsam
+  boşluğu sonraki ürün kanıtı olarak kaydedildi.
