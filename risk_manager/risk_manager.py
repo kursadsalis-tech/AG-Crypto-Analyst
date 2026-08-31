@@ -24,7 +24,7 @@ from data.truth_engine import (
 DB_NAME = "crypto_data.db"
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 USER_AGENT = "AG-Crypto-Analyst/1.0.0"
-POLICY_VERSION = "MARKET_RISK_POLICY_V1"
+POLICY_VERSION = "MARKET_RISK_POLICY_V2_DYNAMIC_BEHAVIOR_UNIVERSE"
 KLINE_LIMIT = 170
 MIN_CLOSED_CANDLES = 169
 MIN_COVERAGE_RATIO = 0.80
@@ -44,6 +44,7 @@ SYMBOLS = (
     "UMAUSDT",
     "IOUSDT",
 )
+BEHAVIOR_UNIVERSE_MAX_AGE_SECONDS = 600
 
 BASE_POSITION_CAPS = {
     "BTCUSDT": 15.0,
@@ -108,6 +109,32 @@ def utcnow():
 
 def iso(dt):
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def behavior_risk_symbols(con, now=None):
+    """Return the latest eligible dynamic behavior universe, fail-closed on age."""
+    now = now or utcnow()
+    if not con.execute("""SELECT 1 FROM sqlite_master
+        WHERE type='table' AND name='market_behavior_minute_features'""").fetchone():
+        return ()
+    latest = con.execute("""SELECT MAX(minute_end_timestamp_ms)
+        FROM market_behavior_minute_features WHERE eligible_for_learning=1""").fetchone()[0]
+    if latest is None or now.timestamp() * 1000 - int(latest) > (
+        BEHAVIOR_UNIVERSE_MAX_AGE_SECONDS * 1000
+    ):
+        return ()
+    instruments = con.execute("""SELECT DISTINCT instrument
+        FROM market_behavior_minute_features
+        WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1
+        ORDER BY instrument""", (latest,)).fetchall()
+    symbols = []
+    for (instrument,) in instruments:
+        value = str(instrument).upper()
+        if value.endswith("-USDT-SWAP"):
+            symbol = value[:-10].replace("-", "") + "USDT"
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return tuple(symbols)
 
 
 def pct_change(new_value, old_value):
@@ -290,12 +317,18 @@ def reference_stress_level(asset):
 def build_global_policy(assets, source_errors, created_at=None):
     created_at = created_at or iso(utcnow())
     by_symbol = {asset["symbol"]: asset for asset in assets}
-    coverage_count = len(by_symbol)
+    reference_assets = [asset for asset in assets if asset["symbol"] in SYMBOLS]
+    reference_by_symbol = {asset["symbol"]: asset for asset in reference_assets}
+    reference_errors = {
+        key: value for key, value in source_errors.items()
+        if key == "CROSS_SOURCE_BTC" or key in SYMBOLS
+    }
+    coverage_count = len(reference_by_symbol)
     coverage_total = len(SYMBOLS)
     coverage_ratio = coverage_count / coverage_total
     market_stress_count = sum(
         asset["market_risk_score"] >= 4 or asset["market_hard_block"]
-        for asset in assets
+        for asset in reference_assets
     )
     market_stress_ratio = (
         market_stress_count / coverage_count if coverage_count else 0.0
@@ -306,18 +339,18 @@ def build_global_policy(assets, source_errors, created_at=None):
     )
     reasons = []
 
-    if "CROSS_SOURCE_BTC" in source_errors:
+    if "CROSS_SOURCE_BTC" in reference_errors:
         state = "DATA_BLOCKED"
         reasons.append("BTC_CROSS_SOURCE_VALIDATION_FAILED")
-    elif "BTCUSDT" not in by_symbol:
+    elif "BTCUSDT" not in reference_by_symbol:
         state = "DATA_BLOCKED"
         reasons.append("BTC_REFERENCE_MISSING")
     elif coverage_ratio < MIN_COVERAGE_RATIO:
         state = "DATA_BLOCKED"
         reasons.append("COVERAGE_BELOW_80_PERCENT")
     else:
-        btc = by_symbol["BTCUSDT"]
-        eth = by_symbol.get("ETHUSDT")
+        btc = reference_by_symbol["BTCUSDT"]
+        eth = reference_by_symbol.get("ETHUSDT")
         btc_level = reference_stress_level(btc)
         eth_level = reference_stress_level(eth) if eth else "MISSING"
 
@@ -338,7 +371,7 @@ def build_global_policy(assets, source_errors, created_at=None):
             btc_level == "CAUTION"
             or eth_level in {"STRESS", "CAUTION"}
             or market_stress_ratio >= 0.25
-            or source_errors
+            or reference_errors
         ):
             state = "CAUTION"
             reasons.append("ELEVATED_MARKET_RISK")
@@ -346,7 +379,7 @@ def build_global_policy(assets, source_errors, created_at=None):
             state = "NORMAL"
             reasons.append("NO_GLOBAL_STRESS_TRIGGER")
 
-    if source_errors:
+    if reference_errors:
         reasons.append("PARTIAL_SOURCE_ERRORS")
     if asset_block_count:
         reasons.append(f"ASSET_BLOCKS_{asset_block_count}")
@@ -377,6 +410,9 @@ def build_global_policy(assets, source_errors, created_at=None):
         "liquidity_block_count": liquidity_block_count,
         "new_positions_allowed": new_positions_allowed,
         "policy_reasons": reasons,
+        "dynamic_behavior_symbol_count": sum(
+            asset["symbol"] not in SYMBOLS for asset in assets
+        ),
         **limits,
     }
 
@@ -513,7 +549,10 @@ def render_result(policy, assets, source_errors, snapshot_id):
         f"yeni pozisyon={policy['max_new_positions']}"
     )
     print("SYMBOL       24H%   RANGE%   VOL%    DD7D%       QVOL$  TIER       CAP%  NEW")
-    for asset in sorted(assets, key=lambda item: SYMBOLS.index(item["symbol"])):
+    order = {symbol: index for index, symbol in enumerate(SYMBOLS)}
+    for asset in sorted(
+        assets, key=lambda item: (order.get(item["symbol"], len(order)), item["symbol"])
+    ):
         print(
             f"{asset['symbol']:<11} "
             f"{asset['return_24h_pct']:>+6.2f} "
@@ -543,6 +582,7 @@ def main():
     source_errors = {}
     con = runtime_connect(DB_NAME)
     try:
+        dynamic_symbols = behavior_risk_symbols(con)
         try:
             audited_validation(
                 con,
@@ -554,7 +594,8 @@ def main():
             source_errors["CROSS_SOURCE_BTC"] = str(exc)
     finally:
         con.close()
-    for symbol in SYMBOLS:
+    requested_symbols = tuple(dict.fromkeys((*SYMBOLS, *dynamic_symbols)))
+    for symbol in requested_symbols:
         try:
             candles = fetch_closed_1h_klines(symbol)
             metrics = candle_metrics(symbol, candles)
@@ -576,6 +617,7 @@ def main():
         "snapshot_id": snapshot_id,
         "assets": assets,
         "source_errors": source_errors,
+        "requested_symbols": requested_symbols,
     })
     return result
 

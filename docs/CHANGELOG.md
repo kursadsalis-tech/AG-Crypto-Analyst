@@ -1159,3 +1159,9 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - İlk canlı doğal olay risk-izinli BTC/ETH'de book/taker uyuşmazlığı nedeniyle
   güvenli biçimde işlem üretmedi; dinamik davranış ile sabit risk evreni kapsam
   boşluğu sonraki ürün kanıtı olarak kaydedildi.
+- Sabit risk evreni PAPER fırsat filtresi olmaktan çıkarıldı. Güncel uygun
+  davranış evrenindeki coinler risk değerlendirmesine dinamik eklenirken sabit
+  sepet yalnız global stres çıpası olarak korundu.
+- Risk kapsamı eksik veya veto edilen test edilebilir fırsatlar artık sessizce
+  kaybolmaz; dört saatlik masraf-sonrası karşı-olgusal outcome ile yerel öğrenme
+  kaydına bağlanır. Tam test suite 252/252 geçti.

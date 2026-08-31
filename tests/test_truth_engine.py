@@ -212,6 +212,39 @@ class TruthEngineTests(unittest.TestCase):
         self.assertEqual(policy["market_state"], "DATA_BLOCKED")
         self.assertFalse(policy["new_positions_allowed"])
 
+    def test_dynamic_asset_does_not_distort_reference_market_coverage(self):
+        assets = [{
+            "symbol": symbol, "market_risk_score": 0,
+            "market_hard_block": False, "hard_block": False,
+            "liquidity_hard_block": False,
+            "pre_global_max_position_pct": 5.0, "risk_tier": "NORMAL",
+            "return_24h_pct": 0.0, "range_24h_pct": 1.0,
+            "drawdown_7d_pct": 0.0,
+        } for symbol in (*risk_manager.SYMBOLS, "ENAUSDT")]
+        policy = risk_manager.build_global_policy(
+            assets, {"ZKPUSDT": "unsupported"}, NOW.isoformat()
+        )
+        self.assertEqual(policy["coverage_count"], len(risk_manager.SYMBOLS))
+        self.assertEqual(policy["coverage_total"], len(risk_manager.SYMBOLS))
+        self.assertEqual(policy["dynamic_behavior_symbol_count"], 1)
+        self.assertEqual(policy["market_state"], "NORMAL")
+
+    def test_latest_behavior_universe_becomes_dynamic_risk_symbols(self):
+        con = sqlite3.connect(":memory:")
+        con.execute("""CREATE TABLE market_behavior_minute_features(
+            instrument TEXT,minute_end_timestamp_ms INTEGER,eligible_for_learning INTEGER
+        )""")
+        minute = int(NOW.timestamp() * 1000)
+        con.executemany(
+            "INSERT INTO market_behavior_minute_features VALUES(?,?,1)",
+            [("ENA-USDT-SWAP", minute), ("0G-USDT-SWAP", minute)],
+        )
+        self.assertEqual(
+            risk_manager.behavior_risk_symbols(con, NOW),
+            ("0GUSDT", "ENAUSDT"),
+        )
+        con.close()
+
     def test_future_policy_and_decision_timestamps_are_data_blocked(self):
         future = (NOW + timedelta(hours=1)).isoformat()
         risk = investment_committee_report.policy_status({

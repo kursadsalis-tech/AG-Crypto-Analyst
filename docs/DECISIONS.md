@@ -786,3 +786,23 @@ geçersizdir ve aşağıdaki ayrım onun yerini alır:
 - Davranış kanıtı dakika düzeyinde taze olduğundan hafif, idempotent PAPER seçim
   adımı dakikada bir çalışır. Bu ikinci ajan veya ikinci kasa değildir; dolum,
   kapanış, maliyet muhasebesi ve tam öğrenme mevcut saatlik tek ajan akışındadır.
+
+---
+
+## Karar 033 - Dinamik Fırsat Evreni Dinamik Risk Kapsamı Alır
+
+Sabit risk sembol listesi yalnız global piyasa stresini ölçen referans sepetidir;
+PAPER fırsat evreni değildir. Uygun market-behavior gözleminde bulunan USDT swap
+sembolleri risk değerlendirmesine dinamik olarak eklenir.
+
+- BTC/ETH ve sabit referans sepeti global stres ve veri kapsamı çıpası olarak
+  korunur. Dinamik bir coinin veri hatası global piyasayı yapay biçimde bloke
+  etmez veya gevşetmez.
+- Her dinamik coin aynı volatilite, drawdown, hacim, pozisyon tavanı ve global
+  risk kapılarına tabidir. Kaynak verisi yoksa işlem açılmaz.
+- Uyumlu, test edilebilir bir fırsat risk kapsamı eksikliği veya risk vetosu
+  nedeniyle alınmazsa sebebi kalıcı olarak kaydedilir. Dört saatlik outcome
+  kapanınca masraf-sonrası karşı-olgusal sonuç bağlanır; ajan kaçırdığı fırsattan
+  da öğrenir fakat sonradan işlem yazmaz.
+- Unified Forecast baseline kalır. Tek ajan, yaşam boyu kasa, PAPER_ONLY ve
+  gerçek-emir güvenlik kapıları değişmez.

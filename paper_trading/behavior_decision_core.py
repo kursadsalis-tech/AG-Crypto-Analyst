@@ -69,7 +69,62 @@ def ensure_tables(con):
             real_order_allowed INTEGER NOT NULL DEFAULT 0,
             UNIQUE(core_version,instrument,evidence_minute_end_ms,event_kind,pattern_key)
         );
+        CREATE TABLE IF NOT EXISTS paper_behavior_missed_opportunities (
+            missed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            core_version TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            evidence_minute_end_ms INTEGER NOT NULL,
+            direction TEXT NOT NULL,
+            pattern_key TEXT NOT NULL,
+            rejection_reason TEXT NOT NULL,
+            expected_net_edge_pct REAL NOT NULL,
+            sample_count INTEGER NOT NULL,
+            independent_days INTEGER NOT NULL,
+            outcome_available_at TEXT,
+            counterfactual_net_return_pct REAL,
+            review_status TEXT NOT NULL DEFAULT 'AWAITING_OUTCOME',
+            real_order_allowed INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(core_version,event_id,instrument,evidence_minute_end_ms,rejection_reason)
+        );
     """)
+
+
+def settle_missed_opportunities(con):
+    """Attach immutable 4h cost-after counterfactuals to coverage/risk misses."""
+    if not con.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+        AND name='behavior_event_forward_outcomes'""").fetchone():
+        return 0
+    columns = {
+        str(row[1])
+        for row in con.execute("PRAGMA table_info(behavior_event_forward_outcomes)")
+    }
+    required = {
+        "event_id", "instrument", "event_minute_end_timestamp_ms",
+        "horizon_minutes", "outcome_available_at",
+        "return_from_pre_event_pct", "spread_bps_mean",
+    }
+    if not required.issubset(columns):
+        return 0
+    rows = con.execute("""SELECT m.missed_id,m.direction,o.outcome_available_at,
+        o.return_from_pre_event_pct,o.spread_bps_mean
+        FROM paper_behavior_missed_opportunities m
+        JOIN behavior_event_forward_outcomes o
+          ON o.event_id=m.event_id AND o.instrument=m.instrument
+         AND o.event_minute_end_timestamp_ms=m.evidence_minute_end_ms
+         AND o.horizon_minutes=?
+        WHERE m.review_status='AWAITING_OUTCOME'""", (HORIZON_MINUTES,)).fetchall()
+    for missed_id, direction, available_at, raw_return, spread in rows:
+        signed = float(raw_return) if direction == "LONG" else -float(raw_return)
+        cost = ROUND_TRIP_FEE_PCT + EXTRA_COST_BUFFER_PCT + float(spread or 0) / 100.0
+        con.execute("""UPDATE paper_behavior_missed_opportunities
+            SET outcome_available_at=?,counterfactual_net_return_pct=?,
+                review_status='COUNTERFACTUAL_SETTLED_NOT_TRADED'
+            WHERE missed_id=?""", (available_at, signed - cost, missed_id))
+    return len(rows)
 
 
 def _flow_pattern(book, taker):
@@ -169,6 +224,7 @@ def _latest_risk(con):
 def evaluate(con, now=None):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
+    settle_missed_opportunities(con)
     patterns = learned_patterns(con, now)
     exploration_patterns = {
         key: value for key, value in patterns.items()
@@ -233,7 +289,7 @@ def evaluate(con, now=None):
         pattern = _flow_pattern(float(book), float(taker))
         symbol = _symbol(instrument)
         risk = risks.get(symbol)
-        if not pattern or not risk or not risk["allowed"] or mid is None:
+        if not pattern or mid is None:
             continue
         for kind, symbols_json, event_id, available_at, event_direction in events:
             available = datetime.fromisoformat(str(available_at).replace("Z", "+00:00"))
@@ -242,6 +298,19 @@ def evaluate(con, now=None):
                 continue
             learned = exploration_patterns.get((str(kind), pattern))
             if not learned or not _applies(symbols_json, instrument):
+                continue
+            if not risk or not risk["allowed"]:
+                con.execute("""INSERT OR IGNORE INTO paper_behavior_missed_opportunities(
+                    created_at,core_version,event_id,event_kind,instrument,symbol,
+                    evidence_minute_end_ms,direction,pattern_key,rejection_reason,
+                    expected_net_edge_pct,sample_count,independent_days,real_order_allowed
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
+                    iso(now), VERSION, event_id, kind, instrument, symbol, int(latest),
+                    learned["direction"], pattern,
+                    "RISK_COVERAGE_MISSING" if not risk else "RISK_VETO",
+                    learned["mean_net_edge_pct"], learned["sample_count"],
+                    learned["independent_days"],
+                ))
                 continue
             evidence = {
                 "decision_source": "MARKET_BEHAVIOR_CORE",

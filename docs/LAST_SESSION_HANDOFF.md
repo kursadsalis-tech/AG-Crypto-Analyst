@@ -1,5 +1,26 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — Dinamik fırsat evreni risk kapsamına bağlandı
+
+23:21 UTC doğal olayında 0G/ENA/POL/ZEC/ZKP için davranış akışı uyumlu olduğu
+halde sabit risk sembol listesi nedeniyle değerlendirme yapılamadığı kanıtlandı.
+Sabit liste artık PAPER fırsat evreni değildir. En güncel öğrenmeye uygun USDT
+swap davranış evreni risk yöneticisinin istediği sembollere dinamik eklenir;
+BTC/ETH dahil mevcut 13 sembol yalnız global stres ve veri kapsamı çıpası olarak
+kalır. Dinamik bir coinin kaynak hatası global izni yapay biçimde değiştirmez,
+fakat o coin fail-closed kalır.
+
+Test edilebilir ve akış uyumlu bir fırsat `RISK_COVERAGE_MISSING` veya
+`RISK_VETO` nedeniyle alınmazsa artık yerel `paper_behavior_missed_opportunities`
+kaydına girer. Dört saatlik outcome kapandığında yön ve maliyetler uygulanarak
+karşı-olgusal net sonuç eklenir. Böylece ajan sonradan işlem uydurmadan kaçırdığı
+fırsatlardan da ölçülebilir biçimde öğrenir.
+
+Unified Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek
+emir kapıları değişmedi. Tam yerel suite 252/252 geçti. Canlı dağıtım ve dinamik
+sembol snapshot doğrulaması bu kaydın devamında tamamlanacaktır.
+
+
 # 2026-09-01 — PAPER keşif işlemi yeniden açıldı; terfi kapısı ayrıldı
 
 Karar 031'in 30 örnek/üç gün/%55 kazanma/+%0,05 net edge şartlarını ilk PAPER

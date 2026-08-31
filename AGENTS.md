@@ -53,6 +53,10 @@ mirrors or temporary folders.
   mirror unless a document explicitly states otherwise.
 - Keep real-order authority fail-closed. Do not weaken PAPER_ONLY, governance,
   hash, freshness, reconciliation, or approval gates to make a check pass.
+- PAPER risk coverage must follow the eligible dynamic behavior universe; a
+  fixed reference-symbol list may anchor global stress but must not silently
+  exclude otherwise testable opportunities. Missing or vetoed coverage remains
+  fail-closed and must be recorded for counterfactual learning.
 - Never commit credentials or print secret values in diagnostics.
 - PAPER learning experiments must not be blocked by promotion/proven-skill
   thresholds. A point-in-time, cost-positive, risk-approved hypothesis may be

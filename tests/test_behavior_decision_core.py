@@ -20,6 +20,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 horizon_minutes INTEGER,return_from_pre_event_pct REAL,
                 book_imbalance_20_mean REAL,taker_imbalance_snapshot_mean REAL,
                 spread_bps_mean REAL,outcome_available_at TEXT
+                ,event_id TEXT
             );
             CREATE TABLE market_behavior_minute_features(
                 instrument TEXT,minute_end_timestamp_ms INTEGER,
@@ -52,10 +53,10 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         for index in range(count):
             stamp = NOW - timedelta(days=index % days + 1, minutes=index)
             self.con.execute(
-                "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (int(stamp.timestamp() * 1000), f"event:{index}",
                  "BTC-USDT-SWAP", "NEWS", 240, 1.0, .3, .4, 1.0,
-                 (stamp + timedelta(hours=4)).isoformat()),
+                 (stamp + timedelta(hours=4)).isoformat(), f"history:{index}"),
             )
 
     def add_current(self):
@@ -117,6 +118,36 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.con.execute("UPDATE asset_risk_snapshots SET new_position_allowed=0")
         result = core.evaluate(self.con, NOW)
         self.assertEqual(result["candidates"], [])
+        missed = self.con.execute("""SELECT rejection_reason,review_status
+            FROM paper_behavior_missed_opportunities""").fetchone()
+        self.assertEqual(missed, ("RISK_VETO", "AWAITING_OUTCOME"))
+
+    def test_missing_dynamic_risk_is_recorded_for_counterfactual_learning(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute("DELETE FROM asset_risk_snapshots")
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        missed = self.con.execute("""SELECT symbol,rejection_reason,real_order_allowed
+            FROM paper_behavior_missed_opportunities""").fetchone()
+        self.assertEqual(missed, ("BTCUSDT", "RISK_COVERAGE_MISSING", 0))
+
+    def test_missed_opportunity_learns_cost_after_counterfactual(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute("DELETE FROM asset_risk_snapshots")
+        core.evaluate(self.con, NOW)
+        minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
+        self.con.execute(
+            "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (minute, "news:1", "BTC-USDT-SWAP", "NEWS", 240, 1.0,
+             .25, .35, 1.0, (NOW + timedelta(hours=4)).isoformat(), "news:1"),
+        )
+        self.assertEqual(core.settle_missed_opportunities(self.con), 1)
+        settled = self.con.execute("""SELECT review_status,counterfactual_net_return_pct
+            FROM paper_behavior_missed_opportunities""").fetchone()
+        self.assertEqual(settled[0], "COUNTERFACTUAL_SETTLED_NOT_TRADED")
+        self.assertAlmostEqual(settled[1], 0.74)
 
     def test_disagreeing_book_and_taker_flow_does_not_trade(self):
         self.add_history(days=3)
@@ -165,6 +196,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
     def test_behavior_decision_memory_is_local_only(self):
         self.assertNotIn("paper_behavior_policy_reviews", REMOTE_RUNTIME_TABLES)
         self.assertNotIn("paper_behavior_decisions", REMOTE_RUNTIME_TABLES)
+        self.assertNotIn("paper_behavior_missed_opportunities", REMOTE_RUNTIME_TABLES)
 
 
 if __name__ == "__main__":
