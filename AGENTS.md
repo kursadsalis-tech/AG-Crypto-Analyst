@@ -54,6 +54,11 @@ mirrors or temporary folders.
 - Keep real-order authority fail-closed. Do not weaken PAPER_ONLY, governance,
   hash, freshness, reconciliation, or approval gates to make a check pass.
 - Never commit credentials or print secret values in diagnostics.
+- PAPER learning experiments must not be blocked by promotion/proven-skill
+  thresholds. A point-in-time, cost-positive, risk-approved hypothesis may be
+  tested with bounded exploratory PAPER size and an outcome-blind thesis;
+  stronger sample/day/performance gates govern trust, sizing, or promotion.
+  Changing this separation requires the user's explicit approval.
 
 ## Persistent problem-solving principle
 

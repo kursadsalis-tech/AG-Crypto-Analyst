@@ -1,8 +1,9 @@
 """Point-in-time, cost-aware PAPER decisions from observed market behavior.
 
-Unified Forecast is deliberately not an input.  Rules are learned only from
-closed behavior/event outcomes and may create PAPER experiments after minimum
-independence gates pass.
+Unified Forecast is deliberately not an input. Rules are learned only from
+closed behavior/event outcomes. Bounded PAPER learning experiments require a
+testable cost-positive hypothesis; stronger independence/performance gates
+govern trust and promotion rather than blocking experiential learning.
 """
 from __future__ import annotations
 
@@ -13,10 +14,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 
-VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V1"
-POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V1_EXPERIMENTAL"
-STRATEGY_ID = "BEHAVIOR_CORE_V1"
+VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V2"
+POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V2_LEARNING_EXPERIMENTS"
+STRATEGY_ID = "BEHAVIOR_CORE_V2"
 HORIZON_MINUTES = 240
+# Exploration gates only establish a testable, cost-positive PAPER hypothesis.
+# They are deliberately separate from the evidence required to trust/promote it.
+MIN_EXPLORATION_SAMPLES = 5
+MIN_EXPLORATION_DAYS = 1
 MIN_PATTERN_SAMPLES = 30
 MIN_INDEPENDENT_DAYS = 3
 MIN_COST_AFTER_WIN_RATE = 0.55
@@ -119,7 +124,12 @@ def learned_patterns(con, now=None):
         direction, returns = max(candidates, key=lambda item: sum(item[1]) / len(item[1]))
         mean_edge = sum(returns) / len(returns)
         win_rate = sum(value > 0 for value in returns) / len(returns)
-        ready = (
+        exploration_eligible = (
+            len(samples) >= MIN_EXPLORATION_SAMPLES
+            and len(days) >= MIN_EXPLORATION_DAYS
+            and mean_edge > 0
+        )
+        promotion_ready = (
             len(samples) >= MIN_PATTERN_SAMPLES
             and len(days) >= MIN_INDEPENDENT_DAYS
             and win_rate >= MIN_COST_AFTER_WIN_RATE
@@ -129,7 +139,11 @@ def learned_patterns(con, now=None):
             "event_kind": key[0], "flow_pattern": key[1], "direction": direction,
             "sample_count": len(samples), "independent_days": len(days),
             "mean_net_edge_pct": mean_edge, "cost_after_win_rate": win_rate,
-            "ready": ready,
+            "exploration_eligible": exploration_eligible,
+            "promotion_ready": promotion_ready,
+            # Backward-compatible report field; it means trusted/promotion-ready,
+            # never whether a small PAPER learning experiment may be opened.
+            "ready": promotion_ready,
         }
     return output
 
@@ -156,14 +170,26 @@ def evaluate(con, now=None):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
     patterns = learned_patterns(con, now)
-    ready_patterns = {key: value for key, value in patterns.items() if value["ready"]}
+    exploration_patterns = {
+        key: value for key, value in patterns.items()
+        if value["exploration_eligible"]
+    }
+    promoted_patterns = {
+        key: value for key, value in patterns.items()
+        if value["promotion_ready"]
+    }
     review = {
         "basis": "POINT_IN_TIME_CLOSED_BEHAVIOR_EVENT_OUTCOMES_NET_AFTER_COST_MODEL",
         "patterns": list(sorted(patterns.values(), key=lambda x: (x["event_kind"], x["flow_pattern"]))),
-        "gates": {"minimum_samples": MIN_PATTERN_SAMPLES,
-                  "minimum_independent_days": MIN_INDEPENDENT_DAYS,
-                  "minimum_cost_after_win_rate": MIN_COST_AFTER_WIN_RATE,
-                  "minimum_mean_net_edge_pct": MIN_MEAN_NET_EDGE_PCT},
+        "exploration_gates": {
+            "minimum_samples": MIN_EXPLORATION_SAMPLES,
+            "minimum_independent_days": MIN_EXPLORATION_DAYS,
+            "requires_positive_cost_after_mean_edge": True,
+        },
+        "promotion_gates": {"minimum_samples": MIN_PATTERN_SAMPLES,
+                            "minimum_independent_days": MIN_INDEPENDENT_DAYS,
+                            "minimum_cost_after_win_rate": MIN_COST_AFTER_WIN_RATE,
+                            "minimum_mean_net_edge_pct": MIN_MEAN_NET_EDGE_PCT},
         "unified_forecast_used": False, "real_orders": False,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -171,8 +197,10 @@ def evaluate(con, now=None):
         created_at,core_version,horizon_minutes,status,evidence_json,execution_allowed
     ) VALUES(?,?,?,?,?,?)""", (
         iso(now), VERSION, HORIZON_MINUTES,
-        "ACTIONABLE_PATTERNS_AVAILABLE" if ready_patterns else "COLLECTING_INDEPENDENT_EVIDENCE",
-        review_json, int(bool(ready_patterns)),
+        ("PROMOTION_READY_PATTERNS_AVAILABLE" if promoted_patterns
+         else "PAPER_EXPLORATION_AVAILABLE" if exploration_patterns
+         else "COLLECTING_TESTABLE_HYPOTHESES"),
+        review_json, int(bool(exploration_patterns)),
     ))
     latest = con.execute("""
         SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features
@@ -207,7 +235,7 @@ def evaluate(con, now=None):
             evidence_end = datetime.fromtimestamp(int(latest) / 1000, timezone.utc)
             if available.astimezone(timezone.utc) > evidence_end:
                 continue
-            learned = ready_patterns.get((str(kind), pattern))
+            learned = exploration_patterns.get((str(kind), pattern))
             if not learned or not _applies(symbols_json, instrument):
                 continue
             evidence = {
@@ -228,6 +256,10 @@ def evaluate(con, now=None):
                     "quality_gates": json.loads(quality_json),
                 },
                 "learned_pattern": learned,
+                "experiment_tier": (
+                    "PROMOTION_READY" if learned["promotion_ready"]
+                    else "EXPLORATORY_LEARNING"
+                ),
                 "risk": risk,
                 "capabilities_used": ["ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST",
                     "OPEN_INTEREST", "FUNDING", "LIQUIDATIONS", "CAUSAL_EXTERNAL_EVENT",
@@ -242,12 +274,14 @@ def evaluate(con, now=None):
                 evidence_minute_end_ms,horizon_minutes,direction,event_kind,pattern_key,
                 expected_net_edge_pct,empirical_win_rate,sample_count,independent_days,
                 evidence_json,evidence_sha256,status,real_order_allowed
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACTIONABLE_PAPER_EXPERIMENT',0)""", (
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
                 iso(now), VERSION, POLICY_VERSION, instrument, symbol, int(latest),
                 HORIZON_MINUTES, learned["direction"], kind, pattern,
                 learned["mean_net_edge_pct"], learned["cost_after_win_rate"],
                 learned["sample_count"], learned["independent_days"],
                 json.dumps(evidence, ensure_ascii=False, sort_keys=True), digest,
+                ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
+                 else "EXPLORATORY_PAPER_LEARNING_EXPERIMENT"),
             ))
             decision_id = cursor.lastrowid if cursor.rowcount == 1 else con.execute(
                 "SELECT decision_id FROM paper_behavior_decisions WHERE evidence_sha256=?",
@@ -258,6 +292,7 @@ def evaluate(con, now=None):
                 "symbol": symbol, "instrument": instrument, "horizon": 4,
                 "direction": learned["direction"], "confidence": learned["cost_after_win_rate"],
                 "expected_net_edge_pct": learned["mean_net_edge_pct"],
+                "experiment_tier": evidence["experiment_tier"],
                 "current_price": float(mid), "target_price": float(mid) * (
                     1 + (1 if learned["direction"] == "LONG" else -1)
                     * max(learned["mean_net_edge_pct"], 0.01) / 100.0),

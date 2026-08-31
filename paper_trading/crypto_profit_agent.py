@@ -1,8 +1,9 @@
 """Autonomous, auditable virtual-money trading agent for AG Crypto Analyst.
 
-The agent consumes Unified Forecast Engine rows, never sends a real order, fills
-only from exact Binance 1h timestamps, charges explicit fees, and produces a
-daily Europe/Istanbul 03:00 portfolio report.
+The active decision path consumes behavior-core PAPER experiments while Unified
+Forecast remains a baseline only. It never sends a real order, fills only from
+exact Binance 1h timestamps, charges explicit costs, and preserves one lifetime
+portfolio.
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ FEE_BPS = float(os.getenv("AGCA_PAPER_FEE_BPS", "10"))
 FEE_RATE = FEE_BPS / 10000.0
 MAX_TOTAL_EXPOSURE = 0.60
 POSITION_FRACTION = 0.10
+EXPLORATION_POSITION_FRACTION = 0.02
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
 MIN_DIRECTION_PROBABILITY = 0.52
@@ -622,12 +624,16 @@ def select_new_positions(con, now):
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
     available_exposure = max(0.0, max_exposure - snapshot["reserved"])
-    base_notional = snapshot["equity"] * POSITION_FRACTION
     selected = 0
     planned_entry = next_tradable_hour_open(now)
     for row in behavior_result["candidates"]:
         if selected >= max_new or row["symbol"] in active_symbols:
             continue
+        position_fraction = (
+            POSITION_FRACTION if row.get("experiment_tier") == "PROMOTION_READY"
+            else EXPLORATION_POSITION_FRACTION
+        )
+        base_notional = snapshot["equity"] * position_fraction
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
@@ -644,6 +650,7 @@ def select_new_positions(con, now):
             f"BEHAVIOR {row['horizon']}h {row['direction']} | "
             f"cost_after_win={100*row['confidence']:.1f}% | "
             f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
+            f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
             f"strategy={strategy_id}"
         )
         p_up = row["confidence"] if row["direction"] == "LONG" else 1.0 - row["confidence"]

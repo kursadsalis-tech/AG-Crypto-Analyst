@@ -1145,3 +1145,10 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   V2 özet yalnız `evidence_eligible` işlemleri kullanır ve ilk V1'i supersede eder.
 - Model, strateji, PAPER seçim eşikleri, tek kasa ve PAPER_ONLY kapıları
   değiştirilmedi. Nihai tam test suite 233/233 geçti.
+# 2026-09-01
+
+- PAPER davranış çekirdeğinde keşif işlemi ile güven/terfi kapısı ayrıldı.
+  Maliyet-sonrası pozitif, sonuç-kör ve risk-onaylı hipotezler %2 boyutlu PAPER
+  deneyleri açabilir; 30 örnek/üç gün/%55/+%0,05 şartları yalnız terfiye aittir.
+- Unified Forecast baseline, tek yaşam boyu kasa, PAPER_ONLY ve gerçek-emir
+  güvenlik kapıları değişmedi.

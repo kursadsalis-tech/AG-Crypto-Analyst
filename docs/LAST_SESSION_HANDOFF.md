@@ -1,5 +1,25 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — PAPER keşif işlemi yeniden açıldı; terfi kapısı ayrıldı
+
+Karar 031'in 30 örnek/üç gün/%55 kazanma/+%0,05 net edge şartlarını ilk PAPER
+işleminden önce zorunlu tutması, Karar 030'daki “işlem bir öğrenme deneyidir”
+sözleşmesini fiilen kilitledi. Bu çelişki Karar 032 ile düzeltildi.
+
+`PAPER_BEHAVIOR_DECISION_CORE_V2`, sonucu kapanmış en az beş bağımsız örneği,
+en az bir UTC günü ve ihtiyatlı maliyet sonrası pozitif ortalama edge'i olan bir
+hipotezi küçük PAPER keşif deneyine açar. Keşif boyutu özkaynağın %2'sidir.
+Eski 30 örnek/üç gün/%55/+%0,05 şartları artık yalnız güven/terfi kapısıdır;
+terfiye hazır desen mevcut %10 PAPER boyutunu kullanabilir. Her iki yol da taze
+ve kaliteli davranış/dış olay kanıtı, risk izni, exact-entry, gerçekçi maliyet ve
+sonuç-kör tez ister.
+
+Unified Forecast yürütmeye geri bağlanmadı; yalnız baseline'dır. Tek ajan, tek
+yaşam boyu kasa, PAPER_ONLY ve gerçek-emir kapıları korunur. Kök `AGENTS.md`,
+keşif işlemlerinin terfi/kanıtlanmış-beceri eşikleriyle tekrar engellenmesini
+kullanıcının açık onayına bağlayan kalıcı sözleşmeyi taşır.
+
+
 # 2026-08-31 — Unified Forecast yürütmeden çıkarıldı; davranış çekirdeği aktif yol
 
 Kullanıcının tekrar vurguladığı ana sözleşme uygulandı. PAPER pozisyon seçimi

@@ -71,12 +71,15 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
              (NOW - timedelta(minutes=1)).isoformat(), "positive"),
         )
 
-    def test_insufficient_independent_days_cannot_trade(self):
+    def test_promotion_thresholds_do_not_block_small_paper_learning_experiment(self):
         self.add_history(days=1)
         self.add_current()
         result = core.evaluate(self.con, NOW)
-        self.assertEqual(result["status"], "NO_ACTIONABLE_PATTERN")
-        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(result["candidates"][0]["experiment_tier"], "EXPLORATORY_LEARNING")
+        pattern = result["review"]["patterns"][0]
+        self.assertTrue(pattern["exploration_eligible"])
+        self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
 
     def test_cost_after_multiday_pattern_creates_behavior_candidate(self):
@@ -86,6 +89,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "ACTIONABLE")
         candidate = result["candidates"][0]
         self.assertEqual(candidate["direction"], "LONG")
+        self.assertEqual(candidate["experiment_tier"], "PROMOTION_READY")
         self.assertEqual(candidate["decision_source"], "MARKET_BEHAVIOR_CORE")
         self.assertFalse(candidate["evidence"]["unified_forecast_used"])
         self.assertIn("ORDER_BOOK", candidate["evidence"]["capabilities_used"])
@@ -113,6 +117,21 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.con.execute(
             "UPDATE behavior_event_forward_outcomes SET outcome_available_at=?",
             ((NOW + timedelta(hours=1)).isoformat(),),
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+
+    def test_fewer_than_five_closed_samples_cannot_open_experiment(self):
+        self.add_history(count=4, days=1)
+        self.add_current()
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+
+    def test_non_positive_cost_after_hypothesis_cannot_open_experiment(self):
+        self.add_history(count=5, days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE behavior_event_forward_outcomes SET return_from_pre_event_pct=0"
         )
         result = core.evaluate(self.con, NOW)
         self.assertEqual(result["candidates"], [])

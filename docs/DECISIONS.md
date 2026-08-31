@@ -757,3 +757,29 @@ olay kanıtından öğrenir.
   Tek kümülatif kasa korunurken eski kazanç yeni çekirdeğin becerisi sayılamaz.
 - PAPER_ONLY, risk veto, freshness, exact-entry, maliyet, liquidation ve gerçek
   emir kapıları değişmez; gerçek para yetkisi üretilmez.
+
+---
+
+## Karar 032 - PAPER Keşif İşlemi ile Güven/Terfi Kapısı Ayrıdır
+
+Karar 031'deki 30 bağımsız örnek, üç UTC günü, %55 masraf-sonrası kazanma
+oranı ve +%0,05 ortalama net edge şartlarının bütün PAPER işlemlerini engellemesi,
+Karar 030'daki “işlem bir öğrenme deneyidir” sözleşmesiyle çelişmiştir. Bu yorum
+geçersizdir ve aşağıdaki ayrım onun yerini alır:
+
+- Sonucu kapanmış en az beş bağımsız örnekten oluşan, en az bir UTC gününde
+  gözlenmiş ve ihtiyatlı maliyet modeli sonrası ortalama edge'i pozitif olan
+  davranış hipotezi; taze/kaliteli canlı kanıt ve risk izni bulunduğunda küçük
+  bir PAPER öğrenme deneyi açabilir.
+- Keşif deneyi özkaynağın en fazla %2'sini kullanır. Her işlemden önce sonuç-kör
+  tez dondurulur ve aynı yaşam boyu kasa içinde ayrı politika sürümüyle izlenir.
+- 30 örnek, üç UTC günü, %55 kazanma ve +%0,05 net edge şartları işlemi öğrenme
+  amacıyla açmanın değil, deseni güvenilir/terfiye hazır saymanın kapısıdır.
+  Terfiye hazır desen mevcut normal %10 PAPER boyutunu kullanabilir.
+- Kazanma oranı tek başarı hedefi değildir. Masraflar sonrası beklenti, toplam
+  getiri, profit factor, drawdown, bağımsız işlem ve rejim dayanıklılığı birlikte
+  değerlendirilir.
+- Unified Forecast baseline kalır. PAPER_ONLY, veri kalitesi, risk, freshness,
+  exact-entry, maliyet, liquidation ve gerçek-emir kapıları değişmez.
+- Bu keşif/terfi ayrımı kullanıcının açık onayı olmadan yeniden birleştirilemez
+  veya keşif işlemlerini sessizce durduracak biçimde değiştirilemez.
