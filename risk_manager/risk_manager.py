@@ -24,7 +24,7 @@ from data.truth_engine import (
 DB_NAME = "crypto_data.db"
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 USER_AGENT = "AG-Crypto-Analyst/1.0.0"
-POLICY_VERSION = "MARKET_RISK_POLICY_V2_DYNAMIC_BEHAVIOR_UNIVERSE"
+POLICY_VERSION = "MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK"
 KLINE_LIMIT = 170
 MIN_CLOSED_CANDLES = 169
 MIN_COVERAGE_RATIO = 0.80
@@ -56,7 +56,9 @@ TIER_MULTIPLIERS = {
     "NORMAL": 1.00,
     "ELEVATED": 0.60,
     "HIGH": 0.25,
-    "EXTREME": 0.00,
+    # Valid, liquid but extreme context is still testable in PAPER at a tiny
+    # size. Extreme market observations are not execution impossibilities.
+    "EXTREME": 0.05,
 }
 
 GLOBAL_LIMITS = {
@@ -263,13 +265,17 @@ def classify_asset_risk(metrics):
 
     liquidity_hard_block = quote_volume < 2_000_000
     market_hard_block = range_24h >= 30.0 or volatility >= 7.0
-    hard_block = liquidity_hard_block or market_hard_block
+    # Only execution feasibility is an asset-level veto. Volatility/range are
+    # contextual sizing inputs; the behavior core owns opportunity selection.
+    hard_block = liquidity_hard_block
     score = market_score + execution_score
-    if hard_block:
+    if liquidity_hard_block:
         tier = "EXTREME"
-        reasons.append("HARD_BLOCK")
-    elif score >= 10:
+        reasons.append("LIQUIDITY_HARD_BLOCK")
+    elif market_hard_block or score >= 10:
         tier = "EXTREME"
+        if market_hard_block:
+            reasons.append("EXTREME_MARKET_CONTEXT_SIZE_ONLY")
     elif score >= 7:
         tier = "HIGH"
     elif score >= 4:
@@ -280,6 +286,8 @@ def classify_asset_risk(metrics):
     symbol = metrics["symbol"]
     base_cap = BASE_POSITION_CAPS.get(symbol, DEFAULT_ALT_POSITION_CAP)
     max_position = base_cap * TIER_MULTIPLIERS[tier]
+    if liquidity_hard_block:
+        max_position = 0.0
     volatility_stop = max(2.0, min(12.0, volatility * 2.5))
 
     result = dict(metrics)
@@ -295,7 +303,7 @@ def classify_asset_risk(metrics):
         "pre_global_max_position_pct": round(max_position, 2),
         "max_position_pct": round(max_position, 2),
         "volatility_stop_reference_pct": round(volatility_stop, 2),
-        "new_position_allowed": tier != "EXTREME",
+        "new_position_allowed": not liquidity_hard_block,
         "risk_reasons": reasons or ["NO_ELEVATED_RISK_TRIGGER"],
     })
     return result
@@ -393,7 +401,7 @@ def build_global_policy(assets, source_errors, created_at=None):
         )
         asset["new_position_allowed"] = bool(
             new_positions_allowed
-            and asset["risk_tier"] != "EXTREME"
+            and not asset["liquidity_hard_block"]
             and asset["max_position_pct"] > 0
         )
 

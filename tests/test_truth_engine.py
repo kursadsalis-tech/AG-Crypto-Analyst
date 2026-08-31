@@ -229,6 +229,33 @@ class TruthEngineTests(unittest.TestCase):
         self.assertEqual(policy["dynamic_behavior_symbol_count"], 1)
         self.assertEqual(policy["market_state"], "NORMAL")
 
+    def test_extreme_market_context_sizes_paper_instead_of_vetoing_it(self):
+        metrics = {
+            "symbol": "0GUSDT", "as_of": NOW.isoformat(), "price": 1.0,
+            "return_24h_pct": 37.5, "range_24h_pct": 49.8,
+            "hourly_volatility_pct": 4.8, "drawdown_7d_pct": -2.0,
+            "quote_volume_24h": 24_000_000,
+        }
+        asset = risk_manager.classify_asset_risk(metrics)
+        self.assertEqual(asset["risk_tier"], "EXTREME")
+        self.assertTrue(asset["market_hard_block"])
+        self.assertFalse(asset["hard_block"])
+        self.assertTrue(asset["new_position_allowed"])
+        self.assertEqual(asset["max_position_pct"], 0.25)
+
+    def test_untradeable_liquidity_remains_fail_closed(self):
+        metrics = {
+            "symbol": "ENAUSDT", "as_of": NOW.isoformat(), "price": 1.0,
+            "return_24h_pct": 1.0, "range_24h_pct": 3.0,
+            "hourly_volatility_pct": 0.5, "drawdown_7d_pct": -2.0,
+            "quote_volume_24h": 1_000_000,
+        }
+        asset = risk_manager.classify_asset_risk(metrics)
+        self.assertTrue(asset["liquidity_hard_block"])
+        self.assertTrue(asset["hard_block"])
+        self.assertFalse(asset["new_position_allowed"])
+        self.assertEqual(asset["max_position_pct"], 0.0)
+
     def test_latest_behavior_universe_becomes_dynamic_risk_symbols(self):
         con = sqlite3.connect(":memory:")
         con.execute("""CREATE TABLE market_behavior_minute_features(

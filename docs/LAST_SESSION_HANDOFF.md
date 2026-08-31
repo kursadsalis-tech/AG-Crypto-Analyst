@@ -1,5 +1,21 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — Bağlamsız risk vetosu PAPER öğrenmesinden çıkarıldı
+
+Canlı 0G örneği mevcut risk katmanının geçerli ve yüksek hacimli bir davranış
+fırsatını yalnız geniş 24h range nedeniyle tamamen engellediğini gösterdi. Bu,
+risk katmanını kaybı/boyutu yöneten katman olmaktan çıkarıp ikinci ve kaba karar
+motoruna dönüştürüyordu; adaptif, işlemle öğrenen ajan hedefiyle uyumsuzdu.
+
+`MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK` ile geçerli ve likit bir
+varlıkta volatilite, range, drawdown ve yakın dönem hareketi artık yalnız boyutu
+küçültür. En uç `EXTREME` altcoin bağlamında tavan %0,25'tir. Yetersiz likidite,
+eksik/bozuk veri ve global veri doğrulama hataları kesin veto kalır. Unified
+Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek-emir
+kapıları değişmedi. Hedefli testler 33/33, tam suite 254/254 geçti. Canlı dağıtım
+ve aynı 0G örneğinin izinli-küçük boyuta dönüştüğünün doğrulaması bekleniyor.
+
+
 # 2026-09-01 — Dinamik fırsat evreni risk kapsamına bağlandı
 
 23:21 UTC doğal olayında 0G/ENA/POL/ZEC/ZKP için davranış akışı uyumlu olduğu

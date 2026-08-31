@@ -57,6 +57,10 @@ mirrors or temporary folders.
   fixed reference-symbol list may anchor global stress but must not silently
   exclude otherwise testable opportunities. Missing or vetoed coverage remains
   fail-closed and must be recorded for counterfactual learning.
+- Valid, executable market volatility, range, drawdown, or recent direction may
+  reduce PAPER experiment size but must not by itself become a context-blind
+  asset veto. Hard asset vetoes are reserved for missing/corrupt evidence or
+  execution infeasibility such as inadequate liquidity.
 - Never commit credentials or print secret values in diagnostics.
 - PAPER learning experiments must not be blocked by promotion/proven-skill
   thresholds. A point-in-time, cost-positive, risk-approved hypothesis may be

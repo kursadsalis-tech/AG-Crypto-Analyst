@@ -1165,3 +1165,7 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Risk kapsamı eksik veya veto edilen test edilebilir fırsatlar artık sessizce
   kaybolmaz; dört saatlik masraf-sonrası karşı-olgusal outcome ile yerel öğrenme
   kaydına bağlanır. Tam test suite 252/252 geçti.
+- Bağlamdan habersiz volatilite/range/drawdown eşikleri PAPER için kesin coin
+  vetosu olmaktan çıkarıldı ve yalnız boyutlandırmaya çevrildi. Geçerli, likit
+  `EXTREME` bağlam altcoinlerde tavan %0,25'tir; veri ve likidite veto kapıları
+  korunur. Tam test suite 254/254 geçti.

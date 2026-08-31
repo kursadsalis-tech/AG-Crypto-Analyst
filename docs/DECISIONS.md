@@ -806,3 +806,24 @@ sembolleri risk değerlendirmesine dinamik olarak eklenir.
   da öğrenir fakat sonradan işlem yazmaz.
 - Unified Forecast baseline kalır. Tek ajan, yaşam boyu kasa, PAPER_ONLY ve
   gerçek-emir güvenlik kapıları değişmez.
+
+---
+
+## Karar 034 - Risk Katmanı PAPER Fırsatına İkinci Karar Motoru Olamaz
+
+Geçerli ve uygulanabilir bir fırsatı yalnız sabit volatilite, fiyat aralığı,
+drawdown veya yakın dönem yönü nedeniyle tamamen engellemek adaptif, işlemle
+öğrenen PAPER ajanı hedefiyle uyumsuzdur.
+
+- Fırsatın yönü ve bağlamsal niteliği davranış karar çekirdeğine aittir. Risk
+  katmanı aynı kanıtı kaba eşiklerle ikinci kez seçmez veya reddetmez.
+- Yüksek volatilite, geniş fiyat aralığı, sert yakın dönem hareketi ve zirveden
+  drawdown pozisyon boyutunu kademeli küçültür. En uç fakat verisi geçerli ve
+  likit altcoin bağlamı %0,25 PAPER pozisyon tavanıyla sınanabilir.
+- Eksik/bozuk/bayat veri, doğrulanamayan referans fiyatı ve uygulanamaz likidite
+  kesin veto olarak kalır. Risk katmanı bu kapıları gevşetemez.
+- PAPER sonucunun iyi veya kötü olması bu kararı tek başına doğrulamaz; işlemler
+  masraf, drawdown, rejim ve bağımsız örneklerle ölçülür ve boyut politikası bu
+  kanıttan öğrenilir.
+- Unified Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve
+  gerçek-emir güvenlik kapıları değişmez.
