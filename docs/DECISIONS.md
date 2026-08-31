@@ -783,3 +783,6 @@ geçersizdir ve aşağıdaki ayrım onun yerini alır:
   exact-entry, maliyet, liquidation ve gerçek-emir kapıları değişmez.
 - Bu keşif/terfi ayrımı kullanıcının açık onayı olmadan yeniden birleştirilemez
   veya keşif işlemlerini sessizce durduracak biçimde değiştirilemez.
+- Davranış kanıtı dakika düzeyinde taze olduğundan hafif, idempotent PAPER seçim
+  adımı dakikada bir çalışır. Bu ikinci ajan veya ikinci kasa değildir; dolum,
+  kapanış, maliyet muhasebesi ve tam öğrenme mevcut saatlik tek ajan akışındadır.

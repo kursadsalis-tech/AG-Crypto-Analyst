@@ -1154,3 +1154,5 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   güvenlik kapıları değişmedi.
 - Daha yeni olaysız davranış dakikasının aynı tazelik penceresindeki olaylı
   PAPER fırsatını gizlemesi engellendi.
+- Dakika düzeyindeki taze davranış fırsatlarını saatlik cadence arasında
+  kaçırmamak için aynı ajanın hafif, idempotent seçim adımı dakikada bir bağlandı.

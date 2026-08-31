@@ -1027,6 +1027,26 @@ def run(now=None):
         con.close()
 
 
+def run_behavior_selection(now=None):
+    """Run only the lightweight, idempotent behavior PAPER selection cadence."""
+    now = now or utcnow()
+    authority = validate_agent_authority(
+        execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
+        policy_version=POLICY_VERSION,
+        initial_capital=INITIAL_CAPITAL,
+    )
+    con = connect()
+    try:
+        ensure_tables(con)
+        selected = select_new_positions(con, now)
+        return {
+            "status": "SUCCESS", "selected": selected,
+            "authority": authority, "portfolio": portfolio_snapshot(con),
+        }
+    finally:
+        con.close()
+
+
 def self_test():
     assert abs(directional_pnl("LONG", 100.0, 105.0, 10.0) - 50.0) < 1e-9
     assert abs(directional_pnl("SHORT", 100.0, 95.0, 10.0) - 50.0) < 1e-9

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from analysis import forward_shadow_cycle
 from decision_engine import hourly_forecast_job
+from paper_trading import crypto_profit_agent
 
 
 STATE_DIR = Path(os.getenv("AGCA_STATE_DIR", "/var/lib/agca"))
@@ -83,7 +84,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("Another AGCA worker owns this persistent volume")
-        last_five = last_hour = None
+        last_minute = last_five = last_hour = None
         last_results = {}
         _write_health("STARTING")
         while not STOP:
@@ -98,6 +99,16 @@ def main():
                 if now.minute >= 2 and hour_key != last_hour:
                     results["hourly_job"] = hourly_forecast_job.main()
                     last_hour = hour_key
+                selection_now = datetime.now(timezone.utc)
+                minute_key = (
+                    selection_now.year, selection_now.month, selection_now.day,
+                    selection_now.hour, selection_now.minute,
+                )
+                if minute_key != last_minute:
+                    results["paper_behavior_selection"] = (
+                        crypto_profit_agent.run_behavior_selection(selection_now)
+                    )
+                    last_minute = minute_key
                 if results:
                     last_results.update(results)
                     _write_health("HEALTHY", last_results=last_results)

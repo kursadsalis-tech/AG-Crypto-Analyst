@@ -37,6 +37,12 @@ class CloudWorkerHealthTests(unittest.TestCase):
         self.assertIn("runtime.cloud_attestation", service)
         self.assertIn("OnUnitActiveSec=5min", timer)
 
+    def test_worker_runs_lightweight_behavior_selection_each_minute(self):
+        source = Path(cloud_worker.__file__).read_text(encoding="utf-8")
+        self.assertIn("paper_behavior_selection", source)
+        self.assertIn("run_behavior_selection(selection_now)", source)
+        self.assertIn("last_minute", source)
+
 
 if __name__ == "__main__":
     unittest.main()

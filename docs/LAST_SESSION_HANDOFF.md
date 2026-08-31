@@ -26,6 +26,12 @@ engeli de kapatacak biçimde tazelik penceresindeki en yeni olaylı ve öğrenme
 uygun davranış dakikasını seçer. Regresyon testi, daha yeni olaysız dakikanın
 taze olaylı fırsatı gizleyemeyeceğini zorunlu tutar.
 
+Canlı doğrulama ayrıca dakika düzeyindeki davranış/olay tazeliğinin yalnız
+saatlik PAPER seçimiyle uyumsuz olduğunu gösterdi. Aynı `CRYPTO_PROFIT_AGENT_V1`
+ve aynı SQLite/kasa içinde yalnız hafif ve idempotent davranış seçimi dakikada
+bir çalışır. Pozisyon dolumu/kapanışı, execution maliyetleri, experience review
+ve tam trade-learning mevcut saatlik akışta kalır.
+
 
 # 2026-08-31 — Unified Forecast yürütmeden çıkarıldı; davranış çekirdeği aktif yol
 
