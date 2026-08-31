@@ -19,6 +19,13 @@ yaşam boyu kasa, PAPER_ONLY ve gerçek-emir kapıları korunur. Kök `AGENTS.md
 keşif işlemlerinin terfi/kanıtlanmış-beceri eşikleriyle tekrar engellenmesini
 kullanıcının açık onayına bağlayan kalıcı sözleşmeyi taşır.
 
+İlk canlı V2 koşusu politika düzeyinde `PAPER_EXPLORATION_AVAILABLE` ve
+`execution_allowed=1` üretti; ancak aynı tazelik penceresindeki 23:00 olaylı
+dakikayı, 23:02'deki daha yeni olaysız dakika gölgeledi. Seçim sorgusu bu ikinci
+engeli de kapatacak biçimde tazelik penceresindeki en yeni olaylı ve öğrenmeye
+uygun davranış dakikasını seçer. Regresyon testi, daha yeni olaysız dakikanın
+taze olaylı fırsatı gizleyemeyeceğini zorunlu tutar.
+
 
 # 2026-08-31 — Unified Forecast yürütmeden çıkarıldı; davranış çekirdeği aktif yol
 

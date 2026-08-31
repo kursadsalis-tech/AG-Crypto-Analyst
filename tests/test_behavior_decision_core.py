@@ -95,6 +95,22 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertIn("ORDER_BOOK", candidate["evidence"]["capabilities_used"])
         self.assertIn("LIQUIDATIONS", candidate["evidence"]["capabilities_used"])
 
+    def test_newer_eventless_minute_does_not_hide_fresh_event_minute(self):
+        self.add_history(days=1)
+        self.add_current()
+        newer = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
+        self.con.execute(
+            "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("BTC-USDT-SWAP", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
+             25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(
+            result["candidates"][0]["evidence"]["evidence_minute_end_ms"],
+            int((NOW - timedelta(minutes=1)).timestamp() * 1000),
+        )
+
     def test_missing_or_blocked_risk_is_fail_closed(self):
         self.add_history(days=3)
         self.add_current()

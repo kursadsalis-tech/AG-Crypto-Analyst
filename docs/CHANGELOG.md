@@ -1152,3 +1152,5 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   deneyleri açabilir; 30 örnek/üç gün/%55/+%0,05 şartları yalnız terfiye aittir.
 - Unified Forecast baseline, tek yaşam boyu kasa, PAPER_ONLY ve gerçek-emir
   güvenlik kapıları değişmedi.
+- Daha yeni olaysız davranış dakikasının aynı tazelik penceresindeki olaylı
+  PAPER fırsatını gizlemesi engellendi.

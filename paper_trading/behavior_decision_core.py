@@ -203,8 +203,13 @@ def evaluate(con, now=None):
         review_json, int(bool(exploration_patterns)),
     ))
     latest = con.execute("""
-        SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features
-        WHERE eligible_for_learning=1 AND minute_end_timestamp_ms<=?
+        SELECT MAX(m.minute_end_timestamp_ms)
+        FROM market_behavior_minute_features m
+        WHERE m.eligible_for_learning=1 AND m.minute_end_timestamp_ms<=?
+          AND EXISTS (
+              SELECT 1 FROM causal_minute_external_evidence e
+              WHERE e.minute_end_timestamp_ms=m.minute_end_timestamp_ms
+          )
     """, (int(now.timestamp() * 1000),)).fetchone()[0]
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
