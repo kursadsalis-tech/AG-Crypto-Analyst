@@ -112,6 +112,19 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             int((NOW - timedelta(minutes=1)).timestamp() * 1000),
         )
 
+    def test_new_risk_snapshot_reuses_immutable_decision_thesis(self):
+        self.add_history(days=1)
+        self.add_current()
+        first = core.evaluate(self.con, NOW)["candidates"][0]
+        self.con.execute(
+            "UPDATE asset_risk_snapshots SET max_position_pct=0.25,as_of=?",
+            ((NOW + timedelta(seconds=10)).isoformat(),),
+        )
+        second = core.evaluate(self.con, NOW)["candidates"][0]
+        self.assertEqual(second["decision_id"], first["decision_id"])
+        self.assertEqual(second["evidence_sha256"], first["evidence_sha256"])
+        self.assertEqual(second["risk_cap_pct"], first["risk_cap_pct"])
+
     def test_missing_or_blocked_risk_is_fail_closed(self):
         self.add_history(days=3)
         self.add_current()

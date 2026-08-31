@@ -12,8 +12,16 @@ varlıkta volatilite, range, drawdown ve yakın dönem hareketi artık yalnız b
 küçültür. En uç `EXTREME` altcoin bağlamında tavan %0,25'tir. Yetersiz likidite,
 eksik/bozuk veri ve global veri doğrulama hataları kesin veto kalır. Unified
 Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek-emir
-kapıları değişmedi. Hedefli testler 33/33, tam suite 254/254 geçti. Canlı dağıtım
-ve aynı 0G örneğinin izinli-küçük boyuta dönüştüğünün doğrulaması bekleniyor.
+kapıları değişmedi. Canlı ilk V3 turunda 0G ve ARB `EXTREME`, `%0,25`, `YES`
+olarak doğrulandı; ZKP de geniş range'e rağmen `%0,25` PAPER izni aldı. Düşük
+hacimli sekiz referans varlık sıfır tavanla veto kalmaya devam etti.
+
+Ardından canlı seçim, aynı davranış kararının değişen risk snapshot'ıyla tekrar
+değerlendirilmesinde eski değişmez tezi yeni hash ile arayan idempotency hatasını
+açığa çıkardı. Seçim artık doğal karar anahtarıyla mevcut tezi bulur ve ilk
+sonuç-kör kanıt/hash/risk bilgisini aynen yeniden kullanır; sonradan tez yazmaz.
+Hedefli testler 34/34, tam suite 255/255 geçti. Bu ikinci düzeltmenin canlı
+dağıtım ve seçim doğrulaması bekleniyor.
 
 
 # 2026-09-01 — Dinamik fırsat evreni risk kapsamına bağlandı

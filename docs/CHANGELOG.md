@@ -1168,4 +1168,8 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
 - Bağlamdan habersiz volatilite/range/drawdown eşikleri PAPER için kesin coin
   vetosu olmaktan çıkarıldı ve yalnız boyutlandırmaya çevrildi. Geçerli, likit
   `EXTREME` bağlam altcoinlerde tavan %0,25'tir; veri ve likidite veto kapıları
-  korunur. Tam test suite 254/254 geçti.
+  korunur.
+- Aynı davranış dakikasının yenilenen risk snapshot'ıyla tekrar seçilmesinde
+  mevcut değişmez tezin yeni hash ile aranmasından doğan idempotency hatası
+  giderildi. İlk sonuç-kör tez yeniden kullanılır, sonradan değiştirilmez. Tam
+  test suite 255/255 geçti.

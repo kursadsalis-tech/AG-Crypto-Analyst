@@ -357,10 +357,22 @@ def evaluate(con, now=None):
                 ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
                  else "EXPLORATORY_PAPER_LEARNING_EXPERIMENT"),
             ))
-            decision_id = cursor.lastrowid if cursor.rowcount == 1 else con.execute(
-                "SELECT decision_id FROM paper_behavior_decisions WHERE evidence_sha256=?",
-                (digest,),
-            ).fetchone()[0]
+            if cursor.rowcount == 1:
+                decision_id = cursor.lastrowid
+            else:
+                existing = con.execute("""SELECT decision_id,evidence_json,evidence_sha256
+                    FROM paper_behavior_decisions
+                    WHERE core_version=? AND instrument=?
+                      AND evidence_minute_end_ms=? AND event_kind=? AND pattern_key=?""", (
+                    VERSION, instrument, int(latest), kind, pattern,
+                )).fetchone()
+                if not existing:
+                    raise RuntimeError("idempotent behavior decision could not be resolved")
+                decision_id, stored_evidence_json, digest = existing
+                # The outcome-blind thesis is immutable. A later risk snapshot
+                # may re-evaluate the same minute but cannot rewrite its proof.
+                evidence = json.loads(stored_evidence_json)
+                risk = evidence["risk"]
             candidates.append({
                 "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
                 "symbol": symbol, "instrument": instrument, "horizon": 4,
