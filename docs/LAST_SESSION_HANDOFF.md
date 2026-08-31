@@ -17,8 +17,22 @@ karşı-olgusal net sonuç eklenir. Böylece ajan sonradan işlem uydurmadan ka�
 fırsatlardan da ölçülebilir biçimde öğrenir.
 
 Unified Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek
-emir kapıları değişmedi. Tam yerel suite 252/252 geçti. Canlı dağıtım ve dinamik
-sembol snapshot doğrulaması bu kaydın devamında tamamlanacaktır.
+emir kapıları değişmedi. Tam yerel suite 252/252 geçti. Checkpoint `865b0ad`
+rollback korumalı olarak `agca-runtime` üzerine dağıtıldı; rollback
+`/var/lib/agca/rollback-865b0ad-dynamic-risk-20260901T0000Z` altındadır.
+
+Zorlanan ilk canlı tur `MARKET_RISK_POLICY_V2_DYNAMIC_BEHAVIOR_UNIVERSE`,
+`NORMAL`, global referans kapsamı 13/13 ve toplam 20 değerlendirilmiş varlık
+üretti. Sabit listenin dışındaki 0G/ARB/CRV/DASH/NOT/OP/POL snapshot'a girdi;
+CRV, DASH, NOT, OP ve POL risk izni aldı. 0G ve ARB aşırı hareket/range nedeniyle
+coin bazında veto edildi. Binance spot kaynağında bulunmayan HYPE/USELESS/ZORA
+fail-closed kaynak hatası olarak kaldı ve global referans stresini bozmadı.
+
+Canlı PAPER seçimi `SUCCESS`, gerçek emir yetkisi false ve açık pozisyon sıfır
+olarak tamamlandı; o anda taze, tüm kapıları geçen aday olmadığından seçilen
+işlem sıfırdı. Worker, behavior observer, günlük integrity ve attestation
+timer'ları active. Günlük tam SQLite bütünlük kanıtı `result=ok`,
+`checked_at=2026-08-31T02:44:37.471198+00:00` ve hash-korumalıdır.
 
 
 # 2026-09-01 — PAPER keşif işlemi yeniden açıldı; terfi kapısı ayrıldı
