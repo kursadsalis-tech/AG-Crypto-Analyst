@@ -22,8 +22,16 @@ Unified Forecast araştırma kohortu olarak kalır; davranış fırsatı, risk k
 veya PAPER yürütme evreni değildir. Unified Forecast yürütmeye bağlanmadı; tek
 ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek-emir kapıları değişmedi. Dinamik
 CRV/DASH/UNI/ARB/OP/ENA örneklerinde iki resmî veri yolu canlı VM'den erişilebilir
-doğrulandı. Odaklı testler 23/23, tam suite 270/270 geçti. Canlı dağıtım ve doğal
-dolum kanıtı bu bölümün devamında kaydedilmelidir.
+doğrulandı. Odaklı testler 23/23, tam suite 270/270 geçti. Checkpoint `ce5b70f`
+dosya-seviyesinde canlıya dağıtıldı; iki kaynak hash'i yerelle birebir eşleşti.
+Rollback `/var/lib/agca/rollback-ce5b70f-dynamic-paper-execution-20260901T1752Z`
+altındadır. Worker kontrollü yeniden başlatma sonrası active kaldı. Dağıtımdan
+önce giriş saati on dakikadan fazla geçmiş ARB/CRV/OP/ENA kayıtları geriye dönük
+işlem uydurulmadan yeni açık nedenle iptal edildi ve aktif kapasite 6'dan 2'ye
+indi. Dağıtılmış modül canlı CRV için içinde bulunulan saatin tam OKX swap açılışını,
+pozitif likiditeyi, Binance çapraz kontrolünü ve 64 karakter kaynak hash'ini
+başarıyla üretti. İlk dağıtım-sonrası doğal yeni adayın zamanında dolumu ayrıca
+izlenmelidir; geçmiş iptaller başarı gibi yeniden yazılmayacaktır.
 
 # 2026-09-01 — Oturum kapanışı: ortak vizyon ve sonraki doğrulama
 
