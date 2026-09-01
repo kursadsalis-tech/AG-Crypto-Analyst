@@ -46,7 +46,7 @@ def memory_database(state):
     market_at = datetime.fromtimestamp(state.market_timestamp_ms / 1000, tz=timezone.utc)
     entry_at = market_at - timedelta(seconds=1)
     entry_price = state.last_price / 1.02
-    quantity, notional, entry_fee = 100.0 / entry_price, 100.0, 0.05
+    quantity, notional, entry_fee = 1000.0 / entry_price, 1000.0, 0.5
     con = sqlite3.connect(":memory:")
     con.executescript("""
         CREATE TABLE paper_agent_portfolio(
@@ -96,7 +96,14 @@ async def run(symbol):
         events = con.execute("""SELECT event_type,reason,real_order_allowed
             FROM paper_position_events ORDER BY event_id""").fetchall()
         if initialized["initialized"] != 1 or result["status"] != "POSITION_REDUCED":
-            raise RuntimeError("REALTIME_MANAGEMENT_ACCEPTANCE_FAILED")
+            raise RuntimeError(
+                "REALTIME_MANAGEMENT_ACCEPTANCE_FAILED " + json.dumps({
+                    "initialized": initialized, "result": result,
+                    "price": state.last_price,
+                    "visible_quote_volume": state.visible_quote_volume,
+                    "events": events,
+                }, sort_keys=True)
+            )
         if not row or row[2] != 0 or any(event[2] != 0 for event in events):
             raise RuntimeError("REAL_ORDER_GATE_VIOLATION")
         return {

@@ -224,6 +224,22 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     ))
     evidence["funding_status"] = "PENDING_RECONCILIATION"
     target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
+    if decision.action == "REDUCE" and target_qty * float(live.last_price) < rules.min_notional:
+        deferred_reason = f"{decision.reason}_BELOW_MIN_NOTIONAL"
+        con.execute("""UPDATE paper_position_management SET
+            last_market_at=?,current_stop_price=?,best_price=?,opposing_events=?,
+            tp1_done=?,tp2_done=?,last_thesis_at=? WHERE position_id=?""", (
+            iso(market_at), decision.stop_price, decision.best_price,
+            decision.opposing_events,
+            int(bool(tp1_done) or decision.reason == "TAKE_PROFIT_1R"),
+            int(bool(tp2_done) or decision.reason == "TAKE_PROFIT_2R"),
+            next_thesis_at, position_id,
+        ))
+        _event(con, position_id, market_at, observed_at, "UPDATE_STOP",
+               deferred_reason, live.last_price, None, 0, 0, 0, 0,
+               stop_price, decision.stop_price, evidence)
+        con.commit()
+        return {"status": "UPDATE_STOP", "reason": deferred_reason}
     fill = simulated_fill(
         reference_price=float(live.last_price),
         requested_notional=target_qty * float(live.last_price),

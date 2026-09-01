@@ -87,6 +87,19 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(result["status"], "DUPLICATE_OR_OLD_EVENT")
         self.assertEqual(before, after)
 
+    def test_below_minimum_profit_slice_tightens_stop_without_fake_fill(self):
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        strict = ExecutionRules(quantity_step=.001, price_tick=.01, min_notional=500,
+                                require_liquidity=True)
+        result = process_market_state(
+            self.con, self.live(102, 2), ENTRY + timedelta(seconds=2), strict,
+        )
+        self.assertEqual(result, {"status": "UPDATE_STOP",
+                                 "reason": "TAKE_PROFIT_1R_BELOW_MIN_NOTIONAL"})
+        self.assertEqual(self.con.execute(
+            "SELECT remaining_quantity FROM paper_position_management"
+        ).fetchone()[0], 10)
+
     def test_missing_risk_snapshot_is_visible_and_does_not_invent_stop(self):
         self.con.execute("DELETE FROM asset_risk_snapshots")
         result = initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
