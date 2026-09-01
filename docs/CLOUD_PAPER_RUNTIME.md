@@ -38,6 +38,22 @@ latency, slippage, volume participation, partial fills, minimum notional, and
 perpetual funding conservatively; venue metadata should be refreshed before a
 claim of exchange-grade parity.
 
+### Mandatory dynamic PAPER execution acceptance
+
+Every PAPER execution deployment must pass the live-source, in-memory check
+before it may be described as healthy:
+
+```bash
+python -m scripts.paper_execution_readiness
+```
+
+The command must return `passed=true`, `authoritative_database_mutated=false`,
+and `real_orders_allowed=false` for CRVUSDT, DASHUSDT, and UNIUSDT. It verifies
+exact entry capture, OKX USDT-swap liquidity, Binance spot cross-check, simulated
+fill, immutable provenance, and cash/fee reconciliation without touching the
+lifetime portfolio. A natural trade is economic evidence, not deployment
+readiness evidence; do not wait for one to discover whether execution works.
+
 ### Supabase with Data API disabled
 
 Supabase may keep PostgREST alive after the Data API is disabled and repeatedly

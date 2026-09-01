@@ -33,6 +33,15 @@ pozitif likiditeyi, Binance çapraz kontrolünü ve 64 karakter kaynak hash'ini
 başarıyla üretti. İlk dağıtım-sonrası doğal yeni adayın zamanında dolumu ayrıca
 izlenmelidir; geçmiş iptaller başarı gibi yeniden yazılmayacaktır.
 
+“Doğal adayı bekleme” artık dağıtım doğrulaması değildir. Yeni zorunlu
+`scripts/paper_execution_readiness.py` canlı kaynakları kullanıp yalnız bellek
+içi portföyde exact giriş, iki-kaynak kontrolü, değişmez gözlem, simüle dolum ve
+muhasebeyi uçtan uca sınar. Canlı VM koşusu CRVUSDT, DASHUSDT ve UNIUSDT için
+`2026-09-01 21:00 İstanbul (2026-09-01 18:00 UTC)` girişinde üçte üç geçti;
+üçü de test portföyünde OPEN oldu, otoritatif SQLite değişmedi ve gerçek emir
+yetkisi sıfır kaldı. Bu preflight geçmeden gelecek dağıtımlar “sağlıklı” diye
+sunulamaz; doğal işlemler yalnız ekonomik/öğrenme sonucu olarak izlenecektir.
+
 # 2026-09-01 — Oturum kapanışı: ortak vizyon ve sonraki doğrulama
 
 Kullanıcının bağlayıcı beklentisi nettir: AGCA güvenli görünmek için işlem ve
