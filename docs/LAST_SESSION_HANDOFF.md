@@ -15,8 +15,14 @@ değişmez OKX USDT-swap ticker'ıdır; Binance spot ticker ile fiyat sapması %
 içinde doğrulanır. Kanıt yoksa veya bozuksa fail-closed kalır. Eski bir sonraki
 saat açılışı kapısı bağlayıcı kayıttan kaldırıldı. Unified Forecast yürütmeye
 bağlanmadı; tek ajan, tek yaşam boyu kasa, PAPER_ONLY ve gerçek-emir=0 korundu.
-Odak testleri 17/17, tam suite 270/270 geçti. Canlı dağıtım ve ilk doğal
-seçim→dolum→kapanış→öğrenme kanıtı bu kaydın devamında doğrulanmalıdır.
+Odak testleri 17/17, tam suite 270/270 geçti. Checkpoint `8f9ca68` canlı
+`agca-runtime` worker'ına üç çalışma dosyasıyla dağıtıldı; rollback
+`/var/lib/agca/rollback-8f9ca68-immediate-paper-20260901T1829Z` altındadır.
+Worker 21:30:11 İstanbul (18:30:11 UTC) itibarıyla `HEALTHY`, tek ajan ve
+gerçek-emir=0 kaldı. Dağıtım öncesinde sonuç-kör biçimde seçilmiş CRV/SOL/FIL/ZEC
+kayıtlarının değişmez planı geriye dönük yeniden yazılmadı; bunlar 22:00 İstanbul
+(19:00 UTC) girişini bekliyor. İlk V3 doğal seçimin aynı çevrimde dolumu ve daha
+sonraki kapanış→öğrenme kaydı ayrıca doğrulanmalıdır.
 
 # 2026-09-01 — Dinamik PAPER yürütme sabit mum kohortundan ayrıldı
 
