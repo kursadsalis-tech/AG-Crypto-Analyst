@@ -1,5 +1,31 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — Oturum kapanışı: ortak vizyon ve sonraki doğrulama
+
+Kullanıcının bağlayıcı beklentisi nettir: AGCA güvenli görünmek için işlem ve
+öğrenmeyi sıfırlayan bir sistem olmayacak. Geçerli, likit ve sonuç-kör tezi olan
+fırsatlar kontrollü PAPER boyutuyla sınanacak; risk katmanı fırsata ikinci kaba
+karar motoru olmayacak. Sıfır işlem yalnız açık, makine-okunur nedenle kabul
+edilebilir. Sistem piyasa-geneli ve bağlamsal çalışacak; kullanıcı aynı vizyonu
+her oturumda yeniden anlatmak zorunda bırakılmayacaktır.
+
+Aktif `AGCA günlük durum özeti` Codex heartbeat'i her gün `11:15 İstanbul
+(08:15 UTC)` için ACTIVE durumdadır. Mobil özet; sistem sağlığı, seçilen/giriş
+bekleyen/açık/kapanan/iptal PAPER sayıları, sanal kasa ve açık risk, tüm maliyetler
+sonrası gerçekleşmiş sonuç, varsa sorun ve hedefe ilerleme değerlendirmesini kısa
+Türkçe verir. Giriş bekleyen işlem “işlem yok” diye sunulamaz. Eski gereksiz
+brifingler kapalıdır; kritik arıza nöbeti yalnız gerçek sorunlarda bildirim verir.
+
+Oturum kapanırken dört sonuç-kör davranış işlemi `PENDING_ENTRY` durumundadır:
+BTCUSDT, DASHUSDT, CRVUSDT ve UNIUSDT SHORT; her biri yaklaşık 205,54 USDT.
+Planlı exact girişleri `2026-09-01 04:00 İstanbul (01:00 UTC)` zamanıdır. Dördünün
+tez/hash ve exchange metadata bağları doğrulandı. Sonraki oturumun ilk işi bu
+dört kaydın OPEN/CANCELLED durumunu, exact fill fiyat/maliyetlerini, portföy
+muhasebesini ve seçim audit nedenlerini canlı SQLite'tan doğrulamaktır. 0G/ARB
+kararlarının eski gizli %1 tabanıyla kaçırıldığı unutulmamalı; yeni sabit 10 USDT
+tabanı sonraki mikro PAPER adaylarında canlı kanıtlanmalıdır.
+
+
 # 2026-09-01 — PAPER kapı envanteri gizli öğrenme vetolarını kaldırdı
 
 Aktif karar–risk–yürütme yolu uçtan uca denetlendi. En önemli bulgu, risk
