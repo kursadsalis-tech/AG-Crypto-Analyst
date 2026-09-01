@@ -26,5 +26,9 @@ capacity, available exposure, and rejection reason counts locally in
 `paper_behavior_selection_runs`. A zero-trade cycle without an explicit recorded
 cause is an operational failure, not a healthy outcome.
 
+Canonical timestamps remain UTC for deterministic joins and audit. Every
+operator-facing PAPER time must render Istanbul time first and include UTC in
+parentheses; an unlabeled UTC timestamp is not an acceptable user display.
+
 Unified Forecast is baseline-only. This register does not authorize a second
 agent, a second portfolio, policy promotion, capital changes, or real orders.

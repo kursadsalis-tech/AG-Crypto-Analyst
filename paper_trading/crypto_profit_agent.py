@@ -68,6 +68,26 @@ def parse_time(value):
     return parsed.astimezone(timezone.utc)
 
 
+def display_time(value):
+    """Render operator-facing timestamps Istanbul-first; storage stays UTC."""
+    parsed = parse_time(value)
+    local = parsed.astimezone(ISTANBUL)
+    return (
+        f"{local:%Y-%m-%d %H:%M:%S} İstanbul "
+        f"({parsed:%Y-%m-%d %H:%M:%S} UTC)"
+    )
+
+
+def pending_entry_schedule(con):
+    return [{
+        "position_id": int(row[0]), "symbol": row[1], "direction": row[2],
+        "planned_entry_time": row[3],
+        "planned_entry_display": display_time(row[3]),
+    } for row in con.execute("""SELECT position_id,symbol,direction,planned_entry_time
+        FROM paper_agent_positions WHERE status='PENDING_ENTRY'
+        ORDER BY planned_entry_time,position_id""").fetchall()]
+
+
 def next_tradable_hour_open(decision_time):
     """First full hourly open strictly after the decision was committed."""
     decision_time = parse_time(decision_time)
@@ -852,7 +872,8 @@ def markdown_report(payload):
         "# AG Crypto Analyst — Kripto Kazanç Ajanı",
         "",
         f"Rapor tarihi: {payload['report_date']} | PAPER ONLY",
-        f"Pencere: {payload['window_start']} → {payload['window_end']}",
+        f"Pencere: {display_time(payload['window_start'])} → "
+        f"{display_time(payload['window_end'])}",
         "",
         "## Portföy",
         "",
@@ -899,7 +920,8 @@ def markdown_report(payload):
     for row in payload["opened"]:
         lines.append(
             f"- #{row[0]} {row[1]} {row[2]} {row[3]}h | "
-            f"seçim={row[4]} | giriş={row[5] or 'PENDING'} @ "
+            f"seçim={display_time(row[4])} | "
+            f"giriş={display_time(row[5]) if row[5] else 'BEKLİYOR'} @ "
             f"{(format(float(row[6]), '.8g') if row[6] is not None else 'N/A')} | "
             f"notional={float(row[7]):.2f} | ücret={float(row[8]):.2f} | "
             f"confidence={100*float(row[9]):.1f}% | status={row[11]} | {row[10]}"
@@ -911,8 +933,8 @@ def markdown_report(payload):
     for row in payload["closed"]:
         lines.append(
             f"- #{row[0]} {row[1]} {row[2]} {row[3]}h | "
-            f"giriş={row[4]} @ {float(row[5]):.8g} | "
-            f"çıkış={row[6]} @ {float(row[7]):.8g} | "
+            f"giriş={display_time(row[4])} @ {float(row[5]):.8g} | "
+            f"çıkış={display_time(row[6])} @ {float(row[7]):.8g} | "
             f"notional={float(row[8]):.2f} | "
             f"ücret={float(row[9])+float(row[10]):.2f} | "
             f"brüt={float(row[11]):+.2f} | net={float(row[12]):+.2f} USDT | "
@@ -1004,6 +1026,11 @@ def render(result):
             "Remote teslim: " + ("TAMAMLANDI" if report.get("delivery_complete") else "BEKLIYOR")
         )
     print("Not: Gerçek emir yoktur; LONG/SHORT işlemler 1x sanal simülasyondur.")
+    for pending in result.get("pending_entries", []):
+        print(
+            f"Bekleyen giriş: #{pending['position_id']} {pending['symbol']} "
+            f"{pending['direction']} | {pending['planned_entry_display']}"
+        )
     authority = result["authority"]
     print(
         "Yetki: öneri=EVET | gerçek_emir=HAYIR | "
@@ -1055,6 +1082,7 @@ def run(now=None):
             "selected": selected,
             "trade_learning": learning,
             "portfolio": snapshot,
+            "pending_entries": pending_entry_schedule(con),
             "daily_report": daily,
             "authority": authority,
             "exchange_metadata": ({
@@ -1082,6 +1110,7 @@ def run_behavior_selection(now=None):
         return {
             "status": "SUCCESS", "selected": selected,
             "authority": authority, "portfolio": portfolio_snapshot(con),
+            "pending_entries": pending_entry_schedule(con),
         }
     finally:
         con.close()

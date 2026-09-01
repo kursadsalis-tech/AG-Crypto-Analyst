@@ -42,6 +42,12 @@ eski %1 yürütme tabanı yüzünden pozisyona dönüşmemiştir; yeni taban son
 adaylarda bu engeli kaldırır. Worker ve bütün sağlık timer'ları active. İlk dört
 işlemin 01:00 UTC exact fill sonucu henüz doğrulanmalıdır.
 
+Kullanıcı saatinin İstanbul olduğu kalıcılaştırıldı. Canonical SQLite zamanları
+UTC kalır; PAPER raporu, bekleyen giriş ve kullanıcıya dönük tüm çalışma saatleri
+İstanbul saati önce ve UTC karşılığı parantez içinde gösterilir. Bu dört işlemin
+planlı girişi kullanıcı saatinde `2026-09-01 04:00:00 İstanbul
+(2026-09-01 01:00:00 UTC)` şeklindedir.
+
 
 # 2026-09-01 — Bağlamsız risk vetosu PAPER öğrenmesinden çıkarıldı
 

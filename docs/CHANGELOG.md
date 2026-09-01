@@ -1182,3 +1182,6 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   örtüşmeyen dört saatlik endogenous `MARKET_STRUCTURE` outcome yolu ile
   kaldırıldı. Global piyasa tail stresi tüm PAPER işlemlerini kesmek yerine mikro
   maruziyet zarfına dönüştürüldü. Tam test suite 262/262 geçti.
+- PAPER raporu ve çalışma çıktılarındaki zamanlar İstanbul saati önce, açık UTC
+  karşılığı parantez içinde gösterilir. Veritabanı/audit zamanları nedensel
+  bütünlük için UTC kalır.

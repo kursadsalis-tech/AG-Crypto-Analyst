@@ -3,12 +3,19 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from paper_trading.crypto_profit_agent import (
-    exact_close, exact_open, exact_planned_open, iso, next_tradable_hour_open,
+    display_time, exact_close, exact_open, exact_planned_open, iso,
+    next_tradable_hour_open,
 )
 from paper_trading.execution_model import simulated_fill
 
 
 class CryptoProfitAgentFailClosedTests(unittest.TestCase):
+    def test_operator_time_is_istanbul_first_with_explicit_utc(self):
+        rendered = display_time("2026-09-01T01:00:00+00:00")
+        self.assertEqual(
+            rendered,
+            "2026-09-01 04:00:00 İstanbul (2026-09-01 01:00:00 UTC)",
+        )
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         self.con.execute("""
