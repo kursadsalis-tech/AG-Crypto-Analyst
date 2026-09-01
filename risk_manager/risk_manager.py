@@ -87,12 +87,14 @@ GLOBAL_LIMITS = {
         "max_new_positions": 1,
     },
     "LOCKDOWN": {
-        "max_total_exposure_pct": 0.0,
-        "max_alt_exposure_pct": 0.0,
-        "max_single_position_pct": 0.0,
-        "risk_per_trade_pct": 0.0,
-        "daily_loss_limit_pct": 0.0,
-        "max_new_positions": 0,
+        # In PAPER this is a stress-experiment envelope, not a learning ban.
+        # Real-order authority is controlled separately and remains off.
+        "max_total_exposure_pct": 2.0,
+        "max_alt_exposure_pct": 1.0,
+        "max_single_position_pct": 0.25,
+        "risk_per_trade_pct": 0.05,
+        "daily_loss_limit_pct": 0.25,
+        "max_new_positions": 1,
     },
     "DATA_BLOCKED": {
         "max_total_exposure_pct": 0.0,
@@ -393,7 +395,7 @@ def build_global_policy(assets, source_errors, created_at=None):
         reasons.append(f"ASSET_BLOCKS_{asset_block_count}")
 
     limits = dict(GLOBAL_LIMITS[state])
-    new_positions_allowed = state not in {"LOCKDOWN", "DATA_BLOCKED"}
+    new_positions_allowed = state != "DATA_BLOCKED"
     global_cap = limits["max_single_position_pct"]
     for asset in assets:
         asset["max_position_pct"] = round(

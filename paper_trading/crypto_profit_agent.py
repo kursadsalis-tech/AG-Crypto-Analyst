@@ -44,6 +44,7 @@ POSITION_FRACTION = 0.10
 EXPLORATION_POSITION_FRACTION = 0.02
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
+MIN_PAPER_NOTIONAL_USDT = 10.0
 MIN_DIRECTION_PROBABILITY = 0.52
 MIN_PROBABILITY_GAP = 0.05
 TRADE_HORIZONS = (4, 24)
@@ -149,6 +150,19 @@ def ensure_tables(con):
             remote_mirror_status TEXT NOT NULL DEFAULT 'PENDING',
             remote_mirrored_at TEXT,
             delivery_complete INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS paper_behavior_selection_runs (
+            run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            core_status TEXT NOT NULL,
+            candidate_count INTEGER NOT NULL,
+            selected_count INTEGER NOT NULL,
+            active_position_count INTEGER NOT NULL,
+            capacity INTEGER NOT NULL,
+            available_exposure REAL NOT NULL,
+            reason_counts_json TEXT NOT NULL,
+            real_order_allowed INTEGER NOT NULL DEFAULT 0
         );
     """)
     columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
@@ -619,7 +633,25 @@ def select_new_positions(con, now):
     """).fetchall()
     active_symbols = {row[0] for row in active}
     capacity = max(0, MAX_OPEN_POSITIONS - len(active))
+    reasons = {}
+    def reject(reason):
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    def record_run(selected_count, available_exposure):
+        con.execute("""INSERT INTO paper_behavior_selection_runs(
+            created_at,core_status,candidate_count,selected_count,
+            active_position_count,capacity,available_exposure,
+            reason_counts_json,real_order_allowed
+        ) VALUES(?,?,?,?,?,?,?,?,0)""", (
+            iso(now), behavior_result["status"], len(behavior_result["candidates"]),
+            selected_count, len(active), capacity, available_exposure,
+            json.dumps(reasons, sort_keys=True),
+        ))
+
     if capacity <= 0:
+        reject("PORTFOLIO_POSITION_CAPACITY_FULL")
+        record_run(0, 0.0)
+        con.commit()
         return 0
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
@@ -627,7 +659,11 @@ def select_new_positions(con, now):
     selected = 0
     planned_entry = next_tradable_hour_open(now)
     for row in behavior_result["candidates"]:
-        if selected >= max_new or row["symbol"] in active_symbols:
+        if selected >= max_new:
+            reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
+            continue
+        if row["symbol"] in active_symbols:
+            reject("SYMBOL_ALREADY_ACTIVE")
             continue
         position_fraction = (
             POSITION_FRACTION if row.get("experiment_tier") == "PROMOTION_READY"
@@ -644,8 +680,9 @@ def select_new_positions(con, now):
             risk_room,
             snapshot["cash"] / (1.0 + FEE_RATE),
         )
-        if notional < max(10.0, snapshot["equity"] * 0.01):
-            break
+        if notional < MIN_PAPER_NOTIONAL_USDT:
+            reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
+            continue
         reason = (
             f"BEHAVIOR {row['horizon']}h {row['direction']} | "
             f"cost_after_win={100*row['confidence']:.1f}% | "
@@ -688,6 +725,9 @@ def select_new_positions(con, now):
             active_symbols.add(row["symbol"])
             available_exposure -= notional
             snapshot["cash"] -= notional * (1.0 + FEE_RATE)
+        else:
+            reject("DECISION_ALREADY_SELECTED")
+    record_run(selected, available_exposure)
     con.commit()
     return selected
 

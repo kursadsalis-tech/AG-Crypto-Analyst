@@ -61,6 +61,10 @@ mirrors or temporary folders.
   reduce PAPER experiment size but must not by itself become a context-blind
   asset veto. Hard asset vetoes are reserved for missing/corrupt evidence or
   execution infeasibility such as inadequate liquidity.
+- `docs/PAPER_EXECUTION_GATE_REGISTER.md` is binding for the active PAPER path.
+  A new hard veto requires evidence, a regression test, and an explicit reason
+  why position sizing cannot contain the risk. Every zero-selection cycle must
+  have a durable machine-readable cause; "healthy but zero" is insufficient.
 - Never commit credentials or print secret values in diagnostics.
 - PAPER learning experiments must not be blocked by promotion/proven-skill
   thresholds. A point-in-time, cost-positive, risk-approved hypothesis may be

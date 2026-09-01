@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from database.behavior_event_outcome_store import OUTCOME_TABLE
+from database.behavior_event_outcome_store import (
+    OUTCOME_TABLE, backfill_market_structure_outcomes,
+)
 from database.market_behavior_store import persist_closed_minute
 from database.runtime_store import REMOTE_RUNTIME_TABLES
 
@@ -52,6 +54,30 @@ def event(symbols=None):
 
 
 class BehaviorEventOutcomeStoreTests(unittest.TestCase):
+    def test_non_overlapping_endogenous_market_structure_outcome(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.db"
+            instrument = {"BTC-USDT-SWAP": 100}
+            event_minute = 14_400_000
+            persist_closed_minute(path, report(event_minute - 60_000, instrument))
+            persist_closed_minute(path, report(event_minute, {"BTC-USDT-SWAP": 101}))
+            outcome_minute = event_minute + 239 * 60_000
+            result = persist_closed_minute(
+                path, report(outcome_minute, {"BTC-USDT-SWAP": 104})
+            )
+            self.assertEqual(result["forward_outcomes"]["settled_by_horizon"], {"240": 1})
+            with sqlite3.connect(path) as con:
+                row = con.execute(f"""SELECT kind,source,instrument,horizon_minutes
+                    FROM {OUTCOME_TABLE}""").fetchone()
+            self.assertEqual(
+                row, ("MARKET_STRUCTURE", "AGCA_MARKET_BEHAVIOR", "BTC-USDT-SWAP", 240)
+            )
+            with sqlite3.connect(path) as con:
+                self.assertEqual(
+                    backfill_market_structure_outcomes(con),
+                    {"examined": 1, "inserted": 0},
+                )
+
     def test_settles_only_closed_horizons_and_is_immutable(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "runtime.db"

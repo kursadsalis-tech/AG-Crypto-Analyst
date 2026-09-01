@@ -1175,3 +1175,10 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   Genel `INSERT OR IGNORE` kaldırıldı; yalnız doğal karar kimliği çakışması
   idempotenttir, başka veri/şema hataları artık sessizce yutulmaz. Tam test suite
   255/255 geçti.
+- PAPER yürütücüsündeki gizli %1 özkaynak asgari boyutu kaldırıldı; sabit 10 USDT
+  yürütülebilirlik tabanı kullanılıyor. Küçük aday sonraki adayları artık
+  durdurmuyor ve her sıfır seçim nedenleriyle yerel audit kaydına giriyor.
+- Karşıt book/taker absorption desenleri öğrenmeye açıldı. Dış olay zorunluluğu,
+  örtüşmeyen dört saatlik endogenous `MARKET_STRUCTURE` outcome yolu ile
+  kaldırıldı. Global piyasa tail stresi tüm PAPER işlemlerini kesmek yerine mikro
+  maruziyet zarfına dönüştürüldü. Tam test suite 262/262 geçti.

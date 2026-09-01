@@ -256,6 +256,24 @@ class TruthEngineTests(unittest.TestCase):
         self.assertFalse(asset["new_position_allowed"])
         self.assertEqual(asset["max_position_pct"], 0.0)
 
+    def test_valid_market_tail_risk_sizes_paper_instead_of_stopping_learning(self):
+        assets = [{
+            "symbol": symbol, "market_risk_score": 8 if symbol == "BTCUSDT" else 0,
+            "market_hard_block": symbol == "BTCUSDT", "hard_block": False,
+            "liquidity_hard_block": False,
+            "pre_global_max_position_pct": 0.25 if symbol == "BTCUSDT" else 5.0,
+            "risk_tier": "EXTREME" if symbol == "BTCUSDT" else "NORMAL",
+            "return_24h_pct": -13.0 if symbol == "BTCUSDT" else 0.0,
+            "range_24h_pct": 22.0 if symbol == "BTCUSDT" else 1.0,
+            "drawdown_7d_pct": -26.0 if symbol == "BTCUSDT" else 0.0,
+        } for symbol in risk_manager.SYMBOLS]
+        policy = risk_manager.build_global_policy(assets, {}, NOW.isoformat())
+        self.assertEqual(policy["market_state"], "LOCKDOWN")
+        self.assertTrue(policy["new_positions_allowed"])
+        self.assertEqual(policy["max_single_position_pct"], 0.25)
+        self.assertEqual(policy["max_new_positions"], 1)
+        self.assertTrue(all(asset["new_position_allowed"] for asset in assets))
+
     def test_latest_behavior_universe_becomes_dynamic_risk_symbols(self):
         con = sqlite3.connect(":memory:")
         con.execute("""CREATE TABLE market_behavior_minute_features(

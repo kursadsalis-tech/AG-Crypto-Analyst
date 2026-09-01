@@ -827,3 +827,31 @@ drawdown veya yakın dönem yönü nedeniyle tamamen engellemek adaptif, işleml
   kanıttan öğrenilir.
 - Unified Forecast baseline-only, tek ajan, yaşam boyu kasa, PAPER_ONLY ve
   gerçek-emir güvenlik kapıları değişmez.
+
+---
+
+## Karar 035 - Sıfır İşlem Açıklanabilir Olmalı; Gizli PAPER Vetosu Yasaktır
+
+Risk katmanının verdiği küçük PAPER iznini yürütme katmanının daha büyük sabit
+asgari boyutla tekrar sıfırlaması veya tek reddedilen adayın sonraki adayları
+durdurması hedef sözleşmesini ihlal eder.
+
+- PAPER için asgari notional sabit 10 USDT yürütülebilirlik tabanıdır. Eski
+  özkaynağın %1'i tabanı kaldırılmıştır; örneğin %0,25 risk tavanı gerçekten
+  küçük pozisyona dönüşebilmelidir.
+- Yürütülemeyecek kadar küçük bir aday yalnız kendisi için reddedilir; sonraki
+  adaylar değerlendirilmeye devam eder.
+- Her seçim çevrimi çekirdek durumu, aday/seçim sayısı, aktif pozisyon,
+  kapasite, kullanılabilir maruziyet ve ret nedenlerini yerel, makine-okunur
+  `paper_behavior_selection_runs` kaydına yazar. Açıklamasız “sağlıklı ama sıfır”
+  kabul edilmez.
+- Karşıt book/taker işaretleri yok sayılmaz; absorption/exhaustion bağlamı olarak
+  ayrı desenlerde sonuçlardan öğrenilebilir.
+- Dış olay eşleşmesi zorunlu değildir. Kapanmış, kalite-uygun piyasa davranışından
+  örtüşmeyen dört saatlik `MARKET_STRUCTURE` örnekleri sonuç-kör biçimde oluşur;
+  yeterli hipotez biriktiğinde saf piyasa yapısı PAPER fırsatı üretebilir.
+- Global piyasa stresi geçerli veride bütün PAPER öğrenmesini durdurmaz; toplam
+  %2, alt %1, tek pozisyon %0,25 ve çevrimde bir yeni pozisyon zarfına küçülür.
+  Yalnız `DATA_BLOCKED` bütün yeni PAPER girişlerini keser.
+- Bağlayıcı kapı sınıfları `docs/PAPER_EXECUTION_GATE_REGISTER.md` içindedir.
+  Unified Forecast baseline-only ve gerçek emir yetkisi kapalı kalır.

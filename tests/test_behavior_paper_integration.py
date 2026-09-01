@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,44 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
         ).fetchone()
         self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
+
+    def test_tiny_risk_cap_can_open_small_paper_learning_experiment(self):
+        candidate = self.candidate()
+        candidate["risk_cap_pct"] = 0.25
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            selected = agent.select_new_positions(self.con, NOW)
+        self.assertEqual(selected, 1)
+        notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions"
+        ).fetchone()[0]
+        self.assertAlmostEqual(notional, 25.0)
+
+    def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
+        too_small = self.candidate()
+        too_small["risk_cap_pct"] = 0.05
+        later = self.candidate()
+        later.update({"decision_id": 8, "symbol": "ETHUSDT", "risk_cap_pct": 1.0,
+                      "evidence_sha256": "b" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [too_small, later], "review": {},
+        }):
+            selected = agent.select_new_positions(self.con, NOW)
+        self.assertEqual(selected, 1)
+        self.assertEqual(
+            self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
+            "ETHUSDT",
+        )
+        audit = self.con.execute("""SELECT candidate_count,selected_count,
+            reason_counts_json,real_order_allowed FROM paper_behavior_selection_runs""").fetchone()
+        self.assertEqual(audit[:2], (2, 1))
+        self.assertEqual(json.loads(audit[2]), {"NOTIONAL_BELOW_EXECUTABLE_MINIMUM": 1})
+        self.assertEqual(audit[3], 0)
+
+    def test_selection_audit_is_local_only(self):
+        from database.runtime_store import REMOTE_RUNTIME_TABLES
+        self.assertNotIn("paper_behavior_selection_runs", REMOTE_RUNTIME_TABLES)
 
 
 if __name__ == "__main__":

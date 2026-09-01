@@ -1,5 +1,33 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — PAPER kapı envanteri gizli öğrenme vetolarını kaldırdı
+
+Aktif karar–risk–yürütme yolu uçtan uca denetlendi. En önemli bulgu, risk
+yöneticisinin 0G gibi uç bağlama verdiği %0,25 iznin PAPER yürütücüdeki
+`max(10 USDT, equity*%1)` tabanıyla tekrar sıfırlanmasıydı. Ayrıca ilk küçük aday
+`break` ile kendisinden sonraki bütün adayları susturuyordu. Asgari notional artık
+sabit 10 USDT ve yürütülemeyen aday yalnız kendisi için `continue` edilir.
+
+Her seçim çevrimi `paper_behavior_selection_runs` içine çekirdek durumu,
+aday/seçim sayısı, kapasite, maruziyet ve ret nedenlerini yazar; tablo local-only
+ve gerçek emir yetkisi sıfırdır. Testte %0,25 tavan 25 USDT pozisyona dönüştü;
+5 USDT'lik ilk aday reddedilirken sonraki 100 USDT aday seçilmeye devam etti.
+
+İkinci kapsam denetimi, karşıt book/taker akışının tamamen atıldığını ve dış olay
+eşleşmesinin saf piyasa yapısı fırsatlarını yok ettiğini gösterdi. Karşıt işaretler
+artık iki absorption deseni olarak öğrenilir. Her örtüşmeyen dört saatlik blokta
+en güçlü kalite-uygun davranış için outcome-blind `MARKET_STRUCTURE` örneği
+oluşur; hipotez yeterli olduğunda dış haber/on-chain/whale olayı olmadan da PAPER
+adayı üretilebilir. Unified Forecast bu yola bağlanmadı.
+
+Global `LOCKDOWN` da geçerli veride sıfır öğrenme yerine en fazla %2 toplam,
+%1 alt, %0,25 tek pozisyon ve bir yeni işlem zarfına dönüştürüldü. `DATA_BLOCKED`,
+eksik/bozuk veri ve yürütülemez likidite kesin veto kalır. Bağlayıcı envanter
+`docs/PAPER_EXECUTION_GATE_REGISTER.md` dosyasındadır. Tam suite 262/262 geçti.
+Canlı dağıtım, geçmiş uygun market-structure outcome backfill'i ve doğal
+karar–tez–işlem zinciri henüz tamamlanmalıdır.
+
+
 # 2026-09-01 — Bağlamsız risk vetosu PAPER öğrenmesinden çıkarıldı
 
 Canlı 0G örneği mevcut risk katmanının geçerli ve yüksek hacimli bir davranış

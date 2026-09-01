@@ -112,6 +112,18 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             int((NOW - timedelta(minutes=1)).timestamp() * 1000),
         )
 
+    def test_endogenous_market_structure_can_trade_without_external_event(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE behavior_event_forward_outcomes SET kind='MARKET_STRUCTURE'"
+        )
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(result["candidates"][0]["evidence"]["event"]["kind"],
+                         "MARKET_STRUCTURE")
+
     def test_new_risk_snapshot_reuses_immutable_decision_thesis(self):
         self.add_history(days=1)
         self.add_current()
@@ -170,6 +182,20 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         )
         result = core.evaluate(self.con, NOW)
         self.assertEqual(result["candidates"], [])
+
+    def test_learned_opposing_flow_can_be_traded_as_absorption_pattern(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE behavior_event_forward_outcomes SET taker_imbalance_snapshot_mean=-.4"
+        )
+        self.con.execute(
+            "UPDATE market_behavior_minute_features SET taker_imbalance_snapshot_mean=-.4"
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(result["candidates"][0]["evidence"]["learned_pattern"]["flow_pattern"],
+                         "BOOK_POS_TAKER_NEG")
 
     def test_future_available_outcome_cannot_train_policy(self):
         self.add_history(days=3)

@@ -132,6 +132,12 @@ def _flow_pattern(book, taker):
         return "FLOW_POS"
     if book < 0 and taker < 0:
         return "FLOW_NEG"
+    # Opposing depth and aggressive flow can represent absorption/exhaustion;
+    # it is a learnable market structure, not absence of a setup.
+    if book > 0 and taker < 0:
+        return "BOOK_POS_TAKER_NEG"
+    if book < 0 and taker > 0:
+        return "BOOK_NEG_TAKER_POS"
     return None
 
 
@@ -258,15 +264,24 @@ def evaluate(con, now=None):
          else "COLLECTING_TESTABLE_HYPOTHESES"),
         review_json, int(bool(exploration_patterns)),
     ))
-    latest = con.execute("""
+    latest_behavior = con.execute("""SELECT MAX(minute_end_timestamp_ms)
+        FROM market_behavior_minute_features
+        WHERE eligible_for_learning=1 AND minute_end_timestamp_ms<=?""",
+        (int(now.timestamp() * 1000),)).fetchone()[0]
+    latest_external = con.execute("""
         SELECT MAX(m.minute_end_timestamp_ms)
         FROM market_behavior_minute_features m
         WHERE m.eligible_for_learning=1 AND m.minute_end_timestamp_ms<=?
-          AND EXISTS (
-              SELECT 1 FROM causal_minute_external_evidence e
-              WHERE e.minute_end_timestamp_ms=m.minute_end_timestamp_ms
-          )
+          AND EXISTS (SELECT 1 FROM causal_minute_external_evidence e
+              WHERE e.minute_end_timestamp_ms=m.minute_end_timestamp_ms)
     """, (int(now.timestamp() * 1000),)).fetchone()[0]
+    has_market_structure_hypothesis = any(
+        kind == "MARKET_STRUCTURE" for kind, _ in exploration_patterns
+    )
+    latest = (
+        latest_behavior if has_market_structure_hypothesis or latest_external is None
+        else latest_external
+    )
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
@@ -274,6 +289,11 @@ def evaluate(con, now=None):
     events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
         FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
         ORDER BY kind,event_id""", (latest,)).fetchall()
+    evidence_end = datetime.fromtimestamp(int(latest) / 1000, timezone.utc)
+    events.append((
+        "MARKET_STRUCTURE", "[]", f"market_structure:{latest}",
+        iso(evidence_end), "OBSERVED",
+    ))
     rows = con.execute("""SELECT instrument,book_imbalance_20_mean,
         taker_imbalance_snapshot_mean,spread_bps_mean,mid_price_last,
         open_interest_usd_first,open_interest_usd_change,funding_rate_last,
@@ -293,7 +313,6 @@ def evaluate(con, now=None):
             continue
         for kind, symbols_json, event_id, available_at, event_direction in events:
             available = datetime.fromisoformat(str(available_at).replace("Z", "+00:00"))
-            evidence_end = datetime.fromtimestamp(int(latest) / 1000, timezone.utc)
             if available.astimezone(timezone.utc) > evidence_end:
                 continue
             learned = exploration_patterns.get((str(kind), pattern))
