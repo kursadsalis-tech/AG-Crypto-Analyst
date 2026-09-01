@@ -24,8 +24,23 @@ Global `LOCKDOWN` da geçerli veride sıfır öğrenme yerine en fazla %2 toplam
 %1 alt, %0,25 tek pozisyon ve bir yeni işlem zarfına dönüştürüldü. `DATA_BLOCKED`,
 eksik/bozuk veri ve yürütülemez likidite kesin veto kalır. Bağlayıcı envanter
 `docs/PAPER_EXECUTION_GATE_REGISTER.md` dosyasındadır. Tam suite 262/262 geçti.
-Canlı dağıtım, geçmiş uygun market-structure outcome backfill'i ve doğal
-karar–tez–işlem zinciri henüz tamamlanmalıdır.
+Checkpoint `2b589bf` rollback korumalı canlıya dağıtıldı; rollback
+`/var/lib/agca/rollback-2b589bf-paper-gates-20260901T0035Z` altındadır. Retained
+canlı geçmişte yedi kapanmış/örtüşmeyen market-structure dakikası bulundu ve
+yedi outcome idempotent olarak üretildi. Henüz tek desen için beş örneğe
+ulaşmadığından endogenous aday doğal biçimde oluşmadı.
+
+Canlı seçim audit'i ilk satırını `NO_ACTIONABLE_PATTERN`, aday=0, seçilen=0,
+kapasite=2 ve gerçek_emir=0 olarak yazdı; sıfır artık açıklamasız değil. Daha
+önemlisi, önceki doğal çevrimler davranış çekirdeğinden dört sonuç-kör işlem
+seçmiş durumda: BTCUSDT SHORT, DASHUSDT SHORT, CRVUSDT SHORT ve UNIUSDT SHORT.
+Her biri 205,54 USDT (%2 keşif boyutu), `PENDING_ENTRY` ve 01:00 UTC kesin açılış
+zamanına bağlıdır. Dördünün de ayrı 64 karakter tez hash'i,
+`outcome_known_at_capture=0`, davranış karar referansı ve canlı exchange metadata
+kuralı doğrulandı; eksik tez sayısı sıfır. Ayrıca 0G/ARB kararları oluşmuş fakat
+eski %1 yürütme tabanı yüzünden pozisyona dönüşmemiştir; yeni taban sonraki küçük
+adaylarda bu engeli kaldırır. Worker ve bütün sağlık timer'ları active. İlk dört
+işlemin 01:00 UTC exact fill sonucu henüz doğrulanmalıdır.
 
 
 # 2026-09-01 — Bağlamsız risk vetosu PAPER öğrenmesinden çıkarıldı
