@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sqlite3
+import requests
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ from paper_trading import trade_learning
 from paper_trading import strategy_allocator
 from paper_trading import experience_memory
 from paper_trading import behavior_decision_core
+from paper_trading import execution_market_data
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -267,6 +269,7 @@ def ensure_tables(con):
     experience_memory.ensure_tables(con)
     experience_memory.record_legacy_summary(con)
     behavior_decision_core.ensure_tables(con)
+    execution_market_data.ensure_table(con)
     con.commit()
 
 
@@ -400,14 +403,25 @@ def fill_pending(con, now, exchange_metadata=None):
     filled = 0
     cancelled = 0
     for position_id, symbol, planned_entry_time, notional, direction in rows:
-        result = exact_planned_open(con, symbol, planned_entry_time)
+        planned = parse_time(planned_entry_time)
+        result = None
+        if PAPER_MARKET == "USD_M_PERPETUAL" and now >= planned:
+            try:
+                result = execution_market_data.capture_reference(
+                    con, position_id=position_id, symbol=symbol,
+                    expected=planned, purpose="ENTRY", observed_at=now,
+                )
+            except (requests.RequestException, ValueError):
+                result = None
+        elif PAPER_MARKET != "USD_M_PERPETUAL":
+            result = exact_planned_open(con, symbol, planned_entry_time)
         if result is None:
-            if now - parse_time(planned_entry_time) > timedelta(hours=2):
+            if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
                 con.execute("""
                     UPDATE paper_agent_positions
                     SET status='CANCELLED',cancel_reason=?
                     WHERE position_id=? AND status='PENDING_ENTRY'
-                """, ("EXACT_NEXT_OPEN_UNAVAILABLE", position_id))
+                """, ("EXACT_USDM_ENTRY_CAPTURE_UNAVAILABLE", position_id))
                 cancelled += 1
             continue
         entry_time, reference_price, quote_volume = result
@@ -489,7 +503,17 @@ def settle_open(con, now, exchange_metadata=None):
     closed = 0
     for row in rows:
         position_id, symbol, direction, due, entry_time, entry, quantity, notional, entry_fee, liq_price = row
-        result = exact_close(con, symbol, due)
+        result = None
+        if PAPER_MARKET == "USD_M_PERPETUAL":
+            try:
+                result = execution_market_data.capture_reference(
+                    con, position_id=position_id, symbol=symbol,
+                    expected=parse_time(due), purpose="EXIT", observed_at=now,
+                )
+            except (requests.RequestException, ValueError):
+                result = None
+        else:
+            result = exact_close(con, symbol, due)
         if result is None:
             continue
         exit_time, reference_price, quote_volume = result

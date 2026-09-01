@@ -89,6 +89,48 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         from database.runtime_store import REMOTE_RUNTIME_TABLES
         self.assertNotIn("paper_behavior_selection_runs", REMOTE_RUNTIME_TABLES)
 
+    def test_dynamic_symbol_fills_from_usdm_without_fixed_spot_candle(self):
+        candidate = self.candidate()
+        candidate.update({"decision_id": 9, "symbol": "CRVUSDT",
+                          "evidence_sha256": "c" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        planned = agent.next_tradable_hour_open(NOW)
+        with patch.object(agent.execution_market_data, "capture_reference",
+                          return_value=(planned, 0.5, 1_000_000.0)) as capture:
+            filled, cancelled = agent.fill_pending(
+                self.con, planned + timedelta(minutes=2)
+            )
+        self.assertEqual((filled, cancelled), (1, 0))
+        self.assertEqual(capture.call_args.kwargs["symbol"], "CRVUSDT")
+        self.assertEqual(
+            self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0],
+            "OPEN",
+        )
+
+    def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):
+        candidate = self.candidate()
+        candidate.update({"decision_id": 10, "symbol": "UNIUSDT",
+                          "evidence_sha256": "d" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            agent.select_new_positions(self.con, NOW)
+        planned = agent.next_tradable_hour_open(NOW)
+        with patch.object(agent.execution_market_data, "capture_reference",
+                          return_value=None):
+            filled, cancelled = agent.fill_pending(
+                self.con, planned + timedelta(minutes=11)
+            )
+        self.assertEqual((filled, cancelled), (0, 1))
+        self.assertEqual(
+            self.con.execute("""SELECT status,cancel_reason
+                FROM paper_agent_positions""").fetchone(),
+            ("CANCELLED", "EXACT_USDM_ENTRY_CAPTURE_UNAVAILABLE"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

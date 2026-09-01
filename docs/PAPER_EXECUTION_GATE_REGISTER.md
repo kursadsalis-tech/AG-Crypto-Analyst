@@ -18,7 +18,7 @@ a regression test, and an explanation of why sizing cannot contain the risk.
 | Minimum PAPER notional | Execution feasibility | Fixed 10 USDT floor | The former 1% equity floor was an invalid hidden learning veto and is removed |
 | Six open positions / three new per cycle / 60% exposure | Portfolio sizing | Defers additional candidates | Capacity control, not a statement that the opportunity is invalid |
 | Existing active symbol / already selected decision | Idempotency | Does not duplicate exposure or thesis | Required for one-agent, one-portfolio accounting |
-| Exact next hourly open | Execution realism | Selected thesis waits for a reproducible future fill | Active latency limitation; must be measured and replaced by causal minute execution if it materially loses setups |
+| Exact next hourly open | Execution realism | Every dynamic candidate captures its own immutable OKX USDT-swap reference, cross-checked against Binance spot; unavailable or >2% divergent evidence fails closed | The fixed forecast/research candle cohort is never an execution universe; entry capture has a 10-minute causal limit so missing data cannot occupy capacity for hours |
 | External causal event match | Strategy context | Event-linked setups remain available but are not mandatory | Endogenous `MARKET_STRUCTURE` samples and trades cover order-flow opportunities without reconnecting Unified Forecast |
 
 Every selection cycle records its core status, candidate count, selected count,

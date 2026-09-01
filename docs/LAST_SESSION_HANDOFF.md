@@ -1,5 +1,30 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — Dinamik PAPER yürütme sabit mum kohortundan ayrıldı
+
+Canlı denetim dört davranış işleminin yalnız BTCUSDT ayağının dolduğunu;
+DASHUSDT, CRVUSDT ve UNIUSDT'nin `EXACT_NEXT_OPEN_UNAVAILABLE` ile iptal
+edildiğini gösterdi. Aynı gün 21 iptalin tamamı aynı nedendeydi. Kök neden dış
+veri yokluğu değil, piyasa-geneli davranış/risk evreninin PAPER dolumunda eski
+sabit `market_klines` araştırma kohortuna yeniden bağlanmasıydı. Bekleyen
+kayıtlar iki saat kapasite tutarak öğrenme deneylerini ayrıca engelliyordu.
+
+PAPER yürütme artık her seçilen sembol için pozisyon-bazlı, değişmez giriş ve
+çıkış gözlemi kaydeder. Fiyat ve likidite davranış kaynağıyla uyumlu resmî OKX
+USDT-swap mumundan alınır; resmî Binance spot mumu bağımsız fiyat çapraz
+kontrolüdür. Sapma %2'yi aşarsa veya kaynak kanıtı bozuksa işlem fail-closed
+kalır. İlk gözlem sonradan değiştirilemez, uzak mirror'a açılmaz ve gerçek emir
+yetkisi sıfırdır. Giriş kanıtı on dakika içinde yakalanamazsa kayıt açık nedenle
+iptal edilerek kapasite serbest bırakılır; iki saatlik görünmez bekleme kaldırıldı.
+
+Sabit 13 sembol yalnız bağlayıcı sözleşmedeki global stres/referans çıpası ve
+Unified Forecast araştırma kohortu olarak kalır; davranış fırsatı, risk kapsamı
+veya PAPER yürütme evreni değildir. Unified Forecast yürütmeye bağlanmadı; tek
+ajan, yaşam boyu kasa, PAPER_ONLY ve gerçek-emir kapıları değişmedi. Dinamik
+CRV/DASH/UNI/ARB/OP/ENA örneklerinde iki resmî veri yolu canlı VM'den erişilebilir
+doğrulandı. Odaklı testler 23/23, tam suite 270/270 geçti. Canlı dağıtım ve doğal
+dolum kanıtı bu bölümün devamında kaydedilmelidir.
+
 # 2026-09-01 — Oturum kapanışı: ortak vizyon ve sonraki doğrulama
 
 Kullanıcının bağlayıcı beklentisi nettir: AGCA güvenli görünmek için işlem ve
