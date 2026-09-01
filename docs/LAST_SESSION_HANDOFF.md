@@ -20,8 +20,12 @@ Ardından canlı seçim, aynı davranış kararının değişen risk snapshot'ı
 değerlendirilmesinde eski değişmez tezi yeni hash ile arayan idempotency hatasını
 açığa çıkardı. Seçim artık doğal karar anahtarıyla mevcut tezi bulur ve ilk
 sonuç-kör kanıt/hash/risk bilgisini aynen yeniden kullanır; sonradan tez yazmaz.
-Hedefli testler 34/34, tam suite 255/255 geçti. Bu ikinci düzeltmenin canlı
-dağıtım ve seçim doğrulaması bekleniyor.
+Canlı inceleme karar satırının rollback nedeniyle oluşmadığını da gösterdi.
+Genel `INSERT OR IGNORE` kaldırıldı; yalnız doğal karar kimliği çatışması
+idempotent kabul edilir, diğer bütün constraint/veri sorunları görünür hata olur.
+Hedefli testler 34/34, tam suite 255/255 geçti. Nihai ekleme düzeltmesinin canlı
+dağıtımı tamamlanmalı; yeni doğal taze olayda karar satırı ve işlem zinciri
+birlikte doğrulanmalıdır.
 
 
 # 2026-09-01 — Dinamik fırsat evreni risk kapsamına bağlandı

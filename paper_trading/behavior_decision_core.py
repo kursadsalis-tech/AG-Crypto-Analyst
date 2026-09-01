@@ -343,12 +343,14 @@ def evaluate(con, now=None):
             digest = hashlib.sha256(json.dumps(
                 evidence, sort_keys=True, separators=(",", ":")
             ).encode()).hexdigest()
-            cursor = con.execute("""INSERT OR IGNORE INTO paper_behavior_decisions(
+            con.execute("""INSERT INTO paper_behavior_decisions(
                 created_at,core_version,policy_version,instrument,symbol,
                 evidence_minute_end_ms,horizon_minutes,direction,event_kind,pattern_key,
                 expected_net_edge_pct,empirical_win_rate,sample_count,independent_days,
                 evidence_json,evidence_sha256,status,real_order_allowed
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+            ON CONFLICT(core_version,instrument,evidence_minute_end_ms,event_kind,pattern_key)
+            DO NOTHING""", (
                 iso(now), VERSION, POLICY_VERSION, instrument, symbol, int(latest),
                 HORIZON_MINUTES, learned["direction"], kind, pattern,
                 learned["mean_net_edge_pct"], learned["cost_after_win_rate"],
@@ -357,22 +359,19 @@ def evaluate(con, now=None):
                 ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
                  else "EXPLORATORY_PAPER_LEARNING_EXPERIMENT"),
             ))
-            if cursor.rowcount == 1:
-                decision_id = cursor.lastrowid
-            else:
-                existing = con.execute("""SELECT decision_id,evidence_json,evidence_sha256
-                    FROM paper_behavior_decisions
-                    WHERE core_version=? AND instrument=?
-                      AND evidence_minute_end_ms=? AND event_kind=? AND pattern_key=?""", (
-                    VERSION, instrument, int(latest), kind, pattern,
-                )).fetchone()
-                if not existing:
-                    raise RuntimeError("idempotent behavior decision could not be resolved")
-                decision_id, stored_evidence_json, digest = existing
-                # The outcome-blind thesis is immutable. A later risk snapshot
-                # may re-evaluate the same minute but cannot rewrite its proof.
-                evidence = json.loads(stored_evidence_json)
-                risk = evidence["risk"]
+            existing = con.execute("""SELECT decision_id,evidence_json,evidence_sha256
+                FROM paper_behavior_decisions
+                WHERE core_version=? AND instrument=?
+                  AND evidence_minute_end_ms=? AND event_kind=? AND pattern_key=?""", (
+                VERSION, instrument, int(latest), kind, pattern,
+            )).fetchone()
+            if not existing:
+                raise RuntimeError("idempotent behavior decision could not be resolved")
+            decision_id, stored_evidence_json, digest = existing
+            # The outcome-blind thesis is immutable. A later risk snapshot may
+            # re-evaluate the same minute but cannot rewrite its proof.
+            evidence = json.loads(stored_evidence_json)
+            risk = evidence["risk"]
             candidates.append({
                 "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
                 "symbol": symbol, "instrument": instrument, "horizon": 4,

@@ -1171,5 +1171,7 @@ Ana ürün yol haritası tamamlandı. Yeni sürüm numarası gerektiren gelişti
   korunur.
 - Aynı davranış dakikasının yenilenen risk snapshot'ıyla tekrar seçilmesinde
   mevcut değişmez tezin yeni hash ile aranmasından doğan idempotency hatası
-  giderildi. İlk sonuç-kör tez yeniden kullanılır, sonradan değiştirilmez. Tam
-  test suite 255/255 geçti.
+  giderildi. İlk sonuç-kör tez yeniden kullanılır, sonradan değiştirilmez.
+  Genel `INSERT OR IGNORE` kaldırıldı; yalnız doğal karar kimliği çakışması
+  idempotenttir, başka veri/şema hataları artık sessizce yutulmaz. Tam test suite
+  255/255 geçti.
