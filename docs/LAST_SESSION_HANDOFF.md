@@ -47,6 +47,11 @@ UTC kalır; PAPER raporu, bekleyen giriş ve kullanıcıya dönük tüm çalış
 İstanbul saati önce ve UTC karşılığı parantez içinde gösterilir. Bu dört işlemin
 planlı girişi kullanıcı saatinde `2026-09-01 04:00:00 İstanbul
 (2026-09-01 01:00:00 UTC)` şeklindedir.
+Checkpoint `3c87b3a` rollback korumalı canlıya dağıtıldı; rollback
+`/var/lib/agca/rollback-3c87b3a-istanbul-time-20260901T0042Z` altındadır. Dört
+bekleyen girişin tamamı canlı fonksiyonda İstanbul 04:00 önce, UTC 01:00
+parantez içinde gösterildi. Worker ve bütün sağlık timer'ları active; tam suite
+263/263 geçti.
 
 
 # 2026-09-01 — Bağlamsız risk vetosu PAPER öğrenmesinden çıkarıldı
