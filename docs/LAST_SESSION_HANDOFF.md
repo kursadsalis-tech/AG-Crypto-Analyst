@@ -24,8 +24,16 @@ Canlı inceleme karar satırının rollback nedeniyle oluşmadığını da göst
 Genel `INSERT OR IGNORE` kaldırıldı; yalnız doğal karar kimliği çatışması
 idempotent kabul edilir, diğer bütün constraint/veri sorunları görünür hata olur.
 Hedefli testler 34/34, tam suite 255/255 geçti. Nihai ekleme düzeltmesinin canlı
-dağıtımı tamamlanmalı; yeni doğal taze olayda karar satırı ve işlem zinciri
-birlikte doğrulanmalıdır.
+dağıtımı checkpoint `947e30c` ile tamamlandı; rollback
+`/var/lib/agca/rollback-947e30c-visible-inserts-20260901T0000Z` altındadır.
+Worker kontrollü I/O kapanışı sonrasında yeni PID ile active oldu; observer,
+attestation ve integrity timer'ları da active. Canlı seçim hata vermeden
+`SUCCESS` tamamlandı. Son olaylı davranış dakikası 71 saniye tazeydi fakat
+çekirdek `NO_ACTIONABLE_PATTERN` verdi: öğrenmeye uygun NEWS/ONCHAIN/WHALE
+desenleri mevcut olsa da o dakikada olay + coin kapsamı + uyumlu flow birleşimi
+yoktu. Karar/işlem sayısı bu nedenle sıfır kaldı; bir sonraki doğal eşleşmede
+satır ekleme hatası artık sessizce yutulamaz ve karar–tez–işlem zinciri açıkça
+doğrulanmalıdır.
 
 
 # 2026-09-01 — Dinamik fırsat evreni risk kapsamına bağlandı
