@@ -1,0 +1,14 @@
+[Unit]
+Description=Monitor AGCA real-time PAPER manager health
+After=agca-paper-realtime-worker.service
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.paper_realtime_health_monitor
+UMask=0077

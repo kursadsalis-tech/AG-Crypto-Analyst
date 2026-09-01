@@ -1,0 +1,23 @@
+[Unit]
+Description=AGCA real-time PAPER position manager
+Wants=network-online.target
+After=network-online.target agca-cloud-worker.service
+
+[Service]
+Type=simple
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.paper_realtime_worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

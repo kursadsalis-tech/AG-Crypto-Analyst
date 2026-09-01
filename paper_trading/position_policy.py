@@ -62,7 +62,12 @@ def evaluate(state: PositionState, price: float, *, thesis_supported: bool | Non
     if state.direction == "SHORT":
         favorable = -favorable
     best = max(state.best_price, price) if state.direction == "LONG" else min(state.best_price, price)
-    opposing = state.opposing_events + 1 if thesis_supported is False else 0
+    if thesis_supported is False:
+        opposing = state.opposing_events + 1
+    elif thesis_supported is True:
+        opposing = 0
+    else:
+        opposing = state.opposing_events
     stop_hit = price <= state.stop_price if state.direction == "LONG" else price >= state.stop_price
     if stop_hit:
         return Decision("CLOSE", state.remaining_fraction, "PROTECTIVE_STOP", state.stop_price,

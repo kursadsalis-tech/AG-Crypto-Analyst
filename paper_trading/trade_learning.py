@@ -66,7 +66,14 @@ def ensure_tables(con):
 
 
 def load_closed(con, validation_cohort):
-    rows = con.execute("""
+    position_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_agent_positions)"
+    )}
+    funding_clause = (
+        "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
+        if "funding_source" in position_columns else ""
+    )
+    rows = con.execute(f"""
         SELECT p.position_id,p.symbol,p.horizon_hours,p.direction,p.exit_time,
                p.notional,p.net_pnl,COALESCE(f.regime,'UNKNOWN'),
                COALESCE(p.policy_version,'UNKNOWN'),
@@ -75,6 +82,7 @@ def load_closed(con, validation_cohort):
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
           AND p.validation_cohort=? AND p.net_pnl IS NOT NULL
+          {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """, (validation_cohort,)).fetchall()
     return [{

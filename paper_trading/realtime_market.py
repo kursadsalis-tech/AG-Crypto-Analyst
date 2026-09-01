@@ -109,20 +109,40 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
     states = {}
     backoff = 1
     while not stop_event.is_set():
+        if not symbols():
+            if health_callback:
+                health_callback("IDLE", None)
+            await asyncio.sleep(1)
+            continue
         try:
             async with websockets.connect(
                 WS_URL, ssl=context, open_timeout=10, ping_interval=20,
                 ping_timeout=10, max_queue=1024,
             ) as socket:
+                active_args = subscription_args(symbols())
                 await socket.send(json.dumps({
                     "id": str(int(time.time() * 1000)), "op": "subscribe",
-                    "args": subscription_args(symbols()),
+                    "args": active_args,
                 }))
                 backoff = 1
                 if health_callback:
                     health_callback("CONNECTED", None)
                 while not stop_event.is_set():
-                    raw = await asyncio.wait_for(socket.recv(), timeout=30)
+                    desired_args = subscription_args(symbols())
+                    if desired_args != active_args:
+                        old = {json.dumps(row, sort_keys=True) for row in active_args}
+                        new = {json.dumps(row, sort_keys=True) for row in desired_args}
+                        removed = [json.loads(row) for row in sorted(old - new)]
+                        added = [json.loads(row) for row in sorted(new - old)]
+                        if removed:
+                            await socket.send(json.dumps({"op": "unsubscribe", "args": removed}))
+                        if added:
+                            await socket.send(json.dumps({"op": "subscribe", "args": added}))
+                        active_args = desired_args
+                    try:
+                        raw = await asyncio.wait_for(socket.recv(), timeout=1)
+                    except asyncio.TimeoutError:
+                        continue
                     received_ms = int(time.time() * 1000)
                     message = json.loads(raw)
                     if message.get("event") == "error":

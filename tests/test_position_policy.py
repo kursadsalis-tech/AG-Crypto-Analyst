@@ -43,6 +43,13 @@ class PositionPolicyTests(unittest.TestCase):
                           maximum_exit_at=NOW)
         self.assertEqual(result.reason, "MAXIMUM_HOLD_TIMEOUT")
 
+    def test_missing_flow_does_not_erase_existing_opposition(self):
+        state = initialize("LONG", 100, 2)
+        state = PositionState(**{**state.__dict__, "opposing_events": 2})
+        result = evaluate(state, 100, thesis_supported=None, now=NOW,
+                          maximum_exit_at=NOW + timedelta(hours=4))
+        self.assertEqual(result.opposing_events, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

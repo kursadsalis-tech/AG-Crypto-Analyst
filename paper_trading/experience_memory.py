@@ -147,7 +147,14 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
 
 def review_closed_positions(con, now=None):
     now = now or datetime.now(timezone.utc)
-    rows = con.execute("""
+    position_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_agent_positions)"
+    )}
+    funding_clause = (
+        "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
+        if "funding_source" in position_columns else ""
+    )
+    rows = con.execute(f"""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
@@ -156,6 +163,7 @@ def review_closed_positions(con, now=None):
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
+          {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """).fetchall()
     created = 0

@@ -58,6 +58,33 @@ class CloudAttestationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 cloud_attestation.build(self.con, "HEALTHY", {})
 
+    def test_open_position_requires_current_connected_realtime_manager(self):
+        now = datetime(2026, 9, 2, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper-realtime.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"status": "CONNECTED", "at": now.isoformat(),
+                           "execution_mode": "PAPER_ONLY",
+                           "real_order_allowed": False}, handle)
+            payload, _, _ = cloud_attestation.build(
+                self.con, "HEALTHY", {}, now,
+                paper_realtime_health_path=path,
+            )
+        health = payload["paper_realtime_manager"]
+        self.assertEqual(health["state"], "CURRENT")
+        self.assertTrue(health["required"])
+
+    def test_open_position_rejects_idle_realtime_manager(self):
+        now = datetime(2026, 9, 2, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper-realtime.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"status": "IDLE", "at": now.isoformat(),
+                           "execution_mode": "PAPER_ONLY",
+                           "real_order_allowed": False}, handle)
+            result = cloud_attestation.paper_realtime_health(now, path, open_positions=1)
+        self.assertEqual(result["state"], "UNHEALTHY")
+
     def test_attestation_uses_hash_valid_fresh_integrity_cache(self):
         now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

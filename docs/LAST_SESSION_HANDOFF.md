@@ -1,5 +1,28 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Gerçek zamanlı PAPER pozisyon yaşam döngüsü kuruldu
+
+Saatlik araştırma mimarisinin açık pozisyonu vade sonuna kadar kör tutan yolu
+yeniden düzenlendi. Dinamik semboller için OKX public WebSocket `tickers`,
+`books5` ve `trades` kanallarını izleyen ayrı PAPER worker eklendi. İki saniyeden
+eski olay reddedilir; aktif sembol kümesi bağlantı kesilmeden değişebilir.
+
+Her OPEN pozisyon girişteki risk snapshot'ından %0,5-%5 aralığında zorunlu stop
+alır. Politika her taze olayda koruyucu stop, üç ayrı saniyeye yayılmış ters tez,
+1R/2R kademeli realizasyon, maliyet üstü breakeven, trailing stop ve yalnız son
+çare azami süreyi değerlendirir. Kısmi kapanışta kalan miktar/maliyet tabanı,
+giriş ücreti payı, çıkış ücreti, spread ve slippage yaşam boyu kasaya atomik
+işlenir. Eski saatlik kapatıcı yönetilmiş pozisyona dokunamaz. Aynı/eski olay
+nakdi iki kez değiştiremez.
+
+Funding taşıması stopu geciktiremez: çıkış anında exact zaman ve miktar segmenti
+dondurulur; uzlaştırılana kadar işlem öğrenmeden çıkarılır ve ayrı bakım görevi
+kasa/net sonucu düzeltir. Yönetim ve arıza geçişleri yerel SQLite'ta kalıcıdır;
+gerçek emir yetkisi sıfırdır. Canlı kaynaklı, yalnız bellek içi kabul aracı
+`scripts/paper_realtime_readiness.py` eklendi. Yerel tam suite 287/287 geçti.
+Checkpoint, canlı dağıtım, systemd sağlık ve canlı acceptance sonucu henüz bu
+kaydın devamında doğrulanmalıdır; tamamlanmadan sistem sağlıklı sayılmayacaktır.
+
 # 2026-09-01 — Davranış fırsatı aynı dakikalık çevrimde PAPER doluma bağlandı
 
 Canlı denetim, davranış çekirdeğinin fırsatı dakikası içinde seçmesine rağmen

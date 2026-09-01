@@ -33,6 +33,11 @@ if ! swapon --show | grep -q .; then
 fi
 
 sudo install -m 644 deploy/agca-cloud-worker.service /etc/systemd/system/agca-cloud-worker.service
+sudo install -m 644 deploy/agca-paper-realtime-worker.service /etc/systemd/system/agca-paper-realtime-worker.service
+sudo install -m 644 deploy/agca-paper-realtime-health-monitor.service /etc/systemd/system/agca-paper-realtime-health-monitor.service
+sudo install -m 644 deploy/agca-paper-realtime-health-monitor.timer /etc/systemd/system/agca-paper-realtime-health-monitor.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now agca-cloud-worker.service
+sudo systemctl enable --now agca-paper-realtime-worker.service
+sudo systemctl enable --now agca-paper-realtime-health-monitor.timer
 echo "BACKUP=$backup"

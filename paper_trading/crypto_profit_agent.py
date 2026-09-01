@@ -1,9 +1,9 @@
 """Autonomous, auditable virtual-money trading agent for AG Crypto Analyst.
 
 The active decision path consumes behavior-core PAPER experiments while Unified
-Forecast remains a baseline only. It never sends a real order, fills only from
-exact Binance 1h timestamps, charges explicit costs, and preserves one lifetime
-portfolio.
+Forecast remains a baseline only. It never sends a real order, charges explicit
+costs, and preserves one lifetime portfolio. Open positions are managed by the
+real-time PAPER worker; the hourly path is only a legacy fail-closed fallback.
 """
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ from paper_trading import strategy_allocator
 from paper_trading import experience_memory
 from paper_trading import behavior_decision_core
 from paper_trading import execution_market_data
+from paper_trading import position_management
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -269,6 +270,7 @@ def ensure_tables(con):
     experience_memory.record_legacy_summary(con)
     behavior_decision_core.ensure_tables(con)
     execution_market_data.ensure_table(con)
+    position_management.ensure_tables(con)
     con.commit()
 
 
@@ -363,8 +365,12 @@ def portfolio_snapshot(con):
         FROM paper_agent_portfolio WHERE portfolio_id=1
     """).fetchone()
     open_rows = con.execute("""
-        SELECT symbol,direction,entry_price,quantity,notional
-        FROM paper_agent_positions WHERE status='OPEN'
+        SELECT p.symbol,p.direction,p.entry_price,
+               COALESCE(m.remaining_quantity,p.quantity),
+               COALESCE(m.remaining_cost_basis,p.notional)
+        FROM paper_agent_positions p
+        LEFT JOIN paper_position_management m USING(position_id)
+        WHERE p.status='OPEN'
     """).fetchall()
     reserved = 0.0
     unrealized = 0.0
@@ -493,10 +499,11 @@ def fill_pending(con, now, exchange_metadata=None):
 
 def settle_open(con, now, exchange_metadata=None):
     rows = con.execute("""
-        SELECT position_id,symbol,direction,due_time,entry_time,entry_price,quantity,
-               notional,entry_fee,liquidation_price
-        FROM paper_agent_positions
-        WHERE status='OPEN' AND due_time<=?
+        SELECT p.position_id,p.symbol,p.direction,p.due_time,p.entry_time,
+               p.entry_price,p.quantity,p.notional,p.entry_fee,p.liquidation_price
+        FROM paper_agent_positions p
+        LEFT JOIN paper_position_management m USING(position_id)
+        WHERE p.status='OPEN' AND p.due_time<=? AND m.position_id IS NULL
         ORDER BY due_time,position_id
     """, (iso(now),)).fetchall()
     closed = 0
@@ -860,6 +867,15 @@ def build_daily_report(con, report_date, start, end):
           AND validation_cohort=? AND evidence_eligible=1
         ORDER BY exit_time,position_id
     """, (iso(start), iso(end), FORWARD_COHORT)).fetchall()
+    management_events = con.execute("""
+        SELECT e.position_id,p.symbol,e.market_at,e.event_type,e.reason,
+               e.reference_price,e.fill_price,e.fill_quantity,e.fee,
+               e.stop_before,e.stop_after
+        FROM paper_position_events e
+        JOIN paper_agent_positions p ON p.position_id=e.position_id
+        WHERE e.market_at>=? AND e.market_at<?
+        ORDER BY e.market_at,e.event_id
+    """, (iso(start), iso(end))).fetchall()
     wins = sum(1 for row in closed if float(row[12]) > 0)
     daily_net = sum(float(row[12]) for row in closed)
     daily_fees = sum(float(row[9]) + float(row[10]) for row in closed)
@@ -884,6 +900,8 @@ def build_daily_report(con, report_date, start, end):
         "liquidations": liquidations,
         "opened": opened,
         "closed": closed,
+        "management_event_count": len(management_events),
+        "management_events": management_events,
     }
     return payload
 
@@ -963,6 +981,17 @@ def markdown_report(payload):
             f"brüt={float(row[11]):+.2f} | net={float(row[12]):+.2f} USDT | "
             f"funding={float(row[14] or 0):+.4f} ({int(row[15] or 0)} olay) | "
             f"liquidated={bool(row[18])} | close={row[19]} | {row[13]}"
+        )
+    lines.extend(["", "## Gerçek zamanlı pozisyon yönetimi", ""])
+    if not payload.get("management_events"):
+        lines.append("- Yönetim olayı yok.")
+    for row in payload.get("management_events", []):
+        lines.append(
+            f"- #{row[0]} {row[1]} | {display_time(row[2])} | "
+            f"{row[3]} / {row[4]} | piyasa={float(row[5]):.8g} | "
+            f"dolum={(format(float(row[6]), '.8g') if row[6] is not None else 'YOK')} | "
+            f"miktar={float(row[7]):.8g} | ücret={float(row[8]):.4f} | "
+            f"stop={row[9]}→{row[10]}"
         )
     lines.extend([
         "",

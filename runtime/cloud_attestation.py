@@ -16,10 +16,39 @@ from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_a
 
 
 DB_NAME = "crypto_data.db"
-ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V1"
+ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V2_REALTIME_PAPER"
 MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
 SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
+
+
+def paper_realtime_health(now=None, path=None, open_positions=0):
+    now = now or datetime.now(timezone.utc)
+    path = Path(path or os.getenv(
+        "AGCA_PAPER_REALTIME_HEALTH", "/var/lib/agca/paper-realtime-health.json"
+    ))
+    base = {"state": "MISSING", "status": None, "age_seconds": None,
+            "required": int(open_positions) > 0, "real_order_allowed": False}
+    if not path.is_file():
+        return base
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        written = datetime.fromisoformat(str(raw["at"]).replace("Z", "+00:00"))
+        age = max(0.0, (now - written.astimezone(timezone.utc)).total_seconds())
+        valid = (
+            raw.get("execution_mode") == "PAPER_ONLY"
+            and raw.get("real_order_allowed") is False
+            and raw.get("status") in {"CONNECTED", "IDLE", "STARTING", "DEGRADED"}
+        )
+        max_age = float(os.getenv("AGCA_PAPER_REALTIME_HEALTH_MAX_AGE_SECONDS", "30"))
+        state = "INVALID" if not valid else ("STALE" if age > max_age else "CURRENT")
+        if int(open_positions) > 0 and raw.get("status") != "CONNECTED" and state == "CURRENT":
+            state = "UNHEALTHY"
+        return {"state": state, "status": raw.get("status"),
+                "age_seconds": round(age, 3), "required": int(open_positions) > 0,
+                "real_order_allowed": False}
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return {**base, "state": "INVALID"}
 
 
 def iso(value):
@@ -192,7 +221,7 @@ def exact_macro_health(now=None, path=None):
 
 def build(
     con, worker_status, last_results, now=None, behavior_health_path=None,
-    exact_macro_health_path=None,
+    exact_macro_health_path=None, paper_realtime_health_path=None,
 ):
     now = now or datetime.now(timezone.utc)
     mode = os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY")
@@ -252,6 +281,10 @@ def build(
         ),
         "exact_macro_observer": exact_macro_health(
             now=now, path=exact_macro_health_path
+        ),
+        "paper_realtime_manager": paper_realtime_health(
+            now=now, path=paper_realtime_health_path,
+            open_positions=counts.get("OPEN", 0),
         ),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
