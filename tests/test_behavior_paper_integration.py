@@ -97,7 +97,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
-        planned = agent.next_tradable_hour_open(NOW)
+        planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
                           return_value=(planned, 0.5, 1_000_000.0)) as capture:
             filled, cancelled = agent.fill_pending(
@@ -118,7 +118,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             agent.select_new_positions(self.con, NOW)
-        planned = agent.next_tradable_hour_open(NOW)
+        planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
                           return_value=None):
             filled, cancelled = agent.fill_pending(

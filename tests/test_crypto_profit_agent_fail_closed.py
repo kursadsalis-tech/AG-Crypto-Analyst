@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from paper_trading.crypto_profit_agent import (
     display_time, exact_close, exact_open, exact_planned_open, iso,
-    next_tradable_hour_open,
+    immediate_paper_entry_time,
 )
 from paper_trading.execution_model import simulated_fill
 
@@ -63,14 +63,10 @@ class CryptoProfitAgentFailClosedTests(unittest.TestCase):
             exact_open(self.con, "BTCUSDT", iso(self.as_of))
         self.con = sqlite3.connect(":memory:")
 
-    def test_planned_entry_is_strictly_after_decision_and_never_uses_prior_open(self):
+    def test_planned_entry_is_the_committed_decision_time(self):
         decision = datetime(2026, 8, 24, 18, 2, 7, tzinfo=timezone.utc)
-        planned = next_tradable_hour_open(decision)
-        self.assertEqual(planned, datetime(2026, 8, 24, 19, 0, tzinfo=timezone.utc))
-        self.insert_candle()  # 19:00 exact open
-        result = exact_planned_open(self.con, "BTCUSDT", planned)
-        self.assertEqual(result[0], planned)
-        self.assertGreater(result[0], decision)
+        planned = immediate_paper_entry_time(decision)
+        self.assertEqual(planned, decision)
 
     def test_planned_entry_does_not_accept_previous_hour(self):
         self.insert_candle()

@@ -1,5 +1,23 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-01 — Davranış fırsatı aynı dakikalık çevrimde PAPER doluma bağlandı
+
+Canlı denetim, davranış çekirdeğinin fırsatı dakikası içinde seçmesine rağmen
+`next_tradable_hour_open()` ile girişi sonraki saat başına ötelediğini ve dakikalık
+worker yolunun yalnız seçim yapıp dolum/kapanış/öğrenmeyi saatlik işe bıraktığını
+gösterdi. Bu piyasa zorunluluğu değil, eski saatlik araştırma sözleşmesinin
+yürütmeye sızmış yapay gecikmesiydi.
+
+PAPER davranış çevrimi artık aynı dakikada mevcut bekleyenleri işler, vadesi
+gelenleri kapatır, yeni fırsatı seçer ve yeni seçimi aynı çevrimde doldurmayı
+dener. Giriş kanıtı karar zamanından sonra alınan, en fazla 30 saniye eski,
+değişmez OKX USDT-swap ticker'ıdır; Binance spot ticker ile fiyat sapması %2
+içinde doğrulanır. Kanıt yoksa veya bozuksa fail-closed kalır. Eski bir sonraki
+saat açılışı kapısı bağlayıcı kayıttan kaldırıldı. Unified Forecast yürütmeye
+bağlanmadı; tek ajan, tek yaşam boyu kasa, PAPER_ONLY ve gerçek-emir=0 korundu.
+Odak testleri 17/17, tam suite 270/270 geçti. Canlı dağıtım ve ilk doğal
+seçim→dolum→kapanış→öğrenme kanıtı bu kaydın devamında doğrulanmalıdır.
+
 # 2026-09-01 — Dinamik PAPER yürütme sabit mum kohortundan ayrıldı
 
 Canlı denetim dört davranış işleminin yalnız BTCUSDT ayağının dolduğunu;

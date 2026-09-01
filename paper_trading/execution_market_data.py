@@ -14,7 +14,9 @@ import requests
 
 
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
+OKX_TICKER_URL = "https://www.okx.com/api/v5/market/ticker"
 BINANCE_SPOT_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
+BINANCE_SPOT_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/price"
 USER_AGENT = "AG-Crypto-Analyst/paper-execution-observation-v1"
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_ENTRY_OBSERVATION_DELAY = timedelta(minutes=10)
@@ -94,6 +96,8 @@ def _parse_okx_rows(symbol: str, expected: datetime, purpose: str, rows):
 
 
 def fetch_reference(symbol: str, expected: datetime, purpose: str):
+    if purpose == "ENTRY":
+        return fetch_entry_snapshot(symbol, expected)
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     okx_response = requests.get(
         OKX_CANDLES_URL,
@@ -136,6 +140,52 @@ def fetch_reference(symbol: str, expected: datetime, purpose: str):
     return market_time, price, quote_volume, digest
 
 
+def fetch_entry_snapshot(symbol: str, observed_at: datetime):
+    """Capture an immutable, causal market snapshot without hourly waiting."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    okx_response = requests.get(
+        OKX_TICKER_URL, params={"instId": _okx_instrument(symbol)},
+        timeout=REQUEST_TIMEOUT_SECONDS, headers=headers,
+    )
+    okx_response.raise_for_status()
+    okx_payload = okx_response.json()
+    rows = okx_payload.get("data") if isinstance(okx_payload, dict) else None
+    if str(okx_payload.get("code")) != "0" or not isinstance(rows, list) or len(rows) != 1:
+        raise ValueError(f"{symbol}: OKX ticker response failed")
+    row = rows[0]
+    price = float(row.get("last", 0))
+    base_volume_24h = float(row.get("volCcy24h", 0))
+    market_ms = int(row.get("ts", 0))
+    market_time = datetime.fromtimestamp(market_ms / 1000, tz=timezone.utc)
+    if price <= 0 or base_volume_24h <= 0 or market_ms <= 0:
+        raise ValueError(f"{symbol}: non-executable OKX ticker")
+    if abs((observed_at - market_time).total_seconds()) > 30:
+        raise ValueError(f"{symbol}: stale OKX ticker")
+
+    cross_response = requests.get(
+        BINANCE_SPOT_TICKER_URL, params={"symbol": symbol},
+        timeout=REQUEST_TIMEOUT_SECONDS, headers=headers,
+    )
+    cross_response.raise_for_status()
+    cross_payload = cross_response.json()
+    cross_price = float(cross_payload.get("price", 0)) \
+        if isinstance(cross_payload, dict) else 0.0
+    if cross_price <= 0:
+        raise ValueError(f"{symbol}: Binance ticker cross-check missing")
+    deviation = abs(price - cross_price) / ((price + cross_price) / 2.0) * 100.0
+    if deviation > MAX_CROSS_SOURCE_DEVIATION_PCT:
+        raise ValueError(f"{symbol}: execution cross-source deviation too high")
+
+    # Conservative one-minute share of reported 24h base volume. It is used
+    # only by the PAPER slippage model and never grants real-order authority.
+    quote_volume = base_volume_24h * price / (24.0 * 60.0)
+    digest = hashlib.sha256(json.dumps(
+        {"okx": row, "binance_spot": cross_payload},
+        separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+    return market_time, price, quote_volume, digest
+
+
 def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
                       purpose: str, observed_at: datetime):
     ensure_table(con)
@@ -151,9 +201,14 @@ def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
         return None
     if purpose == "ENTRY" and observed_at - expected > MAX_ENTRY_OBSERVATION_DELAY:
         return None
-    market_time, price, quote_volume, digest = fetch_reference(
-        symbol, expected, purpose
-    )
+    if purpose == "ENTRY":
+        market_time, price, quote_volume, digest = fetch_entry_snapshot(
+            symbol, observed_at
+        )
+    else:
+        market_time, price, quote_volume, digest = fetch_reference(
+            symbol, expected, purpose
+        )
     con.execute("""
         INSERT INTO paper_execution_market_observations(
             position_id,purpose,symbol,expected_time,market_time,observed_at,
@@ -163,6 +218,8 @@ def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
     """, (
         position_id, purpose, symbol, _iso(expected), _iso(market_time),
         _iso(observed_at), price, quote_volume,
-        "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK", digest,
+        ("OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK"
+         if purpose == "ENTRY" else
+         "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK"), digest,
     ))
     return market_time, price, quote_volume

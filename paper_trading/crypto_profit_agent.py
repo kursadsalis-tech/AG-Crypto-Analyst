@@ -37,7 +37,7 @@ from paper_trading import execution_market_data
 
 DB_NAME = forecast_engine.DB_NAME
 AGENT_VERSION = "CRYPTO_PROFIT_AGENT_V1"
-POLICY_VERSION = "PAPER_OPPORTUNITY_POLICY_V2_EXECUTION_REALISM"
+POLICY_VERSION = "PAPER_OPPORTUNITY_POLICY_V3_IMMEDIATE_EXECUTION"
 INITIAL_CAPITAL = float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000"))
 FEE_BPS = float(os.getenv("AGCA_PAPER_FEE_BPS", "10"))
 FEE_RATE = FEE_BPS / 10000.0
@@ -90,10 +90,9 @@ def pending_entry_schedule(con):
         ORDER BY planned_entry_time,position_id""").fetchall()]
 
 
-def next_tradable_hour_open(decision_time):
-    """First full hourly open strictly after the decision was committed."""
-    decision_time = parse_time(decision_time)
-    return decision_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+def immediate_paper_entry_time(decision_time):
+    """Causal PAPER entry target: the committed decision time itself."""
+    return parse_time(decision_time)
 
 
 def connect():
@@ -701,7 +700,7 @@ def select_new_positions(con, now):
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
     available_exposure = max(0.0, max_exposure - snapshot["reserved"])
     selected = 0
-    planned_entry = next_tradable_hour_open(now)
+    planned_entry = immediate_paper_entry_time(now)
     for row in behavior_result["candidates"]:
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
@@ -1120,7 +1119,7 @@ def run(now=None):
 
 
 def run_behavior_selection(now=None):
-    """Run only the lightweight, idempotent behavior PAPER selection cadence."""
+    """Run the complete behavior PAPER lifecycle on the minute cadence."""
     now = now or utcnow()
     authority = validate_agent_authority(
         execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
@@ -1130,9 +1129,25 @@ def run_behavior_selection(now=None):
     con = connect()
     try:
         ensure_tables(con)
+        exchange_metadata = None
+        if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
+            exchange_metadata = load_cache(
+                os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
+                PAPER_MARKET,
+                max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
+            )
+        filled_before, cancelled_before = fill_pending(con, now, exchange_metadata)
+        closed = settle_open(con, now, exchange_metadata)
         selected = select_new_positions(con, now)
+        filled_now, cancelled_now = fill_pending(con, utcnow(), exchange_metadata)
+        new_experience_reviews = experience_memory.review_closed_positions(con, now)
+        learning = trade_learning.run(con, FORWARD_COHORT, now)
+        learning["new_experience_reviews"] = new_experience_reviews
         return {
             "status": "SUCCESS", "selected": selected,
+            "filled": filled_before + filled_now,
+            "cancelled": cancelled_before + cancelled_now,
+            "closed": closed, "trade_learning": learning,
             "authority": authority, "portfolio": portfolio_snapshot(con),
             "pending_entries": pending_entry_schedule(con),
         }

@@ -30,22 +30,26 @@ class ExecutionMarketDataTests(unittest.TestCase):
             raise AssertionError(url)
         return get
 
+    def ticker_responses(self, okx_ticker, binance_ticker):
+        def get(url, **kwargs):
+            if url == market.OKX_TICKER_URL:
+                return self.response({"code": "0", "data": [okx_ticker]})
+            if url == market.BINANCE_SPOT_TICKER_URL:
+                return self.response(binance_ticker)
+            raise AssertionError(url)
+        return get
+
     def test_dynamic_symbol_entry_is_captured_from_usdm_and_frozen(self):
-        close = self.expected + timedelta(hours=1) - timedelta(milliseconds=1)
-        binance_row = [
-            int(self.expected.timestamp() * 1000), "0.50", "0.51", "0.49",
-            "0.505", "100", int(close.timestamp() * 1000), "250000", 10,
-            "50", "125000", "0",
-        ]
-        okx_row = [int(self.expected.timestamp() * 1000), "0.50", "0.51",
-                   "0.49", "0.505", "100", "200000", "250000", "0"]
-        with patch.object(market.requests, "get", side_effect=self.source_responses(
-            okx_row, binance_row
+        okx_ticker = {"last": "0.50", "volCcy24h": "720000000",
+                      "ts": str(int(self.expected.timestamp() * 1000))}
+        binance_ticker = {"symbol": "CRVUSDT", "price": "0.505"}
+        with patch.object(market.requests, "get", side_effect=self.ticker_responses(
+            okx_ticker, binance_ticker
         )) as get:
             first = market.capture_reference(
                 self.con, position_id=41, symbol="CRVUSDT",
                 expected=self.expected, purpose="ENTRY",
-                observed_at=self.expected + timedelta(minutes=2),
+                observed_at=self.expected + timedelta(seconds=10),
             )
         self.assertEqual(first, (self.expected, 0.5, 250000.0))
         self.assertEqual(get.call_count, 2)
@@ -62,7 +66,7 @@ class ExecutionMarketDataTests(unittest.TestCase):
         stored = self.con.execute("""SELECT source,real_order_allowed,
             length(payload_sha256) FROM paper_execution_market_observations""").fetchone()
         self.assertEqual(stored, (
-            "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK", 0, 64
+            "OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK", 0, 64
         ))
 
     def test_late_entry_cannot_be_backfilled_with_future_liquidity(self):
@@ -97,13 +101,11 @@ class ExecutionMarketDataTests(unittest.TestCase):
         self.assertEqual(result, (close, 51.0, 500000.0))
 
     def test_cross_source_price_conflict_fails_closed(self):
-        close = self.expected + timedelta(hours=1) - timedelta(milliseconds=1)
-        okx_row = [int(self.expected.timestamp() * 1000), "100", "101", "99",
-                   "100", "100", "100000", "100000", "0"]
-        binance_row = [int(self.expected.timestamp() * 1000), "110", "111", "109",
-                       "110", "100", int(close.timestamp() * 1000), "100000"]
-        with patch.object(market.requests, "get", side_effect=self.source_responses(
-            okx_row, binance_row
+        okx_ticker = {"last": "100", "volCcy24h": "100000",
+                      "ts": str(int(self.expected.timestamp() * 1000))}
+        binance_ticker = {"symbol": "CRVUSDT", "price": "110"}
+        with patch.object(market.requests, "get", side_effect=self.ticker_responses(
+            okx_ticker, binance_ticker
         )):
             with self.assertRaisesRegex(ValueError, "deviation"):
                 market.fetch_reference("CRVUSDT", self.expected, "ENTRY")
