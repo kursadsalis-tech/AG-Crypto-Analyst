@@ -33,6 +33,8 @@ işlemleri de book/taker ile kapatacağı görüldü. Kaynak bağlamı yönetime
 saniyelik flow invalidasyonu yalnız tek ve bütün tezi `MARKET_BEHAVIOR` olan
 pozisyonda çalışır; NEWS, PRICE_ACTION veya çoklu kaynak tezi ilgisiz tahta
 işaretiyle üç saniyede kapanmaz. Tam suite bu düzeltmeyle 301/301 geçti.
+PRICE_ACTION geçmişi ayrıca aynı dakikadaki çoklu haberlerle çoğaltılmaz; yalnız
+örtüşmeyen dört saatlik `MARKET_STRUCTURE` bağımsızlık birimlerinden öğrenilir.
 
 # 2026-09-02 — Gerçek zamanlı çıkış seli giderildi ve canlı kabul geçti
 

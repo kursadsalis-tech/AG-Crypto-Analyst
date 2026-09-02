@@ -204,7 +204,7 @@ def learned_patterns(con, now=None):
             # permission for an otherwise cost-positive PAPER experiment.
             grouped[(str(kind), "ANY_FLOW")].append(sample)
         price_pattern = _price_pattern(price_move, spread)
-        if price_pattern:
+        if price_pattern and str(kind) == "MARKET_STRUCTURE":
             grouped[("PRICE_ACTION", price_pattern)].append(sample)
     output = {}
     for key, samples in grouped.items():

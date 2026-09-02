@@ -109,7 +109,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             "ALTER TABLE market_behavior_minute_features ADD COLUMN mid_price_first REAL"
         )
         self.con.execute("""UPDATE behavior_event_forward_outcomes SET
-            pre_event_mid_price=100,event_minute_mid_price=100.5""")
+            pre_event_mid_price=100,event_minute_mid_price=100.5,
+            kind='MARKET_STRUCTURE'""")
         self.con.execute(
             "UPDATE market_behavior_minute_features SET mid_price_first=99.5"
         )
