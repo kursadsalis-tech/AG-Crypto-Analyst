@@ -6,7 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from paper_trading.execution_model import simulated_fill
+from paper_trading.execution_model import simulated_decision
 from paper_trading.futures_costs import FuturesCostError, directional_funding_payment
 from paper_trading.position_policy import PositionState, evaluate, initialize
 
@@ -242,7 +242,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                stop_price, decision.stop_price, evidence)
         con.commit()
         return {"status": "UPDATE_STOP", "reason": deferred_reason}
-    fill = simulated_fill(
+    execution = simulated_decision(
         reference_price=float(live.last_price),
         requested_notional=target_qty * float(live.last_price),
         side="SELL" if direction == "LONG" else "BUY",
@@ -252,15 +252,17 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         min_notional=rules.min_notional,
         reduce_only=True,
     )
+    fill = execution.fill
     if fill is None:
+        rejection_reason = execution.reason
         _event(con, position_id, market_at, observed_at, "EXIT_REJECTED",
-               "SIMULATED_EXCHANGE_REJECTION", live.last_price, None, 0, 0, 0, 0,
+               rejection_reason, live.last_price, None, 0, 0, 0, 0,
                stop_price, stop_price, evidence)
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,last_exit_attempt_at=? WHERE position_id=?""",
                     (iso(market_at), iso(market_at), position_id))
         con.commit()
-        return {"status": "BLOCKED", "reason": "SIMULATED_EXCHANGE_REJECTION"}
+        return {"status": "BLOCKED", "reason": rejection_reason}
 
     closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
     # Funding lookup stays outside the latency-critical path. A segment exists

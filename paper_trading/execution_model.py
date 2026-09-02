@@ -128,7 +128,24 @@ def simulated_fill(
     reduce_only: bool = False,
 ) -> Fill | None:
     """Backward-compatible PAPER wrapper over the common contract."""
-    decision = execute_paper(
+    return simulated_decision(
+        reference_price=reference_price, requested_notional=requested_notional,
+        side=side, available_quote_volume=available_quote_volume,
+        quantity_step=quantity_step, price_tick=price_tick,
+        min_notional=min_notional, require_liquidity=require_liquidity,
+        symbol=symbol, reduce_only=reduce_only,
+    ).fill
+
+
+def simulated_decision(
+    *, reference_price: float, requested_notional: float, side: str,
+    available_quote_volume: float | None = None, quantity_step: float = 1e-8,
+    price_tick: float = 1e-8, min_notional: float = 5.0,
+    require_liquidity: bool = False, symbol: str = "UNSPECIFIED",
+    reduce_only: bool = False,
+) -> ExecutionDecision:
+    """Return the fill and exact fail-closed exchange decision for audit."""
+    return execute_paper(
         OrderIntent(
             symbol=symbol, side=side,
             requested_notional=requested_notional,
@@ -143,7 +160,6 @@ def simulated_fill(
             min_notional=min_notional, require_liquidity=require_liquidity,
         ),
     )
-    return decision.fill
 
 
 def funding_cost(notional: float, held_hours: float) -> float:

@@ -133,7 +133,7 @@ class PositionManagementTests(unittest.TestCase):
         second = process_market_state(
             self.con, self.live(98, 2.1), ENTRY + timedelta(seconds=2.1), self.rules,
         )
-        self.assertEqual(first["status"], "BLOCKED")
+        self.assertEqual(first, {"status": "BLOCKED", "reason": "EXCHANGE_FILTER_REJECTION"})
         self.assertEqual(second["status"], "EXIT_RETRY_THROTTLED")
         self.assertEqual(self.con.execute(
             "SELECT COUNT(*) FROM paper_funding_reconciliation_segments"
