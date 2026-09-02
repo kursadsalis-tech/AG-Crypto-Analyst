@@ -160,6 +160,26 @@ class PositionManagementTests(unittest.TestCase):
             "SELECT funding_cost FROM paper_agent_positions"
         ).fetchone()[0], .5)
 
+    def test_short_timeout_closes_one_exact_quantity_step(self):
+        self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',
+            entry_price=80000,quantity=.001,notional=80,entry_fee=.04,
+            due_time=? WHERE position_id=1""", (
+                (ENTRY + timedelta(seconds=1)).isoformat(),))
+        self.con.execute("UPDATE asset_risk_snapshots SET volatility_stop_reference_pct=2")
+        initialize_open_positions(self.con, ENTRY + timedelta(milliseconds=500))
+        live = LiveState(
+            "BTCUSDT", last_price=77680, best_bid=77679.9, best_ask=77680.1,
+            book_imbalance=.1, taker_imbalance=.1,
+            visible_quote_volume=1_000_000,
+            market_timestamp_ms=int((ENTRY + timedelta(seconds=2)).timestamp()*1000),
+        )
+        result = process_market_state(self.con, live, ENTRY + timedelta(seconds=2),
+                                      self.rules)
+        self.assertEqual(result["status"], "POSITION_CLOSED")
+        self.assertEqual(self.con.execute(
+            "SELECT remaining_quantity FROM paper_position_management"
+        ).fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

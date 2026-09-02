@@ -242,9 +242,13 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                stop_price, decision.stop_price, evidence)
         con.commit()
         return {"status": "UPDATE_STOP", "reason": deferred_reason}
+    # A reduce-only BUY must budget for the adapter's adverse exit price;
+    # otherwise one exact quantity step can round to zero. The accounted fill
+    # is still capped to target_qty below, so this can never reverse exposure.
+    exit_notional_buffer = 1.02 if direction == "SHORT" else 1.0
     execution = simulated_decision(
         reference_price=float(live.last_price),
-        requested_notional=target_qty * float(live.last_price),
+        requested_notional=target_qty * float(live.last_price) * exit_notional_buffer,
         side="SELL" if direction == "LONG" else "BUY",
         available_quote_volume=float(live.visible_quote_volume),
         require_liquidity=True, symbol=live.symbol,
