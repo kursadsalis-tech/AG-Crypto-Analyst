@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 
 from paper_trading.execution_model import simulated_fill
@@ -44,6 +45,7 @@ def ensure_tables(con):
             tp2_done INTEGER NOT NULL DEFAULT 0,
             opposing_events INTEGER NOT NULL DEFAULT 0,
             last_thesis_at TEXT,
+            last_exit_attempt_at TEXT,
             real_order_allowed INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS paper_position_events (
@@ -88,6 +90,8 @@ def ensure_tables(con):
     if "funding_reconciliation_required" not in columns:
         con.execute("""ALTER TABLE paper_position_management ADD COLUMN
             funding_reconciliation_required INTEGER NOT NULL DEFAULT 0""")
+    if "last_exit_attempt_at" not in columns:
+        con.execute("ALTER TABLE paper_position_management ADD COLUMN last_exit_attempt_at TEXT")
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"
     )}
@@ -161,7 +165,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                m.original_quantity,m.remaining_quantity,m.remaining_cost_basis,
                m.remaining_entry_fee,m.unallocated_funding,m.last_funding_at,
                m.realized_net_pnl,m.realized_gross_pnl,m.tp1_done,m.tp2_done,
-               m.opposing_events,m.last_market_at,m.last_thesis_at
+               m.opposing_events,m.last_market_at,m.last_thesis_at,m.last_exit_attempt_at
         FROM paper_agent_positions p JOIN paper_position_management m USING(position_id)
         WHERE p.symbol=? AND p.status='OPEN'
     """, (live.symbol,)).fetchone()
@@ -170,7 +174,8 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     (position_id, direction, entry_price, due_time, _, stop_distance, stop_price,
      best_price, original_qty, remaining_qty, remaining_basis, remaining_entry_fee,
      unallocated_funding, last_funding_at, realized_net, realized_gross,
-     tp1_done, tp2_done, opposing_events, last_market_at, last_thesis_at) = row
+     tp1_done, tp2_done, opposing_events, last_market_at, last_thesis_at,
+     last_exit_attempt_at) = row
     if market_at <= parse(last_market_at):
         return {"status": "DUPLICATE_OR_OLD_EVENT"}
 
@@ -213,16 +218,13 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
 
     if live.visible_quote_volume is None:
         return {"status": "BLOCKED", "reason": "MISSING_VISIBLE_LIQUIDITY"}
-    # Funding lookup is intentionally outside the latency-critical exit path.
-    # The exact interval and exposed quantity are frozen here and reconciled by
-    # the maintenance task; a database/network outage can never delay a stop.
-    funding_pending, new_funding = True, 0.0
-    con.execute("""INSERT OR IGNORE INTO paper_funding_reconciliation_segments(
-        position_id,start_at,end_at,direction,quantity,status
-    ) VALUES(?,?,?,?,?,'PENDING')""", (
-        position_id, last_funding_at, iso(market_at), direction, remaining_qty,
-    ))
-    evidence["funding_status"] = "PENDING_RECONCILIATION"
+    retry_seconds = max(0.1, float(os.getenv("AGCA_PAPER_EXIT_RETRY_SECONDS", "1")))
+    if (last_exit_attempt_at is not None and
+            (market_at - parse(last_exit_attempt_at)).total_seconds() < retry_seconds):
+        con.execute("UPDATE paper_position_management SET last_market_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "EXIT_RETRY_THROTTLED", "reason": decision.reason}
     target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
     if decision.action == "REDUCE" and target_qty * float(live.last_price) < rules.min_notional:
         deferred_reason = f"{decision.reason}_BELOW_MIN_NOTIONAL"
@@ -248,17 +250,28 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         require_liquidity=True, symbol=live.symbol,
         quantity_step=rules.quantity_step, price_tick=rules.price_tick,
         min_notional=rules.min_notional,
+        reduce_only=True,
     )
     if fill is None:
         _event(con, position_id, market_at, observed_at, "EXIT_REJECTED",
                "SIMULATED_EXCHANGE_REJECTION", live.last_price, None, 0, 0, 0, 0,
                stop_price, stop_price, evidence)
-        con.execute("UPDATE paper_position_management SET last_market_at=? WHERE position_id=?",
-                    (iso(market_at), position_id))
+        con.execute("""UPDATE paper_position_management SET
+            last_market_at=?,last_exit_attempt_at=? WHERE position_id=?""",
+                    (iso(market_at), iso(market_at), position_id))
         con.commit()
         return {"status": "BLOCKED", "reason": "SIMULATED_EXCHANGE_REJECTION"}
 
     closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
+    # Funding lookup stays outside the latency-critical path. A segment exists
+    # only after a real fill; rejected/retried exits cannot pollute the ledger.
+    funding_pending, new_funding = True, 0.0
+    con.execute("""INSERT OR IGNORE INTO paper_funding_reconciliation_segments(
+        position_id,start_at,end_at,direction,quantity,status
+    ) VALUES(?,?,?,?,?,'PENDING')""", (
+        position_id, last_funding_at, iso(market_at), direction, remaining_qty,
+    ))
+    evidence["funding_status"] = "PENDING_RECONCILIATION"
     fill_ratio = closed_qty / float(fill.quantity)
     exit_fee = fill.fee * fill_ratio
     spread_cost = fill.spread_cost * fill_ratio
@@ -275,14 +288,14 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     new_qty = float(remaining_qty) - closed_qty
     final = new_qty <= max(1e-12, rules.quantity_step / 2)
     con.execute("""UPDATE paper_position_management SET
-        last_market_at=?,last_funding_at=?,current_stop_price=?,best_price=?,
+        last_market_at=?,last_funding_at=?,last_exit_attempt_at=?,current_stop_price=?,best_price=?,
         remaining_quantity=?,remaining_cost_basis=?,remaining_entry_fee=?,
         unallocated_funding=?,realized_net_pnl=realized_net_pnl+?,
         realized_gross_pnl=realized_gross_pnl+?,tp1_done=?,tp2_done=?,opposing_events=?,
         last_thesis_at=?,funding_reconciliation_required=MAX(
             funding_reconciliation_required,?)
         WHERE position_id=?""", (
-        iso(market_at), iso(market_at), decision.stop_price, decision.best_price,
+        iso(market_at), iso(market_at), iso(market_at), decision.stop_price, decision.best_price,
         max(0.0, new_qty), float(remaining_basis) - cost_basis,
         float(remaining_entry_fee) - entry_fee_part, funding_pool - funding_part,
         net, gross, int(bool(tp1_done) or decision.reason == "TAKE_PROFIT_1R"),
@@ -319,43 +332,51 @@ def reconcile_pending_funding(con, funding_loader, now):
     ensure_tables(con)
     rows = con.execute("""SELECT segment_id,position_id,start_at,end_at,direction,quantity
         FROM paper_funding_reconciliation_segments WHERE status='PENDING'
-        ORDER BY segment_id""").fetchall()
+        ORDER BY position_id,start_at,segment_id""").fetchall()
     resolved, blocked = 0, 0
-    for segment_id, position_id, start_at, end_at, direction, quantity in rows:
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row[1], []).append(row)
+    for position_id, segments in grouped.items():
         symbol = con.execute(
             "SELECT symbol FROM paper_agent_positions WHERE position_id=?", (position_id,)
         ).fetchone()
         if not symbol:
-            blocked += 1
+            blocked += len(segments)
             continue
         try:
             events = funding_loader(
-                symbol=symbol[0], start=parse(start_at), end=parse(end_at),
+                symbol=symbol[0], start=min(parse(row[2]) for row in segments),
+                end=max(parse(row[3]) for row in segments),
             )
-            cost = directional_funding_payment(
-                direction=direction, quantity=float(quantity), events=events,
-            ) if events else 0.0
         except FuturesCostError:
-            blocked += 1
+            blocked += len(segments)
             continue
-        con.execute("""UPDATE paper_funding_reconciliation_segments SET
-            status='RESOLVED',funding_cost=?,resolved_at=? WHERE segment_id=?""",
-            (cost, iso(now), segment_id))
+        total_cost = 0.0
+        for segment_id, _, start_at, end_at, direction, quantity in segments:
+            start_ms = int(parse(start_at).timestamp() * 1000)
+            end_ms = int(parse(end_at).timestamp() * 1000)
+            segment_events = [event for event in events
+                              if start_ms < event.funding_time_ms <= end_ms]
+            cost = directional_funding_payment(
+                direction=direction, quantity=float(quantity), events=segment_events,
+            ) if segment_events else 0.0
+            total_cost += cost
+            con.execute("""UPDATE paper_funding_reconciliation_segments SET
+                status='RESOLVED',funding_cost=?,resolved_at=? WHERE segment_id=?""",
+                (cost, iso(now), segment_id))
         con.execute("""UPDATE paper_agent_positions SET funding_cost=funding_cost+?,
-            net_pnl=net_pnl-? WHERE position_id=?""", (cost, cost, position_id))
+            net_pnl=net_pnl-? WHERE position_id=?""", (total_cost, total_cost, position_id))
         con.execute("""UPDATE paper_position_management SET
             realized_net_pnl=realized_net_pnl-? WHERE position_id=?""",
-            (cost, position_id))
+            (total_cost, position_id))
         con.execute("""UPDATE paper_agent_portfolio SET cash=cash-?,
-            realized_pnl=realized_pnl-? WHERE portfolio_id=1""", (cost, cost))
-        pending = con.execute("""SELECT COUNT(*) FROM paper_funding_reconciliation_segments
-            WHERE position_id=? AND status='PENDING'""", (position_id,)).fetchone()[0]
-        if pending == 0:
-            con.execute("""UPDATE paper_position_management SET
-                funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
-            con.execute("""UPDATE paper_agent_positions SET
-                funding_source='BINANCE_USD_M_FUNDING_HISTORY'
-                WHERE position_id=?""", (position_id,))
-        resolved += 1
+            realized_pnl=realized_pnl-? WHERE portfolio_id=1""", (total_cost, total_cost))
+        con.execute("""UPDATE paper_position_management SET
+            funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
+        con.execute("""UPDATE paper_agent_positions SET
+            funding_source='BINANCE_USD_M_FUNDING_HISTORY'
+            WHERE position_id=?""", (position_id,))
+        resolved += len(segments)
     con.commit()
     return {"resolved": resolved, "blocked": blocked}

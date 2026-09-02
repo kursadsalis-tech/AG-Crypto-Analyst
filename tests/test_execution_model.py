@@ -27,6 +27,14 @@ class ExecutionModelTest(unittest.TestCase):
             reference_price=100, requested_notional=1, side="BUY", min_notional=5,
         ))
 
+    def test_reduce_only_allows_final_dust_exit(self):
+        fill = simulated_fill(
+            reference_price=100, requested_notional=1, side="SELL",
+            min_notional=5, quantity_step=.001, reduce_only=True,
+        )
+        self.assertIsNotNone(fill)
+        self.assertLess(fill.quantity * fill.price, 5)
+
     def test_non_finite_market_inputs_fail_closed(self):
         for value in (float("nan"), float("inf"), float("-inf")):
             self.assertIsNone(simulated_fill(

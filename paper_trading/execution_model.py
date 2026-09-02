@@ -84,7 +84,7 @@ def _paper_fill(intent, market, rules):
         if capacity < fill_notional:
             fill_notional = capacity
             partial = True
-    if fill_notional < min_notional:
+    if fill_notional < min_notional and not intent.reduce_only:
         return None, "MIN_NOTIONAL"
     impact = base_slippage + latency_impact
     if available_quote_volume is not None:
@@ -97,7 +97,7 @@ def _paper_fill(intent, market, rules):
         price = math.floor(raw_price / price_tick) * price_tick
     quantity = math.floor((fill_notional / price) / quantity_step) * quantity_step
     actual_notional = quantity * price
-    if quantity <= 0 or actual_notional < min_notional:
+    if quantity <= 0 or (actual_notional < min_notional and not intent.reduce_only):
         return None, "EXCHANGE_FILTER_REJECTION"
     fee_rate = _env_bps("AGCA_PAPER_TAKER_FEE_BPS", "5")
     return Fill(
@@ -122,12 +122,14 @@ def simulated_fill(
     available_quote_volume: float | None = None, quantity_step: float = 1e-8,
     price_tick: float = 1e-8, min_notional: float = 5.0,
     require_liquidity: bool = False, symbol: str = "UNSPECIFIED",
+    reduce_only: bool = False,
 ) -> Fill | None:
     """Backward-compatible PAPER wrapper over the common contract."""
     decision = execute_paper(
         OrderIntent(
             symbol=symbol, side=side,
             requested_notional=requested_notional,
+            reduce_only=reduce_only,
         ),
         MarketSnapshot(
             reference_price=reference_price,

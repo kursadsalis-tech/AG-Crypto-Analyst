@@ -123,6 +123,43 @@ class PositionManagementTests(unittest.TestCase):
             "SELECT funding_source FROM paper_agent_positions"
         ).fetchone()[0], "BINANCE_USD_M_FUNDING_HISTORY")
 
+    def test_rejected_exit_is_throttled_and_creates_no_funding_segment(self):
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        illiquid = self.live(98, 2)
+        illiquid.visible_quote_volume = .01
+        first = process_market_state(
+            self.con, illiquid, ENTRY + timedelta(seconds=2), self.rules,
+        )
+        second = process_market_state(
+            self.con, self.live(98, 2.1), ENTRY + timedelta(seconds=2.1), self.rules,
+        )
+        self.assertEqual(first["status"], "BLOCKED")
+        self.assertEqual(second["status"], "EXIT_RETRY_THROTTLED")
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM paper_funding_reconciliation_segments"
+        ).fetchone()[0], 0)
+
+    def test_funding_segments_are_loaded_once_and_costed_at_exposed_quantity(self):
+        from paper_trading.futures_costs import FundingEvent
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        self.con.executemany("""INSERT INTO paper_funding_reconciliation_segments(
+            position_id,start_at,end_at,direction,quantity,status
+        ) VALUES(1,?,?,?,?,'PENDING')""", [
+            (ENTRY.isoformat(), (ENTRY + timedelta(hours=1)).isoformat(), "LONG", 10),
+            ((ENTRY + timedelta(hours=1)).isoformat(),
+             (ENTRY + timedelta(hours=2)).isoformat(), "LONG", 5),
+        ])
+        calls = []
+        def loader(**kwargs):
+            calls.append(kwargs)
+            return [FundingEvent("BTCUSDT", int((ENTRY + timedelta(hours=1, minutes=30)).timestamp()*1000), .001, 100)]
+        result = reconcile_pending_funding(self.con, loader, ENTRY + timedelta(hours=3))
+        self.assertEqual(result, {"resolved": 2, "blocked": 0})
+        self.assertEqual(len(calls), 1)
+        self.assertAlmostEqual(self.con.execute(
+            "SELECT funding_cost FROM paper_agent_positions"
+        ).fetchone()[0], .5)
+
 
 if __name__ == "__main__":
     unittest.main()
