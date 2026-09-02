@@ -1,5 +1,44 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Gerçek zamanlı çıkış seli giderildi ve canlı kabul geçti
+
+İlk canlı kabulde süre sonu kapanışlarının OKX olay hızıyla tekrarlandığı ve
+reddedilen denemelerin dahi fonlama segmenti ürettiği görüldü. Worker hemen
+durduruldu; 71 BTCUSDT ve 72 ENAUSDT üzerinde oluşan olaylar incident kanıtı
+olarak korundu, silinmedi. Kök nedenler; çıkış retry'sinin sınırsız olması,
+fonlama segmentinin dolumdan önce yazılması, reduce-only bakiyelerin minimum
+notional/görünen likidite kurallarıyla yeni emir gibi ele alınması ve SHORT
+kapanışta adverse BUY fiyatının son miktar adımını sıfıra yuvarlamasıydı.
+
+Checkpoint'ler `b380bc5`, `921d0e9`, `fd1dc2d` ve `8cab224` ile çıkış retry'si
+saniyede en fazla bire indirildi; throttled olay kalıcı audit seli üretmez;
+yalnız gerçek dolum fonlama segmenti yaratır; pending segmentler pozisyon başına
+tek resmî funding çağrısıyla ve olay anındaki miktarla topluca uzlaştırılır.
+Reduce-only son bakiye minimum notional altında kalabilir, gerçekten görünen
+defter likiditesini kullanabilir ve SHORT adverse fiyat tamponu sonrası mevcut
+miktardan fazla kapatılamaz. Retler artık genel etiket yerine exact filtre
+nedenini korur. Yerel tam suite 293/293 geçti.
+
+Canlıdaki 1.622 eski pending segment silinmeden iki kaynak çağrısıyla çözüldü.
+BTCUSDT #71 son 0,001 SHORT bakiyesi 02 Eylül 2026 08:47:16 İstanbul
+(05:47:16 UTC) anında 77.745,6 dolumla kapandı ve funding uzlaştırıldı. ENAUSDT
+#72 de kapalıdır. Ardından doğal MARKET_BEHAVIOR_CORE seçimleri AAVEUSDT #76,
+ENAUSDT #77 ve ETHUSDT #78 aynı dakika içinde doldu, gerçek zamanlı ters tezle
+kapandı ve tüm maliyetler sonrası sırasıyla -1,6881, -3,3358 ve -2,5715 USDT
+LOSS incelemesi aldı. Üç tezin de `outcome_known_at_capture=0`; politika mutasyon
+yetkisi sıfırdır. 02 Eylül 2026 08:49 İstanbul (05:49 UTC) itibarıyla açık
+pozisyon 0, pending funding 0, kasa 10.289,5561 USDT, gerçekleşmiş sonuç
++289,5561 USDT, toplam ücret 22,8561 USDT ve bütün yönetim olaylarında
+`real_order_allowed=0`dır. Öğrenme 37 kapanış ve iki bağımsız haftayla
+`COLLECTING_EVIDENCE`; promotion kapalıdır. Worker `active/CONNECTED`, PAPER_ONLY
+ve Unified Forecast yürütmeden ayrıdır.
+
+Canlı rollback dizinleri:
+`/var/lib/agca/rollback-b380bc5-exit-throttle-20260902T0540Z`,
+`/var/lib/agca/rollback-921d0e9-reduce-only-liquidity-20260902T0545Z`,
+`/var/lib/agca/rollback-fd1dc2d-exit-reasons-20260902T0547Z` ve
+`/var/lib/agca/rollback-8cab224-short-dust-20260902T0548Z`.
+
 # 2026-09-02 — Gerçek zamanlı PAPER pozisyon yaşam döngüsü kuruldu
 
 Saatlik araştırma mimarisinin açık pozisyonu vade sonuna kadar kör tutan yolu
