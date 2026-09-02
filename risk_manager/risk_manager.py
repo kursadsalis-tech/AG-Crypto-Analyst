@@ -23,6 +23,8 @@ from data.truth_engine import (
 
 DB_NAME = "crypto_data.db"
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
+BINANCE_USD_M_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
+OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
 USER_AGENT = "AG-Crypto-Analyst/1.0.0"
 POLICY_VERSION = "MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK"
 KLINE_LIMIT = 170
@@ -147,9 +149,13 @@ def pct_change(new_value, old_value):
     return (new_value / old_value - 1.0) * 100.0
 
 
-def fetch_closed_1h_klines(symbol):
+def fetch_closed_1h_klines(
+    symbol,
+    url=BINANCE_KLINES_URL,
+    source_prefix="BINANCE_SPOT_KLINES",
+):
     response = requests.get(
-        BINANCE_KLINES_URL,
+        url,
         params={"symbol": symbol, "interval": "1h", "limit": KLINE_LIMIT},
         timeout=20,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
@@ -169,9 +175,70 @@ def fetch_closed_1h_klines(symbol):
     selected = closed[-MIN_CLOSED_CANDLES:]
     return validate_closed_klines(
         selected,
-        source=f"BINANCE_KLINES:{symbol}",
+        source=f"{source_prefix}:{symbol}",
         minimum_rows=MIN_CLOSED_CANDLES,
     )
+
+
+def _okx_swap_instrument(symbol):
+    value = str(symbol).upper()
+    if not value.endswith("USDT") or len(value) <= 4:
+        raise ValueError(f"{symbol}: unsupported USDT swap symbol")
+    return f"{value[:-4]}-USDT-SWAP"
+
+
+def fetch_okx_closed_1h_klines(symbol):
+    response = requests.get(
+        OKX_CANDLES_URL,
+        params={
+            "instId": _okx_swap_instrument(symbol),
+            "bar": "1H",
+            "limit": KLINE_LIMIT,
+        },
+        timeout=20,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+        raise RuntimeError(f"{symbol}: OKX swap candle response failed")
+    rows = []
+    for row in reversed(payload.get("data") or []):
+        if not isinstance(row, list) or len(row) < 9 or str(row[8]) != "1":
+            continue
+        opened = int(row[0])
+        rows.append([
+            opened, row[1], row[2], row[3], row[4], row[5],
+            opened + 3_600_000 - 1, row[7], 0, 0, 0, 0,
+        ])
+    if len(rows) < MIN_CLOSED_CANDLES:
+        raise RuntimeError(
+            f"{symbol}: OKX risk calculation has insufficient closed candles "
+            f"({len(rows)}/{MIN_CLOSED_CANDLES})"
+        )
+    return validate_closed_klines(
+        rows[-MIN_CLOSED_CANDLES:],
+        source=f"OKX_SWAP_KLINES:{symbol}",
+        minimum_rows=MIN_CLOSED_CANDLES,
+    )
+
+
+def fetch_dynamic_closed_1h_klines(symbol):
+    """Use derivatives-native evidence for the dynamic OKX swap universe."""
+    try:
+        return fetch_closed_1h_klines(
+            symbol,
+            url=BINANCE_USD_M_KLINES_URL,
+            source_prefix="BINANCE_USD_M_KLINES",
+        )
+    except Exception as binance_exc:
+        try:
+            return fetch_okx_closed_1h_klines(symbol)
+        except Exception as okx_exc:
+            raise RuntimeError(
+                f"{symbol}: derivatives risk evidence unavailable; "
+                f"binance={binance_exc}; okx={okx_exc}"
+            ) from okx_exc
 
 
 def candle_metrics(symbol, candles):
@@ -607,7 +674,11 @@ def main():
     requested_symbols = tuple(dict.fromkeys((*SYMBOLS, *dynamic_symbols)))
     for symbol in requested_symbols:
         try:
-            candles = fetch_closed_1h_klines(symbol)
+            candles = (
+                fetch_dynamic_closed_1h_klines(symbol)
+                if symbol in dynamic_symbols and symbol not in SYMBOLS
+                else fetch_closed_1h_klines(symbol)
+            )
             metrics = candle_metrics(symbol, candles)
             assets.append(classify_asset_risk(metrics))
         except Exception as exc:
