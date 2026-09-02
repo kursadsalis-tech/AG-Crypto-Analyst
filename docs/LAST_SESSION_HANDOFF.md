@@ -1,5 +1,42 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Dinamik risk veri yolu ve mobil rapor ayrımı
+
+Canlı `product_cycle_status=PARTIAL` kök nedeni gizlenmeden kapatıldı. Dinamik
+OKX SWAP davranış evrenindeki `LITUSDT` ve `ZORAUSDT`, risk katmanında yanlış
+biçimde Binance Spot mumlarına yönlendiriliyordu; bu nedenle LIT için
+`LATEST_CANDLE_STALE`, ZORA için HTTP 400 oluşuyordu. Sabit 13 sembollü küresel
+referans sepeti spot kaynağını korur. Dinamik SWAP fırsatları artık önce Binance
+USD-M, orada yoksa OKX SWAP kapalı 1h mumlarıyla ölçülür. İki resmî kaynak da
+yoksa yalnız ilgili varlık fail-closed kalır. Risk/gerçek-emir kapıları
+gevşetilmedi.
+
+Checkpoint `f53c8a8` için yerel tam suite 304/304 geçti. Dosya canlı
+`agca-runtime` worker'a dağıtıldı; yerel/canlı SHA-256
+`f7279b8febc79eb9a0e95fa0291b19f781cc4de7adc474a13e802a99d3ecb60e`
+eşleşir. Rollback:
+`/var/lib/agca/rollback-f53c8a8-risk-data-20260902T1110Z`. Kontrollü canlı risk
+çevrimi 02 Eylül 2026 14:09:35 İstanbul (11:09:35 UTC) anında `SUCCESS`,
+coverage 13/13, market state NORMAL ve source errors 0 kaydetti. Ana worker
+yeniden başlatıldı ve doğal uzun ürün çevrimi sürerken realtime worker active;
+02 Eylül 2026 14:13:21 İstanbul (11:13:21 UTC) sağlık kaydı CONNECTED/HOLD,
+XRPUSDT, PAPER_ONLY ve real_order_allowed=false idi. Çevrim tamamlanmadan yeni
+attestation'ın `SUCCESS` olduğu varsayılmamalıdır.
+
+Günlük Codex özeti bu geliştirme oturumundan ayrılarak ayrı mevcut AGCA sağlık
+görevine taşındı; günlük 11:15 İstanbul planı ACTIVE ve bildirim politikası
+açıktır. Beş dakikalık arıza görevi de ayrı sağlık görevinde kalır. Rapor
+sözleşmeleri düzeltildi: OPEN/PENDING yokken eski IDLE aksiyon zamanı realtime
+arızası değildir; `PARTIAL` etiketi tek başına maddi alarm değildir, somut
+SQLite/PAPER/servis etkisi gerekir. Codex görevi ile ChatGPT Scheduled Task aynı
+ürün değildir; cihaz push izni/teslimatı bu depodan doğrulanamaz. Bir sonraki
+doğal raporda ayrı görev görünümü ve telefon push teslimatı gözlenmelidir.
+
+Sıradaki ürün işi, düşük güvenli LONG deneyleri için gerçek per-trade SPOT
+PAPER yolunu; spot fiyatı, spot exchange metadata, fonlama yokluğu ve
+likidasyon yokluğuyla uçtan uca kurmaktır. Mevcut düşük risk kademesi hâlâ 1x
+USD-M'dir; SPOT tamamlanmış gibi raporlanmamalıdır.
+
 # 2026-09-02 — Bağımsız sinyal ve 1x-5x PAPER risk kademesi
 
 Kullanıcının açık onayıyla PAPER öğrenme yolu `PAPER_BEHAVIOR_DECISION_CORE_V3`
