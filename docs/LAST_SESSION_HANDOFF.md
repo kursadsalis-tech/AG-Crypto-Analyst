@@ -26,6 +26,14 @@ kaldı. Bu checkpoint henüz canlı worker'a dağıtılmış sayılmaz; rollback
 şema-migrasyon dry-run ve dağıtım sonrası doğal V3 seçim kanıtı tamamlanmadan
 canlı 5x yetkisi varmış gibi raporlanmamalıdır.
 
+Dağıtım sonrası ilk doğal V3 çevrimleri taze veri üzerinde
+`NO_ACTIONABLE_PATTERN` üretti; sonuç-kör eşleşme yokken işlem uydurulmadı.
+Bu kontrolde eski gerçek-zamanlı ters-tez sayacının haber-only/grafik-only
+işlemleri de book/taker ile kapatacağı görüldü. Kaynak bağlamı yönetime taşındı:
+saniyelik flow invalidasyonu yalnız tek ve bütün tezi `MARKET_BEHAVIOR` olan
+pozisyonda çalışır; NEWS, PRICE_ACTION veya çoklu kaynak tezi ilgisiz tahta
+işaretiyle üç saniyede kapanmaz. Tam suite bu düzeltmeyle 301/301 geçti.
+
 # 2026-09-02 — Gerçek zamanlı çıkış seli giderildi ve canlı kabul geçti
 
 İlk canlı kabulde süre sonu kapanışlarının OKX olay hızıyla tekrarlandığı ve

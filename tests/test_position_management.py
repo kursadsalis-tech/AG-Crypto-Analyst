@@ -206,6 +206,21 @@ class PositionManagementTests(unittest.TestCase):
         self.assertAlmostEqual(row[2], 10.0)
         self.assertEqual(row[3], 80)
 
+    def test_opposing_flow_cannot_invalidate_news_only_thesis(self):
+        self.con.execute("""UPDATE paper_agent_positions SET
+            independent_signal_count=1,signal_sources_json='[\"NEWS\"]'
+            WHERE position_id=1""")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        for seconds in (2, 3, 4, 5):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=-.9, taker=-.9),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+        self.assertNotEqual(result.get("reason"), "THESIS_INVALIDATED")
+        self.assertEqual(self.con.execute(
+            "SELECT status FROM paper_agent_positions"
+        ).fetchone()[0], "OPEN")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -103,6 +103,8 @@ def ensure_tables(con):
         ("liquidation_price", "REAL"), ("leverage", "REAL NOT NULL DEFAULT 1"),
         ("liquidation_fee", "REAL NOT NULL DEFAULT 0"),
         ("liquidated", "INTEGER NOT NULL DEFAULT 0"),
+        ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
     ):
         if position_columns and name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -178,7 +180,8 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                m.remaining_entry_fee,m.unallocated_funding,m.last_funding_at,
                m.realized_net_pnl,m.realized_gross_pnl,m.tp1_done,m.tp2_done,
                m.opposing_events,m.last_market_at,m.last_thesis_at,m.last_exit_attempt_at,
-               p.liquidation_price,p.leverage
+               p.liquidation_price,p.leverage,p.independent_signal_count,
+               p.signal_sources_json
         FROM paper_agent_positions p JOIN paper_position_management m USING(position_id)
         WHERE p.symbol=? AND p.status='OPEN'
     """, (live.symbol,)).fetchone()
@@ -188,11 +191,19 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
      best_price, original_qty, remaining_qty, remaining_basis, remaining_entry_fee,
      unallocated_funding, last_funding_at, realized_net, realized_gross,
      tp1_done, tp2_done, opposing_events, last_market_at, last_thesis_at,
-     last_exit_attempt_at, liquidation_threshold, leverage) = row
+     last_exit_attempt_at, liquidation_threshold, leverage, signal_count,
+     signal_sources_json) = row
     if market_at <= parse(last_market_at):
         return {"status": "DUPLICATE_OR_OLD_EVENT"}
 
-    raw_thesis = live.thesis_supported(direction)
+    try:
+        signal_sources = set(json.loads(signal_sources_json or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        signal_sources = set()
+    flow_is_entire_thesis = (
+        int(signal_count or 0) == 1 and signal_sources == {"MARKET_BEHAVIOR"}
+    )
+    raw_thesis = live.thesis_supported(direction) if flow_is_entire_thesis else None
     thesis_due = (
         last_thesis_at is None
         or (market_at - parse(last_thesis_at)).total_seconds() >= 1.0
