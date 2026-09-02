@@ -80,7 +80,10 @@ def _paper_fill(intent, market, rules):
     fill_notional = requested_notional
     partial = False
     if available_quote_volume is not None:
-        capacity = available_quote_volume * participation_limit
+        # A reduce-only order removes existing risk and may consume the
+        # explicitly observed book. New exposure keeps the conservative
+        # participation cap; protective exits must not be stranded by it.
+        capacity = available_quote_volume * (1.0 if intent.reduce_only else participation_limit)
         if capacity < fill_notional:
             fill_notional = capacity
             partial = True

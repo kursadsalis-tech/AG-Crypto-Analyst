@@ -35,6 +35,15 @@ class ExecutionModelTest(unittest.TestCase):
         self.assertIsNotNone(fill)
         self.assertLess(fill.quantity * fill.price, 5)
 
+    def test_reduce_only_can_use_observed_liquidity_beyond_entry_participation_cap(self):
+        fill = simulated_fill(
+            reference_price=100, requested_notional=75, side="SELL",
+            available_quote_volume=100, min_notional=50,
+            quantity_step=.001, reduce_only=True,
+        )
+        self.assertIsNotNone(fill)
+        self.assertGreater(fill.quantity * fill.price, 70)
+
     def test_non_finite_market_inputs_fail_closed(self):
         for value in (float("nan"), float("inf"), float("-inf")):
             self.assertIsNone(simulated_fill(
