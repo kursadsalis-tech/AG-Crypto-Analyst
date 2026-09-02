@@ -1,5 +1,38 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Per-trade SPOT PAPER yolu canlıya alındı
+
+Düşük güvenli tek-kaynak LONG öğrenme deneyi artık gerçek `SPOT` market type
+ile açılır. Tek-kaynak SHORT 1x USD-M'de kalır; bağımsız sinyal sayısı arttıkça
+mevcut 2x-5x USD-M risk kademesi değişmeden uygulanır. Bu karar sonuç-kördür ve
+Unified Forecast yürütme girdisi değildir.
+
+SPOT pozisyon; doğrudan Binance Spot fiyat/24h likidite kanıtı, hash-doğrulamalı
+Binance Spot exchangeInfo filtresi ve OKX `BASE-USDT` spot WebSocket ticker,
+books5 ve trades akışı kullanır. SWAP akışıyla karışmaz. SPOT kapanışında funding
+segmenti ve liquidation threshold üretilmez; maliyet, stop, TP1/TP2, trailing ve
+tek yaşam boyu kasa muhasebesi aynen çalışır. Sembol spotta resmî ve taze işlem
+kuralına sahip değilse pozisyon dolmadan açık nedenle CANCELLED olur. Gerçek
+emir yolu eklenmedi.
+
+Checkpoint `9c33d52`; tam yerel suite 308/308 geçti. Sekiz canlı çalışma
+dosyasının SHA-256 değeri yerelle birebir eşleşir. Rollback:
+`/var/lib/agca/rollback-9c33d52-spot-paper-20260902T1525Z`. İlk dağıtım adımı
+spot metadata kasası yokken fail-closed kaldı ve realtime servis başlamadı;
+resmî Binance Spot endpoint'inden 1.362 işlem kuralı doğrulanıp
+`/var/lib/agca/exchange-info-spot.json` oluşturulduktan sonra iki worker da
+active oldu.
+
+Bellek içi canlı BTCUSDT SPOT kabulü 02 Eylül 2026 18:23:35 İstanbul
+(15:23:35 UTC) anında PASS: OKX SPOT book/taker, stop initialization ve TP1
+kısmi realizasyonu çalıştı; `authoritative_database_mutated=false` ve bütün
+eventlerde `real_order_allowed=0`. 02 Eylül 2026 18:23:34 İstanbul
+(15:23:34 UTC) gerçek worker health CONNECTED/HOLD idi. Otoritatif kasa:
+10.000 USDT başlangıç, 9.874,2064 USDT cash, +178,9885 USDT gerçekleşmiş net
+P&L, 47,5883 USDT fee; pending funding 0, gerçek-emir event 0. Mevcut altı açık
+pozisyon deployment öncesi USD-M'dir; ilk doğal SPOT seçim henüz kapasite
+boşalınca oluşacaktır ve sonucu ayrıca ölçülmelidir.
+
 # 2026-09-02 — Dinamik risk veri yolu ve mobil rapor ayrımı
 
 Canlı `product_cycle_status=PARTIAL` kök nedeni gizlenmeden kapatıldı. Dinamik
