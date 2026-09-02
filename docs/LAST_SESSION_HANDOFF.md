@@ -33,6 +33,17 @@ pozisyon 0, pending funding 0, kasa 10.289,5561 USDT, gerçekleşmiş sonuç
 `COLLECTING_EVIDENCE`; promotion kapalıdır. Worker `active/CONNECTED`, PAPER_ONLY
 ve Unified Forecast yürütmeden ayrıdır.
 
+Mobil rapor eksikliğinin ayrıca somut konfigürasyon nedeni bulundu: aktif günlük
+özet ve beş dakikalık arıza heartbeat'leri SQLite'ı yanlış
+`/var/lib/agca/crypto_data.db` yolunda arıyordu. İki mevcut otomasyon kopya
+oluşturmadan yerinde güncellendi; doğru otoritatif yol
+`/home/kursadsalis/AG-Crypto-Analyst-cloud/crypto_data.db` oldu. Günlük özet
+11:15 İstanbul zamanında ACTIVE ve her koşuda NOTIFY kalır. Arıza nöbeti artık
+gerçek zamanlı worker/health, yönetimsiz OPEN, pending funding ve beş dakikada
+10'dan fazla aynı-pozisyon EXIT_REJECTED selini de kritik sayar. İlk görev
+güncelleme öncesi başlamış olduğundan, yeni sözleşmenin ilk doğal beş dakikalık
+koşusu ayrıca teslimat kanıtı olarak izlenmelidir.
+
 Canlı rollback dizinleri:
 `/var/lib/agca/rollback-b380bc5-exit-throttle-20260902T0540Z`,
 `/var/lib/agca/rollback-921d0e9-reduce-only-liquidity-20260902T0545Z`,
