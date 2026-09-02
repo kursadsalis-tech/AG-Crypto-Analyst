@@ -1,5 +1,52 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Oturum kapanışı: doğal SPOT ve mobil teslimat kanıtı
+
+Bu oturumun maddi uygulaması tamamlandı. Checkpoint `9c33d52` per-trade SPOT
+PAPER yolunu, `f53c8a8` dinamik türev risk veri yolunu içerir; canlı kabul ve
+operasyon kanıtları `43b70bf` handoff kaydındadır. Yerel tam suite 308/308 geçti,
+çalışma ağacı temizdir. Aktif dal
+`checkpoint/agca-20260826-supabase-recovery`, son commit `43b70bf`.
+
+Son canlı incelemede ana worker ve realtime worker active; realtime health 02
+Eylül 2026 18:26:17 İstanbul (15:26:17 UTC) anında CONNECTED/HOLD ve
+PAPER_ONLY idi. Yaşam boyu portföyde 99 CLOSED, 6 OPEN USD-M pozisyon, 74
+işlem-sonrası deneyim incelemesi ve 50 `COLLECTING_EVIDENCE` öğrenme incelemesi
+vardı. Kasa 10.000 USDT başlangıç, 9.874,2064 USDT cash, +178,9885 USDT
+gerçekleşmiş net P&L ve 47,5883 USDT fee; pending funding ve gerçek-emir event
+0. Promotion/skill-proven/policy-mutation yetkileri kapalıdır.
+
+Tamamlanmış gibi sunulmaması gereken iki doğal/operasyonel kanıt kalır:
+
+1. Deployment öncesinden gelen altı açık USD-M pozisyon kapasiteyi doldurduğu
+   için ilk doğal 1x SPOT LONG henüz seçilmedi. Kapasite boşaldığında seçimin
+   SPOT market type, Binance Spot giriş kanıtı, OKX Spot gerçek-zamanlı yönetim,
+   sıfır funding ve sıfır liquidation ile kapanış/öğrenmeye ilerlediği
+   SQLite'tan doğrulanmalıdır.
+2. Günlük raporlar SQLite'ta üretiliyor fakat son kayıtlar
+   `remote_mirror_status=PENDING`, `delivery_complete=0`; mobil push teslimatı
+   henüz kanıtlanmadı. Ayrı AGCA sağlık görevindeki bir sonraki 11:15 İstanbul
+   koşusunda raporun bu geliştirme oturumuna yazılmadığı ve telefona push olarak
+   ulaştığı gözlenmelidir. Ana worker yeniden başlatma sonrası active/running
+   olsa da kapanış anında yeni tam-cycle attestation henüz oluşmamıştı; uzun
+   süre STARTING kalırsa piyasa bekleyişi değil operasyon arızası sayılmalıdır.
+
+Canonical checkout:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst`. Codex'te başka proje/mirror
+seçilmemeli; yalnız bu yerel canonical checkout kullanılmalıdır.
+
+Exact next-session opening prompt:
+
+> AGCA yerel projesinde çalış: /Users/elifzilan/Documents/AG-Crypto-Analyst.
+> Kök AGENTS.md, docs/PROJECT_HUB.md ve docs/LAST_SESSION_HANDOFF.md dosyalarını
+> tamamen oku; Git durumunu kontrol et. Önce deployment sonrası taze tam-cycle
+> attestation'ı doğrula. Ardından kapasite boşaldığında ilk doğal 1x SPOT LONG
+> işlemin seçim, Binance Spot dolum, OKX Spot yönetim, fonlama/likidasyon yokluğu,
+> kapanış ve sonuç-kör öğrenme zincirini canlı SQLite'tan izle. Bir sonraki 11:15
+> İstanbul günlük raporunun geliştirme oturumuna yazılmadığını ve mobil push
+> teslimatını doğrula. Unified Forecast'ı yürütmeye bağlama; tek yaşam boyu kasa,
+> PAPER_ONLY ve gerçek-emir kapılarını koru. Yeni maddi arıza yoksa kod değiştirme.
+
 # 2026-09-02 — Per-trade SPOT PAPER yolu canlıya alındı
 
 Düşük güvenli tek-kaynak LONG öğrenme deneyi artık gerçek `SPOT` market type
