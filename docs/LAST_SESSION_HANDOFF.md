@@ -1,5 +1,31 @@
 # Latest AGCA Session Handoff
 
+# 2026-09-02 — Bağımsız sinyal ve 1x-5x PAPER risk kademesi
+
+Kullanıcının açık onayıyla PAPER öğrenme yolu `PAPER_BEHAVIOR_DECISION_CORE_V3`
+ve `PAPER_BEHAVIOR_POLICY_V3_RISK_TIERED_LEARNING` olarak ayrıldı. Maliyet
+sonrası pozitif ve sonuç-kör geçmiş hipotezi bulunan PRICE_ACTION, saf
+MARKET_BEHAVIOR/tahta-akış veya causal external event (haber, makro, on-chain,
+balina vb.) tek başına küçük PAPER deney açabilir. Grafik, haber ve tahtanın aynı
+anda onayı artık giriş şartı değildir; aynı yönlü bağımsız birleşme yalnız
+boyut/kaldıraç girdisidir. Yinelenen ve ters kaynaklar güven sayısını büyütmez.
+
+Yeni `PAPER_RISK_TIER_1..5` tek kaynakta 1x ve özsermayenin %0,5'i marjinle
+başlar; bağımsız sinyal ve promotion adımlarıyla en fazla 5x ve %2 marjine çıkar.
+Marjin ile brüt maruziyet SQLite'ta ayrıdır. Kasa marjin + brüt giriş ücretini
+ayırır; miktar, fee, spread, slippage ve funding brüt maruziyetten hesaplanır;
+kapanış kalan marjini ve maliyet sonrası P&L'yi döndürür. Likidasyon eşiği gerçek
+leverage ile oluşturulur; stopu aşan gap eşiği geçerse liquidation fee ve LOSS
+öğrenmeye yazılır. Leverage ve risk-tier kohortları öğrenme gruplarına eklendi.
+
+Yerel tam suite 300/300 geçti. Canlı OKX WebSocket + canlı resmî exchange
+metadata ile yalnız bellek içi 5x BTCUSDT kabulü 02 Eylül 2026 13:31:56 İstanbul
+(10:31:56 UTC) anında PASS oldu: stop kuruldu, TP1 kısmi realizasyonu ve maliyet
+muhasebesi çalıştı; otoritatif SQLite değişmedi ve `real_order_allowed=false`
+kaldı. Bu checkpoint henüz canlı worker'a dağıtılmış sayılmaz; rollback,
+şema-migrasyon dry-run ve dağıtım sonrası doğal V3 seçim kanıtı tamamlanmadan
+canlı 5x yetkisi varmış gibi raporlanmamalıdır.
+
 # 2026-09-02 — Gerçek zamanlı çıkış seli giderildi ve canlı kabul geçti
 
 İlk canlı kabulde süre sonu kapanışlarının OKX olay hızıyla tekrarlandığı ve

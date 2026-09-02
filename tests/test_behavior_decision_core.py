@@ -83,6 +83,44 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
 
+    def test_news_hypothesis_can_stand_without_current_flow_confluence(self):
+        self.add_history(count=5, days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE market_behavior_minute_features SET taker_imbalance_snapshot_mean=-.35"
+        )
+        result = core.evaluate(self.con, NOW)
+        event_only = [candidate for candidate in result["candidates"]
+                      if candidate["evidence"]["hypothesis_scope"] == "EXTERNAL_EVENT_ONLY"]
+        self.assertTrue(event_only)
+        self.assertEqual(event_only[0]["evidence"]["primary_signal_source"], "NEWS")
+        self.assertNotIn("ORDER_BOOK", event_only[0]["evidence"]["capabilities_used"])
+
+    def test_price_action_can_open_small_experiment_without_news(self):
+        self.add_history(count=5, days=1)
+        self.add_current()
+        self.con.execute(
+            "ALTER TABLE behavior_event_forward_outcomes ADD COLUMN pre_event_mid_price REAL"
+        )
+        self.con.execute(
+            "ALTER TABLE behavior_event_forward_outcomes ADD COLUMN event_minute_mid_price REAL"
+        )
+        self.con.execute(
+            "ALTER TABLE market_behavior_minute_features ADD COLUMN mid_price_first REAL"
+        )
+        self.con.execute("""UPDATE behavior_event_forward_outcomes SET
+            pre_event_mid_price=100,event_minute_mid_price=100.5""")
+        self.con.execute(
+            "UPDATE market_behavior_minute_features SET mid_price_first=99.5"
+        )
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        result = core.evaluate(self.con, NOW)
+        chart = [candidate for candidate in result["candidates"]
+                 if candidate["evidence"]["hypothesis_scope"] == "PRICE_ACTION_ONLY"]
+        self.assertTrue(chart)
+        self.assertEqual(chart[0]["evidence"]["capabilities_used"],
+                         ["PRICE_ACTION", "SPREAD_COST", "RISK_GATE"])
+
     def test_cost_after_multiday_pattern_creates_behavior_candidate(self):
         self.add_history(days=3)
         self.add_current()
@@ -174,14 +212,18 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(settled[0], "COUNTERFACTUAL_SETTLED_NOT_TRADED")
         self.assertAlmostEqual(settled[1], 0.74)
 
-    def test_disagreeing_book_and_taker_flow_does_not_trade(self):
+    def test_disagreeing_flow_does_not_block_independent_news_experiment(self):
         self.add_history(days=3)
         self.add_current()
         self.con.execute(
             "UPDATE market_behavior_minute_features SET taker_imbalance_snapshot_mean=-.4"
         )
         result = core.evaluate(self.con, NOW)
-        self.assertEqual(result["candidates"], [])
+        self.assertTrue(result["candidates"])
+        self.assertEqual(
+            {row["evidence"]["hypothesis_scope"] for row in result["candidates"]},
+            {"EXTERNAL_EVENT_ONLY"},
+        )
 
     def test_learned_opposing_flow_can_be_traded_as_absorption_pattern(self):
         self.add_history(days=1)

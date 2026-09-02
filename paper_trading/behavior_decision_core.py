@@ -14,9 +14,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 
-VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V2"
-POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V2_LEARNING_EXPERIMENTS"
-STRATEGY_ID = "BEHAVIOR_CORE_V2"
+VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V3"
+POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V3_RISK_TIERED_LEARNING"
+STRATEGY_ID = "BEHAVIOR_CORE_V3"
 HORIZON_MINUTES = 240
 # Exploration gates only establish a testable, cost-positive PAPER hypothesis.
 # They are deliberately separate from the evidence required to trust/promote it.
@@ -141,6 +141,17 @@ def _flow_pattern(book, taker):
     return None
 
 
+def _price_pattern(move_pct, spread_bps):
+    if move_pct is None:
+        return None
+    noise_floor_pct = max(0.0, float(spread_bps)) / 100.0
+    if float(move_pct) > noise_floor_pct:
+        return "PRICE_UP"
+    if float(move_pct) < -noise_floor_pct:
+        return "PRICE_DOWN"
+    return None
+
+
 def _symbol(instrument):
     return str(instrument).replace("-USDT-SWAP", "USDT").replace("-", "")
 
@@ -157,25 +168,44 @@ def _applies(symbols_json, instrument):
 def learned_patterns(con, now=None):
     """Learn continuation/reversal direction from deduplicated closed outcomes."""
     now = now or datetime.now(timezone.utc)
-    rows = con.execute("""
+    outcome_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(behavior_event_forward_outcomes)"
+    )}
+    price_move_expr = (
+        "AVG(100.0*(event_minute_mid_price/pre_event_mid_price-1.0))"
+        if {"event_minute_mid_price", "pre_event_mid_price"}.issubset(outcome_columns)
+        else "NULL"
+    )
+    rows = con.execute(f"""
         SELECT MIN(event_minute_end_timestamp_ms),independence_unit,kind,
                AVG(return_from_pre_event_pct),AVG(book_imbalance_20_mean),
-               AVG(taker_imbalance_snapshot_mean),AVG(spread_bps_mean)
+               AVG(taker_imbalance_snapshot_mean),AVG(spread_bps_mean),
+               {price_move_expr}
         FROM behavior_event_forward_outcomes
         WHERE horizon_minutes=? AND outcome_available_at<=?
         GROUP BY independence_unit,kind
         ORDER BY MIN(event_minute_end_timestamp_ms),independence_unit,kind
     """, (HORIZON_MINUTES, iso(now))).fetchall()
     grouped = defaultdict(list)
-    for minute_ms, independence_unit, kind, future_return, book, taker, spread in rows:
+    for (minute_ms, independence_unit, kind, future_return, book, taker,
+         spread, price_move) in rows:
         pattern = _flow_pattern(float(book), float(taker))
         if not pattern:
             continue
         cost = ROUND_TRIP_FEE_PCT + EXTRA_COST_BUFFER_PCT + float(spread or 0) / 100.0
-        grouped[(str(kind), pattern)].append({
+        sample = {
             "minute_ms": int(minute_ms), "independence_unit": str(independence_unit),
             "return_pct": float(future_return), "cost_pct": cost,
-        })
+        }
+        grouped[(str(kind), pattern)].append(sample)
+        if str(kind) != "MARKET_STRUCTURE":
+            # External/news hypotheses are also learned independently of the
+            # contemporaneous book pattern. Confluence changes risk, not entry
+            # permission for an otherwise cost-positive PAPER experiment.
+            grouped[(str(kind), "ANY_FLOW")].append(sample)
+        price_pattern = _price_pattern(price_move, spread)
+        if price_pattern:
+            grouped[("PRICE_ACTION", price_pattern)].append(sample)
     output = {}
     for key, samples in grouped.items():
         days = {datetime.fromtimestamp(x["minute_ms"] / 1000, timezone.utc).date() for x in samples}
@@ -294,116 +324,172 @@ def evaluate(con, now=None):
         "MARKET_STRUCTURE", "[]", f"market_structure:{latest}",
         iso(evidence_end), "OBSERVED",
     ))
-    rows = con.execute("""SELECT instrument,book_imbalance_20_mean,
+    feature_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(market_behavior_minute_features)"
+    )}
+    mid_first_expr = "mid_price_first" if "mid_price_first" in feature_columns else "NULL"
+    rows = con.execute(f"""SELECT instrument,book_imbalance_20_mean,
         taker_imbalance_snapshot_mean,spread_bps_mean,mid_price_last,
         open_interest_usd_first,open_interest_usd_change,funding_rate_last,
         long_liquidation_notional_usd_estimate,
         short_liquidation_notional_usd_estimate,liquidation_event_count,
-        quality_gates_json FROM market_behavior_minute_features
+        quality_gates_json,{mid_first_expr} FROM market_behavior_minute_features
         WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1 ORDER BY instrument
     """, (latest,)).fetchall()
     candidates = []
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
-         long_liq, short_liq, liq_count, quality_json) = raw
+         long_liq, short_liq, liq_count, quality_json, mid_first) = raw
         pattern = _flow_pattern(float(book), float(taker))
         symbol = _symbol(instrument)
         risk = risks.get(symbol)
         if not pattern or mid is None:
             continue
-        for kind, symbols_json, event_id, available_at, event_direction in events:
+        candidate_events = list(events)
+        price_pattern = _price_pattern(
+            (100.0 * (float(mid) / float(mid_first) - 1.0)
+             if mid_first not in (None, 0) else None), spread,
+        )
+        if price_pattern:
+            candidate_events.append((
+                "PRICE_ACTION", "[]", f"price_action:{latest}:{price_pattern}",
+                iso(evidence_end), "OBSERVED",
+            ))
+        for kind, symbols_json, event_id, available_at, event_direction in candidate_events:
             available = datetime.fromisoformat(str(available_at).replace("Z", "+00:00"))
             if available.astimezone(timezone.utc) > evidence_end:
                 continue
-            learned = exploration_patterns.get((str(kind), pattern))
-            if not learned or not _applies(symbols_json, instrument):
+            learned_options = []
+            lookup_pattern = price_pattern if str(kind) == "PRICE_ACTION" else pattern
+            specific = exploration_patterns.get((str(kind), lookup_pattern))
+            event_only = (exploration_patterns.get((str(kind), "ANY_FLOW"))
+                          if str(kind) != "MARKET_STRUCTURE" else None)
+            if specific:
+                learned_options.append((specific, False))
+            if event_only:
+                learned_options.append((event_only, True))
+            if not learned_options or not _applies(symbols_json, instrument):
                 continue
-            if not risk or not risk["allowed"]:
-                con.execute("""INSERT OR IGNORE INTO paper_behavior_missed_opportunities(
-                    created_at,core_version,event_id,event_kind,instrument,symbol,
-                    evidence_minute_end_ms,direction,pattern_key,rejection_reason,
-                    expected_net_edge_pct,sample_count,independent_days,real_order_allowed
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
-                    iso(now), VERSION, event_id, kind, instrument, symbol, int(latest),
-                    learned["direction"], pattern,
-                    "RISK_COVERAGE_MISSING" if not risk else "RISK_VETO",
-                    learned["mean_net_edge_pct"], learned["sample_count"],
-                    learned["independent_days"],
+            for learned, event_only_hypothesis in learned_options:
+                candidates.extend(_candidate_for_hypothesis(
+                    con=con, now=now, latest=int(latest), instrument=instrument,
+                    symbol=symbol, pattern=lookup_pattern, kind=str(kind),
+                    symbols_json=symbols_json, event_id=event_id,
+                    available_at=available_at, event_direction=event_direction,
+                    learned=learned, event_only=event_only_hypothesis, risk=risk,
+                    mid=mid, book=book, taker=taker, spread=spread,
+                    oi_first=oi_first, oi_change=oi_change, funding=funding,
+                    long_liq=long_liq, short_liq=short_liq, liq_count=liq_count,
+                    quality_json=quality_json,
                 ))
-                continue
-            evidence = {
-                "decision_source": "MARKET_BEHAVIOR_CORE",
-                "core_version": VERSION, "policy_version": POLICY_VERSION,
-                "evidence_minute_end_ms": int(latest), "event": {
-                    "id": event_id, "kind": kind, "available_at": available_at,
-                    "reported_direction": event_direction,
-                },
-                "market_behavior": {
-                    "instrument": instrument, "book_imbalance": float(book),
-                    "taker_imbalance": float(taker), "spread_bps": float(spread),
-                    "mid_price": float(mid),
-                    "open_interest_change_pct": 100.0 * float(oi_change) / max(abs(float(oi_first)), 1e-9),
-                    "funding_rate": float(funding), "long_liquidation_usd": float(long_liq),
-                    "short_liquidation_usd": float(short_liq),
-                    "liquidation_events": int(liq_count),
-                    "quality_gates": json.loads(quality_json),
-                },
-                "learned_pattern": learned,
-                "experiment_tier": (
-                    "PROMOTION_READY" if learned["promotion_ready"]
-                    else "EXPLORATORY_LEARNING"
-                ),
-                "risk": risk,
-                "capabilities_used": ["ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST",
-                    "OPEN_INTEREST", "FUNDING", "LIQUIDATIONS", "CAUSAL_EXTERNAL_EVENT",
-                    "RISK_GATE"],
-                "unified_forecast_used": False, "real_orders": False,
-            }
-            digest = hashlib.sha256(json.dumps(
-                evidence, sort_keys=True, separators=(",", ":")
-            ).encode()).hexdigest()
-            con.execute("""INSERT INTO paper_behavior_decisions(
-                created_at,core_version,policy_version,instrument,symbol,
-                evidence_minute_end_ms,horizon_minutes,direction,event_kind,pattern_key,
-                expected_net_edge_pct,empirical_win_rate,sample_count,independent_days,
-                evidence_json,evidence_sha256,status,real_order_allowed
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-            ON CONFLICT(core_version,instrument,evidence_minute_end_ms,event_kind,pattern_key)
-            DO NOTHING""", (
-                iso(now), VERSION, POLICY_VERSION, instrument, symbol, int(latest),
-                HORIZON_MINUTES, learned["direction"], kind, pattern,
-                learned["mean_net_edge_pct"], learned["cost_after_win_rate"],
-                learned["sample_count"], learned["independent_days"],
-                json.dumps(evidence, ensure_ascii=False, sort_keys=True), digest,
-                ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
-                 else "EXPLORATORY_PAPER_LEARNING_EXPERIMENT"),
-            ))
-            existing = con.execute("""SELECT decision_id,evidence_json,evidence_sha256
-                FROM paper_behavior_decisions
-                WHERE core_version=? AND instrument=?
-                  AND evidence_minute_end_ms=? AND event_kind=? AND pattern_key=?""", (
-                VERSION, instrument, int(latest), kind, pattern,
-            )).fetchone()
-            if not existing:
-                raise RuntimeError("idempotent behavior decision could not be resolved")
-            decision_id, stored_evidence_json, digest = existing
-            # The outcome-blind thesis is immutable. A later risk snapshot may
-            # re-evaluate the same minute but cannot rewrite its proof.
-            evidence = json.loads(stored_evidence_json)
-            risk = evidence["risk"]
-            candidates.append({
-                "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
-                "symbol": symbol, "instrument": instrument, "horizon": 4,
-                "direction": learned["direction"], "confidence": learned["cost_after_win_rate"],
-                "expected_net_edge_pct": learned["mean_net_edge_pct"],
-                "experiment_tier": evidence["experiment_tier"],
-                "current_price": float(mid), "target_price": float(mid) * (
-                    1 + (1 if learned["direction"] == "LONG" else -1)
-                    * max(learned["mean_net_edge_pct"], 0.01) / 100.0),
-                "risk_cap_pct": risk["cap_pct"], "evidence": evidence,
-                "evidence_sha256": digest,
-            })
     con.commit()
     candidates.sort(key=lambda x: (x["expected_net_edge_pct"], x["confidence"]), reverse=True)
     return {"status": "ACTIONABLE" if candidates else "NO_ACTIONABLE_PATTERN",
             "candidates": candidates, "review": review}
+
+
+def _candidate_for_hypothesis(
+    *, con, now, latest, instrument, symbol, pattern, kind, symbols_json,
+    event_id, available_at, event_direction, learned, event_only, risk, mid,
+    book, taker, spread, oi_first, oi_change, funding, long_liq, short_liq,
+    liq_count, quality_json,
+):
+    """Persist one immutable single-source or confluence PAPER hypothesis."""
+    hypothesis_pattern = "ANY_FLOW" if event_only else pattern
+    if not risk or not risk["allowed"]:
+        con.execute("""INSERT OR IGNORE INTO paper_behavior_missed_opportunities(
+            created_at,core_version,event_id,event_kind,instrument,symbol,
+            evidence_minute_end_ms,direction,pattern_key,rejection_reason,
+            expected_net_edge_pct,sample_count,independent_days,real_order_allowed
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
+            iso(now), VERSION, event_id, kind, instrument, symbol, latest,
+            learned["direction"], hypothesis_pattern,
+            "RISK_COVERAGE_MISSING" if not risk else "RISK_VETO",
+            learned["mean_net_edge_pct"], learned["sample_count"],
+            learned["independent_days"],
+        ))
+        return []
+    price_only = kind == "PRICE_ACTION"
+    primary_source = kind if event_only or price_only else "MARKET_BEHAVIOR"
+    if price_only:
+        capabilities = ["PRICE_ACTION", "SPREAD_COST", "RISK_GATE"]
+    elif event_only:
+        capabilities = [kind, "CAUSAL_EXTERNAL_EVENT", "SPREAD_COST", "RISK_GATE"]
+    else:
+        capabilities = ["ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST",
+                        "OPEN_INTEREST", "FUNDING", "LIQUIDATIONS", "RISK_GATE"]
+    directional_signals = [{"source": primary_source,
+                            "direction": learned["direction"]}]
+    if not event_only and kind not in {"MARKET_STRUCTURE", "PRICE_ACTION"}:
+        directional_signals.append({"source": kind, "direction": learned["direction"]})
+        capabilities.append("CAUSAL_EXTERNAL_EVENT")
+    evidence = {
+        "decision_source": "MARKET_BEHAVIOR_CORE",
+        "core_version": VERSION, "policy_version": POLICY_VERSION,
+        "evidence_minute_end_ms": latest, "event": {
+            "id": event_id, "kind": kind, "available_at": available_at,
+            "reported_direction": event_direction,
+        },
+        "primary_signal_source": primary_source,
+        "directional_signals": directional_signals,
+        "hypothesis_scope": ("PRICE_ACTION_ONLY" if price_only else
+            "EXTERNAL_EVENT_ONLY" if event_only else
+            "MARKET_BEHAVIOR_ONLY" if kind == "MARKET_STRUCTURE" else "CONFLUENCE"),
+        "market_behavior": {
+            "instrument": instrument, "book_imbalance": float(book),
+            "taker_imbalance": float(taker), "spread_bps": float(spread),
+            "mid_price": float(mid),
+            "open_interest_change_pct": 100.0 * float(oi_change) / max(abs(float(oi_first)), 1e-9),
+            "funding_rate": float(funding), "long_liquidation_usd": float(long_liq),
+            "short_liquidation_usd": float(short_liq),
+            "liquidation_events": int(liq_count),
+            "quality_gates": json.loads(quality_json),
+        },
+        "learned_pattern": learned,
+        "experiment_tier": ("PROMOTION_READY" if learned["promotion_ready"]
+                            else "EXPLORATORY_LEARNING"),
+        "risk": risk, "capabilities_used": capabilities,
+        "unified_forecast_used": False, "real_orders": False,
+    }
+    digest = hashlib.sha256(json.dumps(
+        evidence, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    con.execute("""INSERT INTO paper_behavior_decisions(
+        created_at,core_version,policy_version,instrument,symbol,
+        evidence_minute_end_ms,horizon_minutes,direction,event_kind,pattern_key,
+        expected_net_edge_pct,empirical_win_rate,sample_count,independent_days,
+        evidence_json,evidence_sha256,status,real_order_allowed
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+    ON CONFLICT(core_version,instrument,evidence_minute_end_ms,event_kind,pattern_key)
+    DO NOTHING""", (
+        iso(now), VERSION, POLICY_VERSION, instrument, symbol, latest,
+        HORIZON_MINUTES, learned["direction"], kind, hypothesis_pattern,
+        learned["mean_net_edge_pct"], learned["cost_after_win_rate"],
+        learned["sample_count"], learned["independent_days"],
+        json.dumps(evidence, ensure_ascii=False, sort_keys=True), digest,
+        ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
+         else "EXPLORATORY_PAPER_LEARNING_EXPERIMENT"),
+    ))
+    existing = con.execute("""SELECT decision_id,evidence_json,evidence_sha256
+        FROM paper_behavior_decisions WHERE core_version=? AND instrument=?
+          AND evidence_minute_end_ms=? AND event_kind=? AND pattern_key=?""", (
+        VERSION, instrument, latest, kind, hypothesis_pattern,
+    )).fetchone()
+    if not existing:
+        raise RuntimeError("idempotent behavior decision could not be resolved")
+    decision_id, stored_evidence_json, digest = existing
+    evidence = json.loads(stored_evidence_json)
+    learned = evidence["learned_pattern"]
+    risk = evidence["risk"]
+    return [{
+        "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
+        "symbol": symbol, "instrument": instrument, "horizon": 4,
+        "direction": learned["direction"], "confidence": learned["cost_after_win_rate"],
+        "expected_net_edge_pct": learned["mean_net_edge_pct"],
+        "experiment_tier": evidence["experiment_tier"],
+        "current_price": float(mid), "target_price": float(mid) * (
+            1 + (1 if learned["direction"] == "LONG" else -1)
+            * max(learned["mean_net_edge_pct"], 0.01) / 100.0),
+        "risk_cap_pct": risk["cap_pct"], "evidence": evidence,
+        "evidence_sha256": digest,
+    }]

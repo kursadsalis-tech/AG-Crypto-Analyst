@@ -34,6 +34,7 @@ from paper_trading import experience_memory
 from paper_trading import behavior_decision_core
 from paper_trading import execution_market_data
 from paper_trading import position_management
+from paper_trading import risk_tiering
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -43,8 +44,6 @@ INITIAL_CAPITAL = float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000"))
 FEE_BPS = float(os.getenv("AGCA_PAPER_FEE_BPS", "10"))
 FEE_RATE = FEE_BPS / 10000.0
 MAX_TOTAL_EXPOSURE = 0.60
-POSITION_FRACTION = 0.10
-EXPLORATION_POSITION_FRACTION = 0.02
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
 MIN_PAPER_NOTIONAL_USDT = 10.0
@@ -215,9 +214,16 @@ def ensure_tables(con):
         ("strategy_id", "TEXT NOT NULL DEFAULT 'CHAMPION_BASELINE'"),
         ("decision_source", "TEXT NOT NULL DEFAULT 'UNIFIED_FORECAST_BASELINE'"),
         ("decision_reference_id", "INTEGER"),
+        ("leverage", "REAL NOT NULL DEFAULT 1"),
+        ("margin_allocated", "REAL"),
+        ("risk_tier", "TEXT NOT NULL DEFAULT 'PAPER_RISK_TIER_1'"),
+        ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
+    con.execute("""UPDATE paper_agent_positions SET margin_allocated=notional
+        WHERE margin_allocated IS NULL""")
     portfolio_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_portfolio)")}
     for name, definition in (
         ("validation_cohort", "TEXT"),
@@ -228,14 +234,14 @@ def ensure_tables(con):
     if PAPER_MARKET == "USD_M_PERPETUAL":
         maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
         rows = con.execute("""
-            SELECT position_id,entry_price,direction FROM paper_agent_positions
+            SELECT position_id,entry_price,direction,leverage FROM paper_agent_positions
             WHERE status='OPEN' AND liquidation_price IS NULL AND entry_price IS NOT NULL
         """).fetchall()
-        for position_id, entry_price, direction in rows:
+        for position_id, entry_price, direction, leverage in rows:
             con.execute(
                 "UPDATE paper_agent_positions SET liquidation_price=? WHERE position_id=?",
                 (liquidation_price(
-                    entry_price=float(entry_price), direction=direction, leverage=1.0,
+                    entry_price=float(entry_price), direction=direction, leverage=float(leverage),
                     maintenance_margin_rate=maintenance_rate,
                 ), position_id),
             )
@@ -367,7 +373,7 @@ def portfolio_snapshot(con):
     open_rows = con.execute("""
         SELECT p.symbol,p.direction,p.entry_price,
                COALESCE(m.remaining_quantity,p.quantity),
-               COALESCE(m.remaining_cost_basis,p.notional)
+               COALESCE(m.remaining_cost_basis,p.margin_allocated)
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN'
@@ -400,14 +406,14 @@ def portfolio_snapshot(con):
 
 def fill_pending(con, now, exchange_metadata=None):
     rows = con.execute("""
-        SELECT position_id,symbol,planned_entry_time,notional,direction
+        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
         ORDER BY selected_at,position_id
     """).fetchall()
     filled = 0
     cancelled = 0
-    for position_id, symbol, planned_entry_time, notional, direction in rows:
+    for position_id, symbol, planned_entry_time, notional, direction, leverage in rows:
         planned = parse_time(planned_entry_time)
         result = None
         if PAPER_MARKET == "USD_M_PERPETUAL" and now >= planned:
@@ -461,10 +467,11 @@ def fill_pending(con, now, exchange_metadata=None):
             continue
         entry_price, fee = fill.price, fill.fee
         actual_notional = fill.quantity * fill.price
+        margin = actual_notional / float(leverage)
         cash = float(con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0])
-        if cash + 1e-9 < actual_notional + fee:
+        if cash + 1e-9 < margin + fee:
             con.execute("""
                 UPDATE paper_agent_positions
                 SET status='CANCELLED',cancel_reason=?
@@ -475,23 +482,23 @@ def fill_pending(con, now, exchange_metadata=None):
         quantity = fill.quantity
         maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
         liquidation_threshold = liquidation_price(
-            entry_price=entry_price, direction=direction, leverage=1.0,
+            entry_price=entry_price, direction=direction, leverage=float(leverage),
             maintenance_margin_rate=maintenance_rate,
         ) if PAPER_MARKET == "USD_M_PERPETUAL" else None
         con.execute("""
             UPDATE paper_agent_positions SET
                 status='OPEN',entry_time=?,entry_price=?,quantity=?,notional=?,entry_fee=?,
                 market_type=?,entry_spread_cost=?,entry_slippage_cost=?,partial_fill=?,
-                liquidation_price=?
+                liquidation_price=?,margin_allocated=?
             WHERE position_id=? AND status='PENDING_ENTRY'
         """, (iso(entry_time), entry_price, quantity, actual_notional, fee,
               PAPER_MARKET, fill.spread_cost, fill.slippage_cost,
-              int(fill.partial), liquidation_threshold, position_id))
+              int(fill.partial), liquidation_threshold, margin, position_id))
         con.execute("""
             UPDATE paper_agent_portfolio
             SET cash=cash-?,total_fees=total_fees+?
             WHERE portfolio_id=1
-        """, (actual_notional + fee, fee))
+        """, (margin + fee, fee))
         filled += 1
     con.commit()
     return filled, cancelled
@@ -500,7 +507,8 @@ def fill_pending(con, now, exchange_metadata=None):
 def settle_open(con, now, exchange_metadata=None):
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.due_time,p.entry_time,
-               p.entry_price,p.quantity,p.notional,p.entry_fee,p.liquidation_price
+               p.entry_price,p.quantity,p.notional,p.entry_fee,p.liquidation_price,
+               p.margin_allocated,p.leverage
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN' AND p.due_time<=? AND m.position_id IS NULL
@@ -508,7 +516,8 @@ def settle_open(con, now, exchange_metadata=None):
     """, (iso(now),)).fetchall()
     closed = 0
     for row in rows:
-        position_id, symbol, direction, due, entry_time, entry, quantity, notional, entry_fee, liq_price = row
+        (position_id, symbol, direction, due, entry_time, entry, quantity,
+         notional, entry_fee, liq_price, margin_allocated, leverage) = row
         result = None
         if PAPER_MARKET == "USD_M_PERPETUAL":
             try:
@@ -546,7 +555,7 @@ def settle_open(con, now, exchange_metadata=None):
             exit_spread_cost = 0.0
             exit_slippage_cost = 0.0
             liquidated = 1
-            close_reason = "CONSERVATIVE_1X_LIQUIDATION"
+            close_reason = f"CONSERVATIVE_{float(leverage):g}X_LIQUIDATION"
         else:
             fill = simulated_fill(
                 reference_price=reference_price,
@@ -581,8 +590,8 @@ def settle_open(con, now, exchange_metadata=None):
             funding_events = []
             funding = 0.0
             funding_source = "SPOT_NOT_APPLICABLE"
-        recovery = max(0.0, notional + gross - exit_fee - funding)
-        net = recovery - notional - entry_fee
+        recovery = max(0.0, float(margin_allocated) + gross - exit_fee - funding)
+        net = recovery - float(margin_allocated) - entry_fee
         con.execute("""
             UPDATE paper_agent_positions SET
                 status='CLOSED',exit_time=?,exit_price=?,exit_fee=?,
@@ -715,20 +724,17 @@ def select_new_positions(con, now):
         if row["symbol"] in active_symbols:
             reject("SYMBOL_ALREADY_ACTIVE")
             continue
-        position_fraction = (
-            POSITION_FRACTION if row.get("experiment_tier") == "PROMOTION_READY"
-            else EXPLORATION_POSITION_FRACTION
-        )
-        base_notional = snapshot["equity"] * position_fraction
+        tier = risk_tiering.tier_for(row)
+        base_margin = snapshot["equity"] * tier.margin_fraction
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
         risk_room = snapshot["equity"] * row["risk_cap_pct"] / 100.0
         notional = min(
-            base_notional,
+            base_margin * tier.leverage,
             available_exposure,
             risk_room,
-            snapshot["cash"] / (1.0 + FEE_RATE),
+            snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
@@ -738,6 +744,8 @@ def select_new_positions(con, now):
             f"cost_after_win={100*row['confidence']:.1f}% | "
             f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
             f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
+            f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
+            f"signals={','.join(tier.signal_sources)} | "
             f"strategy={strategy_id}"
         )
         p_up = row["confidence"] if row["direction"] == "LONG" else 1.0 - row["confidence"]
@@ -748,8 +756,9 @@ def select_new_positions(con, now):
                 direction,status,selected_at,as_of,planned_entry_time,due_time,
                 notional,confidence,p_up,p_down,target_price,model_version,
                 artifact_hash,selection_reason,market_type,validation_cohort,evidence_eligible,
-                strategy_id,decision_source,decision_reference_id
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                strategy_id,decision_source,decision_reference_id,leverage,
+                margin_allocated,risk_tier,independent_signal_count,signal_sources_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             -row["decision_id"], AGENT_VERSION,
             behavior_decision_core.POLICY_VERSION, row["symbol"],
@@ -761,8 +770,17 @@ def select_new_positions(con, now):
             behavior_decision_core.VERSION, row["evidence_sha256"], reason,
             PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
             row["decision_source"], row["decision_id"],
+            tier.leverage, notional / tier.leverage, tier.tier,
+            tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
+            row["execution_risk"] = {
+                "risk_tier": tier.tier, "leverage": tier.leverage,
+                "margin_allocated": notional / tier.leverage,
+                "gross_exposure": notional,
+                "independent_signal_count": tier.independent_signal_count,
+                "signal_sources": list(tier.signal_sources),
+            }
             experience_memory.capture_decision_thesis(
                 con, position_id=cursor.lastrowid, row=row,
                 agent_version=AGENT_VERSION,
@@ -774,7 +792,7 @@ def select_new_positions(con, now):
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
-            snapshot["cash"] -= notional * (1.0 + FEE_RATE)
+            snapshot["cash"] -= notional / tier.leverage + notional * FEE_RATE
         else:
             reject("DECISION_ALREADY_SELECTED")
     record_run(selected, available_exposure)
@@ -851,7 +869,8 @@ def build_daily_report(con, report_date, start, end):
     opened = con.execute("""
         SELECT position_id,symbol,direction,horizon_hours,selected_at,entry_time,
                entry_price,notional,entry_fee,confidence,selection_reason,status,
-               liquidation_price
+               liquidation_price,leverage,margin_allocated,risk_tier,
+               independent_signal_count
         FROM paper_agent_positions
         WHERE selected_at>=? AND selected_at<?
           AND validation_cohort=? AND evidence_eligible=1
@@ -861,7 +880,8 @@ def build_daily_report(con, report_date, start, end):
         SELECT position_id,symbol,direction,horizon_hours,entry_time,entry_price,
                exit_time,exit_price,notional,entry_fee,exit_fee,gross_pnl,
                net_pnl,selection_reason,funding_cost,funding_event_count,
-               funding_source,liquidation_fee,liquidated,close_reason
+               funding_source,liquidation_fee,liquidated,close_reason,
+               leverage,margin_allocated,risk_tier,independent_signal_count
         FROM paper_agent_positions
         WHERE exit_time>=? AND exit_time<?
           AND validation_cohort=? AND evidence_eligible=1
@@ -967,6 +987,8 @@ def markdown_report(payload):
             f"notional={float(row[7]):.2f} | ücret={float(row[8]):.2f} | "
             f"confidence={100*float(row[9]):.1f}% | status={row[11]} | {row[10]}"
             f" | liquidation={format(float(row[12]), '.8g') if row[12] is not None else 'N/A'}"
+            f" | leverage={float(row[13]):g}x | marjin={float(row[14]):.2f}"
+            f" | risk_tier={row[15]} | sinyal={int(row[16])}"
         )
     lines.extend(["", "## Kapanan işlemler", ""])
     if not payload["closed"]:
@@ -981,6 +1003,8 @@ def markdown_report(payload):
             f"brüt={float(row[11]):+.2f} | net={float(row[12]):+.2f} USDT | "
             f"funding={float(row[14] or 0):+.4f} ({int(row[15] or 0)} olay) | "
             f"liquidated={bool(row[18])} | close={row[19]} | {row[13]}"
+            f" | leverage={float(row[20]):g}x | marjin={float(row[21]):.2f}"
+            f" | risk_tier={row[22]} | sinyal={int(row[23])}"
         )
     lines.extend(["", "## Gerçek zamanlı pozisyon yönetimi", ""])
     if not payload.get("management_events"):

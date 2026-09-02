@@ -855,3 +855,24 @@ durdurması hedef sözleşmesini ihlal eder.
   Yalnız `DATA_BLOCKED` bütün yeni PAPER girişlerini keser.
 - Bağlayıcı kapı sınıfları `docs/PAPER_EXECUTION_GATE_REGISTER.md` içindedir.
   Unified Forecast baseline-only ve gerçek emir yetkisi kapalı kalır.
+
+## Karar 036 - Tekil sinyal PAPER deneyleri ve 1x-5x risk kademesi
+
+- Kullanıcı PAPER öğrenme aşamasında grafik, haber/olay veya tahta/akış
+  sinyallerinin tek başına küçük deney açabilmesini; bağımsız aynı-yön kanıtlar
+  arttıkça ajanın daha cesur boyut ve en fazla 5x kaldıraç seçmesini 02 Eylül
+  2026 tarihinde açıkça onayladı.
+- `PAPER_BEHAVIOR_DECISION_CORE_V3` fiyat-hareketi, piyasa davranışı ve causal
+  external-event hipotezlerini birbirinden bağımsız öğrenir. Confluence giriş
+  vetosu değil, risk kademesi girdisidir. Her yol noktasal, sonuç-kör ve maliyet
+  sonrası pozitif geçmiş hipotez ister; parametresiz sırf işlem olsun diye emir
+  üretmez.
+- `PAPER_RISK_TIER_1..5`, yinelenen veya ters kanıtı saymaz. Tek kaynak 1x ve
+  %0,5 özsermaye marjiniyle başlar; bağımsız kaynak ve promotion adımları
+  kaldıraç ile marjini kademeli artırır; üst sınır 5x ve %2 marjindir. Brüt
+  maruziyet varlık risk cap'i, toplam %60 maruziyet ve altı pozisyon sınırı
+  içinde kalır.
+- Marjin, brüt maruziyet ve ücret/funding tabanı ayrıdır. Likidasyon eşiği gerçek
+  leverage ile hesaplanır; gap eşiği aşarsa liquidation fee ve sonuç öğrenmeye
+  yazılır. Bu yetki PAPER_ONLY'dır; gerçek emir kapısı değişmez ve Unified
+  Forecast yürütmeye bağlanmaz.

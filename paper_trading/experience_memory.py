@@ -90,6 +90,9 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
             "symbol": str(row["symbol"]), "horizon_hours": int(row["horizon"]),
             "direction": str(row["direction"]),
             "strategy": {"id": strategy_id, "virtual_weight": float(strategy_weight)},
+            "execution_risk": row.get("execution_risk", {
+                "risk_tier": "PAPER_RISK_TIER_1", "leverage": 1.0,
+            }),
             "evidence_used": row["evidence"],
             "capabilities_under_test": row["evidence"]["capabilities_used"],
             "capabilities_observed_but_not_decision_inputs": ["UNIFIED_FORECAST_BASELINE"],
@@ -154,11 +157,17 @@ def review_closed_positions(con, now=None):
         "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
         if "funding_source" in position_columns else ""
     )
+    margin_expr = ("COALESCE(p.margin_allocated,p.notional)"
+                   if "margin_allocated" in position_columns else "p.notional")
+    leverage_expr = "COALESCE(p.leverage,1)" if "leverage" in position_columns else "1"
+    tier_expr = ("COALESCE(p.risk_tier,'PAPER_RISK_TIER_1')"
+                 if "risk_tier" in position_columns else "'PAPER_RISK_TIER_1'")
     rows = con.execute(f"""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
-               t.thesis_json,t.thesis_sha256
+               t.thesis_json,t.thesis_sha256,{margin_expr},
+               {leverage_expr},{tier_expr}
         FROM paper_agent_positions p
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
@@ -170,7 +179,8 @@ def review_closed_positions(con, now=None):
     for row in rows:
         (position_id, net_pnl, notional, gross_pnl, entry_fee, exit_fee,
          entry_spread, entry_slippage, exit_spread, exit_slippage, funding,
-         liquidated, close_reason, thesis_json, thesis_sha) = row
+         liquidated, close_reason, thesis_json, thesis_sha, margin_allocated,
+         leverage, risk_tier) = row
         net_pnl, notional = float(net_pnl), float(notional)
         outcome = "WIN" if net_pnl > 0 else "LOSS" if net_pnl < 0 else "BREAKEVEN"
         costs = {
@@ -184,6 +194,9 @@ def review_closed_positions(con, now=None):
             "economic_result": {
                 "class": outcome, "gross_pnl": float(gross_pnl or 0),
                 "net_pnl": net_pnl, "net_return_pct": 100.0 * net_pnl / notional,
+                "return_on_margin_pct": 100.0 * net_pnl / float(margin_allocated),
+                "gross_exposure": notional, "margin_allocated": float(margin_allocated),
+                "leverage": float(leverage), "risk_tier": str(risk_tier),
                 "costs": costs, "liquidated": bool(liquidated),
                 "close_reason": close_reason,
             },

@@ -73,11 +73,19 @@ def load_closed(con, validation_cohort):
         "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
         if "funding_source" in position_columns else ""
     )
+    leverage_expr = "COALESCE(p.leverage,1)" if "leverage" in position_columns else "1"
+    margin_expr = ("COALESCE(p.margin_allocated,p.notional)"
+                   if "margin_allocated" in position_columns else "p.notional")
+    tier_expr = ("COALESCE(p.risk_tier,'PAPER_RISK_TIER_1')"
+                 if "risk_tier" in position_columns else "'PAPER_RISK_TIER_1'")
+    liquidated_expr = ("COALESCE(p.liquidated,0)"
+                       if "liquidated" in position_columns else "0")
     rows = con.execute(f"""
         SELECT p.position_id,p.symbol,p.horizon_hours,p.direction,p.exit_time,
                p.notional,p.net_pnl,COALESCE(f.regime,'UNKNOWN'),
                COALESCE(p.policy_version,'UNKNOWN'),
-               COALESCE(p.decision_source,'UNIFIED_FORECAST_BASELINE')
+               COALESCE(p.decision_source,'UNIFIED_FORECAST_BASELINE'),
+               {leverage_expr},{margin_expr},{tier_expr},{liquidated_expr}
         FROM paper_agent_positions p
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
@@ -91,6 +99,8 @@ def load_closed(con, validation_cohort):
         "exit_time": str(row[4]), "notional": float(row[5]),
         "net_pnl": float(row[6]), "regime": str(row[7]),
         "policy_version": str(row[8]), "decision_source": str(row[9]),
+        "leverage": float(row[10]), "margin": float(row[11]),
+        "risk_tier": str(row[12]), "liquidated": bool(row[13]),
     } for row in rows]
 
 
@@ -124,6 +134,8 @@ def grouped_metrics(rows):
         groups[f"DIRECTION_HORIZON:{row['direction']}:{row['horizon']}h"].append(row)
         groups[f"POLICY:{row['policy_version']}"] .append(row)
         groups[f"DECISION_SOURCE:{row['decision_source']}"] .append(row)
+        groups[f"LEVERAGE:{row['leverage']:g}X"].append(row)
+        groups[f"RISK_TIER:{row['risk_tier']}"].append(row)
     return {key: metrics(value) for key, value in sorted(groups.items())}
 
 
@@ -136,6 +148,8 @@ def candidate_type(pattern_key):
         return "HORIZON_SELECTION_CHALLENGER"
     if pattern_key.startswith("POLICY:") or pattern_key.startswith("DECISION_SOURCE:"):
         return "POLICY_SOURCE_REVIEW_ONLY"
+    if pattern_key.startswith("LEVERAGE:") or pattern_key.startswith("RISK_TIER:"):
+        return "PAPER_RISK_SIZING_CHALLENGER"
     return "REGIME_CONTEXT_CHALLENGER"
 
 

@@ -24,6 +24,10 @@ a regression test, and an explanation of why sizing cannot contain the risk.
 | Funding reconciliation | Accounting integrity | Exit execution never waits for the funding transport. Exact exposed interval and quantity are frozen, the position is temporarily excluded from learning, and funding is reconciled asynchronously before outcome review | A reporting dependency may not delay a protective exit, but missing cost may not silently become zero |
 | Position event audit | Learning integrity | Stop initialization/change, opposing thesis evidence, partial realization, rejected exit and final close are immutable local SQLite events with source hash and `real_order_allowed=0` | Replayed or older market events cannot mutate cash twice |
 | External causal event match | Strategy context | Event-linked setups remain available but are not mandatory | Endogenous `MARKET_STRUCTURE` samples and trades cover order-flow opportunities without reconnecting Unified Forecast |
+| Independent signal routes | Learnable strategy context | A cost-positive, point-in-time PRICE_ACTION, MARKET_BEHAVIOR/order-flow, or causal external event hypothesis may open a small PAPER experiment by itself | Confluence is a sizing input, never a requirement that chart, news and book must all agree before learning can occur |
+| PAPER leverage tier | Position sizing and risk learning | Outcome-blind independent directional sources plus promotion evidence select 1x-5x; one weak valid source starts at 1x and 0.5% equity margin, while five steps cap at 5x and 2% equity margin | Explicitly approved by the user on 2026-09-02. Leverage is PAPER-only; duplicate/opposing evidence cannot inflate it, gross exposure remains inside asset and 60% portfolio caps |
+| Margin and gross exposure accounting | Accounting integrity | Cash reserves isolated margin plus entry fee; quantity, fees, spread, slippage and funding use gross exposure; close returns remaining margin plus P&L after costs | A leverage label without separate margin/exposure accounting is forbidden |
+| Leveraged liquidation | Loss containment and learning | Each leveraged OPEN has an immutable maintenance-margin liquidation threshold; a fresh price crossing it closes at the threshold, charges the exchange liquidation fee and records the loss | Protective stops normally precede liquidation, but a gap may liquidate and must remain visible learning evidence rather than being hidden |
 
 Every selection cycle records its core status, candidate count, selected count,
 capacity, available exposure, and rejection reason counts locally in
@@ -35,4 +39,6 @@ operator-facing PAPER time must render Istanbul time first and include UTC in
 parentheses; an unlabeled UTC timestamp is not an acceptable user display.
 
 Unified Forecast is baseline-only. This register does not authorize a second
-agent, a second portfolio, policy promotion, capital changes, or real orders.
+agent, a second portfolio, automatic policy promotion, capital changes, or real
+orders. The 1x-5x authority applies only to simulated isolated-margin PAPER
+positions.

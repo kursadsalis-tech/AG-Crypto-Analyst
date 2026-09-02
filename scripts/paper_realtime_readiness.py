@@ -14,6 +14,7 @@ import certifi
 import websockets
 
 from paper_trading.exchange_metadata import load_cache, rules_for
+from paper_trading.futures_costs import liquidation_price
 from paper_trading.position_management import (
     ensure_tables, initialize_open_positions, process_market_state,
 )
@@ -42,11 +43,12 @@ async def live_state(symbol, timeout=15):
     raise RuntimeError("COMPLETE_REALTIME_STATE_UNAVAILABLE")
 
 
-def memory_database(state):
+def memory_database(state, leverage=1.0):
     market_at = datetime.fromtimestamp(state.market_timestamp_ms / 1000, tz=timezone.utc)
     entry_at = market_at - timedelta(seconds=1)
     entry_price = state.last_price / 1.02
     quantity, notional, entry_fee = 1000.0 / entry_price, 1000.0, 0.5
+    margin = notional / leverage
     con = sqlite3.connect(":memory:")
     con.executescript("""
         CREATE TABLE paper_agent_portfolio(
@@ -63,7 +65,7 @@ def memory_database(state):
             volatility_stop_reference_pct REAL);
     """)
     con.execute("INSERT INTO paper_agent_portfolio VALUES(1,?,?,?)",
-                (10_000 - notional - entry_fee, 0, entry_fee))
+                (10_000 - margin - entry_fee, 0, entry_fee))
     con.execute("""INSERT INTO paper_agent_positions(
         position_id,symbol,direction,status,entry_time,entry_price,quantity,
         notional,entry_fee,due_time
@@ -74,10 +76,16 @@ def memory_database(state):
     con.execute("INSERT INTO asset_risk_snapshots VALUES(1,?,?,2.0)",
                 (state.symbol, (entry_at - timedelta(seconds=1)).isoformat()))
     ensure_tables(con)
+    con.execute("""UPDATE paper_agent_positions SET leverage=?,margin_allocated=?,
+        liquidation_price=? WHERE position_id=1""", (
+        leverage, margin, liquidation_price(
+            entry_price=entry_price, direction="LONG", leverage=leverage,
+        ),
+    ))
     return con, market_at
 
 
-async def run(symbol):
+async def run(symbol, leverage=1.0):
     state = await live_state(symbol)
     metadata = load_cache(
         os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
@@ -87,7 +95,7 @@ async def run(symbol):
     rules = rules_for(metadata, symbol)
     if rules is None:
         raise RuntimeError("LIVE_SYMBOL_RULES_UNAVAILABLE")
-    con, market_at = memory_database(state)
+    con, market_at = memory_database(state, leverage)
     try:
         initialized = initialize_open_positions(con, market_at)
         result = process_market_state(con, state, market_at, rules)
@@ -112,6 +120,7 @@ async def run(symbol):
             "book_imbalance": state.book_imbalance,
             "taker_imbalance": state.taker_imbalance,
             "management_result": result, "events": events,
+            "leverage": leverage,
             "authoritative_database_mutated": False, "real_order_allowed": False,
         }
     finally:
@@ -121,8 +130,9 @@ async def run(symbol):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--leverage", type=float, choices=(1, 2, 3, 4, 5), default=1)
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(run(args.symbol.upper())), sort_keys=True))
+    print(json.dumps(asyncio.run(run(args.symbol.upper(), args.leverage)), sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -42,10 +42,14 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         row = self.con.execute("""SELECT forecast_id,policy_version,strategy_id,
             decision_source,decision_reference_id FROM paper_agent_positions""").fetchone()
         self.assertEqual(row[0], -7)
-        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V2_LEARNING_EXPERIMENTS")
-        self.assertEqual(row[2:], ("BEHAVIOR_CORE_V2", "MARKET_BEHAVIOR_CORE", 7))
+        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V3_RISK_TIERED_LEARNING")
+        self.assertEqual(row[2:], ("BEHAVIOR_CORE_V3", "MARKET_BEHAVIOR_CORE", 7))
         notional = self.con.execute("SELECT notional FROM paper_agent_positions").fetchone()[0]
-        self.assertAlmostEqual(notional, 200.0)
+        self.assertAlmostEqual(notional, 50.0)
+        leverage, margin, tier = self.con.execute(
+            "SELECT leverage,margin_allocated,risk_tier FROM paper_agent_positions"
+        ).fetchone()
+        self.assertEqual((leverage, margin, tier), (1.0, 50.0, "PAPER_RISK_TIER_1"))
         thesis = self.con.execute(
             "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
         ).fetchone()
@@ -63,6 +67,38 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT notional FROM paper_agent_positions"
         ).fetchone()[0]
         self.assertAlmostEqual(notional, 25.0)
+
+    def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
+        candidate = self.candidate()
+        candidate["experiment_tier"] = "PROMOTION_READY"
+        candidate["evidence"]["directional_signals"] = [
+            {"source": source, "direction": "LONG"}
+            for source in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES")
+        ]
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        leverage, margin, gross = self.con.execute(
+            "SELECT leverage,margin_allocated,notional FROM paper_agent_positions"
+        ).fetchone()
+        self.assertEqual(leverage, 5)
+        self.assertAlmostEqual(margin, 200)
+        self.assertAlmostEqual(gross, 1000)
+        planned = agent.immediate_paper_entry_time(NOW)
+        with patch.object(agent.execution_market_data, "capture_reference",
+                          return_value=(planned, 100.0, 1_000_000.0)):
+            self.assertEqual(agent.fill_pending(self.con, planned), (1, 0))
+        cash = self.con.execute(
+            "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
+        ).fetchone()[0]
+        position = self.con.execute("""SELECT leverage,margin_allocated,notional,
+            liquidation_price FROM paper_agent_positions""").fetchone()
+        self.assertEqual(position[0], 5)
+        self.assertAlmostEqual(position[1], position[2] / 5)
+        self.assertGreater(position[3], 79)
+        self.assertLess(position[3], 81)
+        self.assertAlmostEqual(cash, 10_000 - position[1] - position[2] * .0005)
 
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()

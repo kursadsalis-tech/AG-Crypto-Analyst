@@ -37,6 +37,16 @@ class PositionManagementTests(unittest.TestCase):
         self.con.execute("INSERT INTO asset_risk_snapshots VALUES(1,?,?,?)",
                          ("BTCUSDT", (ENTRY - timedelta(seconds=1)).isoformat(), 2.0))
         ensure_tables(self.con)
+        for sql in (
+            "ALTER TABLE paper_agent_positions ADD COLUMN liquidation_price REAL",
+            "ALTER TABLE paper_agent_positions ADD COLUMN leverage REAL NOT NULL DEFAULT 1",
+            "ALTER TABLE paper_agent_positions ADD COLUMN liquidation_fee REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE paper_agent_positions ADD COLUMN liquidated INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                self.con.execute(sql)
+            except sqlite3.OperationalError:
+                pass
         self.rules = ExecutionRules(quantity_step=.001, price_tick=.01, min_notional=5,
                                     require_liquidity=True)
 
@@ -179,6 +189,22 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(self.con.execute(
             "SELECT remaining_quantity FROM paper_position_management"
         ).fetchone()[0], 0)
+
+    def test_five_x_gap_liquidation_is_costed_and_audited(self):
+        self.con.execute("""UPDATE paper_agent_positions SET leverage=5,
+            margin_allocated=200,liquidation_price=80 WHERE position_id=1""")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        result = process_market_state(
+            self.con, self.live(79, 2), ENTRY + timedelta(seconds=2),
+            ExecutionRules(quantity_step=.001, price_tick=.01, min_notional=5,
+                           require_liquidity=True, liquidation_fee_rate=.0125),
+        )
+        self.assertEqual(result["reason"], "PAPER_5X_LIQUIDATION")
+        row = self.con.execute("""SELECT status,liquidated,liquidation_fee,exit_price
+            FROM paper_agent_positions""").fetchone()
+        self.assertEqual(row[:2], ("CLOSED", 1))
+        self.assertAlmostEqual(row[2], 10.0)
+        self.assertEqual(row[3], 80)
 
 
 if __name__ == "__main__":
