@@ -18,13 +18,18 @@ kapanış kalan marjini ve maliyet sonrası P&L'yi döndürür. Likidasyon eşi�
 leverage ile oluşturulur; stopu aşan gap eşiği geçerse liquidation fee ve LOSS
 öğrenmeye yazılır. Leverage ve risk-tier kohortları öğrenme gruplarına eklendi.
 
-Yerel tam suite 300/300 geçti. Canlı OKX WebSocket + canlı resmî exchange
+Yerel tam suite son düzeltmelerle 301/301 geçti. Canlı OKX WebSocket + canlı resmî exchange
 metadata ile yalnız bellek içi 5x BTCUSDT kabulü 02 Eylül 2026 13:31:56 İstanbul
 (10:31:56 UTC) anında PASS oldu: stop kuruldu, TP1 kısmi realizasyonu ve maliyet
 muhasebesi çalıştı; otoritatif SQLite değişmedi ve `real_order_allowed=false`
-kaldı. Bu checkpoint henüz canlı worker'a dağıtılmış sayılmaz; rollback,
-şema-migrasyon dry-run ve dağıtım sonrası doğal V3 seçim kanıtı tamamlanmadan
-canlı 5x yetkisi varmış gibi raporlanmamalıdır.
+kaldı. Checkpoint `da7a602`, takip düzeltmeleri `0e00b89` ve `227ad8f` canlı
+worker'a rollback korumasıyla dağıtıldı. Dört ana çalışma dosyasının SHA-256
+değerleri yerelle birebir eşleşir. Eski pozisyonların tamamı 1x ve
+`margin_allocated=notional` taşındı; migrasyon uyumsuzluğu 0'dır. 02 Eylül 2026
+13:44:21 İstanbul (10:44:21 UTC) itibarıyla ana ve realtime worker active,
+realtime health IDLE, açık pozisyon 0, pending funding 0 ve gerçek-emir olayı
+0'dır. İlk doğal V3 seçim sonucu henüz oluşmadı; aşağıdaki çevrimler açık
+machine-readable nedenle sıfır kaldı ve bu eksiklik başarı gibi sunulmamalıdır.
 
 Dağıtım sonrası ilk doğal V3 çevrimleri taze veri üzerinde
 `NO_ACTIONABLE_PATTERN` üretti; sonuç-kör eşleşme yokken işlem uydurulmadı.
@@ -35,6 +40,11 @@ pozisyonda çalışır; NEWS, PRICE_ACTION veya çoklu kaynak tezi ilgisiz tahta
 işaretiyle üç saniyede kapanmaz. Tam suite bu düzeltmeyle 301/301 geçti.
 PRICE_ACTION geçmişi ayrıca aynı dakikadaki çoklu haberlerle çoğaltılmaz; yalnız
 örtüşmeyen dört saatlik `MARKET_STRUCTURE` bağımsızlık birimlerinden öğrenilir.
+
+Rollback dizinleri:
+`/var/lib/agca/rollback-da7a602-risk-tiered-leverage-20260902T1036Z`,
+`/var/lib/agca/rollback-0e00b89-independent-thesis-20260902T1042Z` ve
+`/var/lib/agca/rollback-227ad8f-price-independence-20260902T1043Z`.
 
 # 2026-09-02 — Gerçek zamanlı çıkış seli giderildi ve canlı kabul geçti
 
