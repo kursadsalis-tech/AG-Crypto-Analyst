@@ -102,6 +102,28 @@ def connect():
     return con
 
 
+def load_execution_metadata():
+    if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") != "1":
+        return None
+    max_age = float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200"))
+    return {
+        "USD_M_PERPETUAL": load_cache(
+            os.getenv(
+                "AGCA_EXCHANGE_METADATA_CACHE",
+                "/var/lib/agca/exchange-info-usdm.json",
+            ),
+            "USD_M_PERPETUAL", max_age_seconds=max_age,
+        ),
+        "SPOT": load_cache(
+            os.getenv(
+                "AGCA_SPOT_EXCHANGE_METADATA_CACHE",
+                "/var/lib/agca/exchange-info-spot.json",
+            ),
+            "SPOT", max_age_seconds=max_age,
+        ),
+    }
+
+
 def ensure_tables(con):
     con.executescript("""
         CREATE TABLE IF NOT EXISTS paper_agent_portfolio (
@@ -235,7 +257,8 @@ def ensure_tables(con):
         maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
         rows = con.execute("""
             SELECT position_id,entry_price,direction,leverage FROM paper_agent_positions
-            WHERE status='OPEN' AND liquidation_price IS NULL AND entry_price IS NOT NULL
+            WHERE status='OPEN' AND market_type='USD_M_PERPETUAL'
+              AND liquidation_price IS NULL AND entry_price IS NOT NULL
         """).fetchall()
         for position_id, entry_price, direction, leverage in rows:
             con.execute(
@@ -406,49 +429,57 @@ def portfolio_snapshot(con):
 
 def fill_pending(con, now, exchange_metadata=None):
     rows = con.execute("""
-        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage
+        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
+               market_type
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
         ORDER BY selected_at,position_id
     """).fetchall()
     filled = 0
     cancelled = 0
-    for position_id, symbol, planned_entry_time, notional, direction, leverage in rows:
+    for (position_id, symbol, planned_entry_time, notional, direction, leverage,
+         market_type) in rows:
         planned = parse_time(planned_entry_time)
-        result = None
-        if PAPER_MARKET == "USD_M_PERPETUAL" and now >= planned:
-            try:
-                result = execution_market_data.capture_reference(
-                    con, position_id=position_id, symbol=symbol,
-                    expected=planned, purpose="ENTRY", observed_at=now,
-                )
-            except (requests.RequestException, ValueError):
-                result = None
-        elif PAPER_MARKET != "USD_M_PERPETUAL":
-            result = exact_planned_open(con, symbol, planned_entry_time)
-        if result is None:
-            if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
-                con.execute("""
-                    UPDATE paper_agent_positions
-                    SET status='CANCELLED',cancel_reason=?
-                    WHERE position_id=? AND status='PENDING_ENTRY'
-                """, ("EXACT_USDM_ENTRY_CAPTURE_UNAVAILABLE", position_id))
-                cancelled += 1
-            continue
-        entry_time, reference_price, quote_volume = result
-        notional = float(notional)
-        side = "BUY" if direction == "LONG" else "SELL"
+        metadata = (
+            exchange_metadata.get(market_type)
+            if isinstance(exchange_metadata, dict) else exchange_metadata
+        )
         try:
-            rules = rules_for(exchange_metadata, symbol) if exchange_metadata else None
+            rules = rules_for(metadata, symbol) if metadata else None
         except ExchangeMetadataError:
             rules = None
         if exchange_metadata is not None and rules is None:
             con.execute("""
                 UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
                 WHERE position_id=? AND status='PENDING_ENTRY'
-            """, ("LIVE_SYMBOL_RULES_UNAVAILABLE", position_id))
+            """, (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
             cancelled += 1
             continue
+        result = None
+        if now >= planned:
+            try:
+                result = execution_market_data.capture_reference(
+                    con, position_id=position_id, symbol=symbol,
+                    expected=planned, purpose="ENTRY", observed_at=now,
+                    market_type=market_type,
+                )
+            except (requests.RequestException, ValueError):
+                result = None
+        if result is None:
+            if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
+                con.execute("""
+                    UPDATE paper_agent_positions
+                    SET status='CANCELLED',cancel_reason=?
+                    WHERE position_id=? AND status='PENDING_ENTRY'
+                """, (
+                    f"EXACT_{market_type}_ENTRY_CAPTURE_UNAVAILABLE",
+                    position_id,
+                ))
+                cancelled += 1
+            continue
+        entry_time, reference_price, quote_volume = result
+        notional = float(notional)
+        side = "BUY" if direction == "LONG" else "SELL"
         fill = simulated_fill(
             reference_price=reference_price, requested_notional=notional,
             side=side, available_quote_volume=quote_volume,
@@ -484,7 +515,7 @@ def fill_pending(con, now, exchange_metadata=None):
         liquidation_threshold = liquidation_price(
             entry_price=entry_price, direction=direction, leverage=float(leverage),
             maintenance_margin_rate=maintenance_rate,
-        ) if PAPER_MARKET == "USD_M_PERPETUAL" else None
+        ) if market_type == "USD_M_PERPETUAL" else None
         con.execute("""
             UPDATE paper_agent_positions SET
                 status='OPEN',entry_time=?,entry_price=?,quantity=?,notional=?,entry_fee=?,
@@ -492,7 +523,7 @@ def fill_pending(con, now, exchange_metadata=None):
                 liquidation_price=?,margin_allocated=?
             WHERE position_id=? AND status='PENDING_ENTRY'
         """, (iso(entry_time), entry_price, quantity, actual_notional, fee,
-              PAPER_MARKET, fill.spread_cost, fill.slippage_cost,
+              market_type, fill.spread_cost, fill.slippage_cost,
               int(fill.partial), liquidation_threshold, margin, position_id))
         con.execute("""
             UPDATE paper_agent_portfolio
@@ -508,7 +539,7 @@ def settle_open(con, now, exchange_metadata=None):
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.due_time,p.entry_time,
                p.entry_price,p.quantity,p.notional,p.entry_fee,p.liquidation_price,
-               p.margin_allocated,p.leverage
+               p.margin_allocated,p.leverage,p.market_type
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN' AND p.due_time<=? AND m.position_id IS NULL
@@ -517,13 +548,15 @@ def settle_open(con, now, exchange_metadata=None):
     closed = 0
     for row in rows:
         (position_id, symbol, direction, due, entry_time, entry, quantity,
-         notional, entry_fee, liq_price, margin_allocated, leverage) = row
+         notional, entry_fee, liq_price, margin_allocated, leverage,
+         market_type) = row
         result = None
-        if PAPER_MARKET == "USD_M_PERPETUAL":
+        if market_type in {"USD_M_PERPETUAL", "SPOT"}:
             try:
                 result = execution_market_data.capture_reference(
                     con, position_id=position_id, symbol=symbol,
                     expected=parse_time(due), purpose="EXIT", observed_at=now,
+                    market_type=market_type,
                 )
             except (requests.RequestException, ValueError):
                 result = None
@@ -537,14 +570,18 @@ def settle_open(con, now, exchange_metadata=None):
         notional = float(notional)
         entry_fee = float(entry_fee)
         exit_side = "SELL" if direction == "LONG" else "BUY"
+        metadata = (
+            exchange_metadata.get(market_type)
+            if isinstance(exchange_metadata, dict) else exchange_metadata
+        )
         try:
-            rules = rules_for(exchange_metadata, symbol) if exchange_metadata else None
+            rules = rules_for(metadata, symbol) if metadata else None
         except ExchangeMetadataError:
             rules = None
         if exchange_metadata is not None and rules is None:
             continue
         liquidation_time = None
-        if PAPER_MARKET == "USD_M_PERPETUAL" and liq_price is not None:
+        if market_type == "USD_M_PERPETUAL" and liq_price is not None:
             liquidation_time = first_liquidation_event(
                 con, symbol, entry_time, due, direction, float(liq_price),
             )
@@ -577,7 +614,7 @@ def settle_open(con, now, exchange_metadata=None):
             liquidated = 0
             close_reason = "HORIZON_DUE_CLOSE"
         gross = directional_pnl(direction, entry, exit_price, quantity)
-        if PAPER_MARKET == "USD_M_PERPETUAL":
+        if market_type == "USD_M_PERPETUAL":
             funding_events = fetch_funding_history_via_postgres(
                 database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
                 symbol=symbol, start=parse_time(entry_time), end=exit_time,
@@ -768,7 +805,7 @@ def select_new_positions(con, now):
             ).isoformat(), iso(planned_entry), iso(due_time), notional,
             row["confidence"], p_up, p_down, row["target_price"],
             behavior_decision_core.VERSION, row["evidence_sha256"], reason,
-            PAPER_MARKET, FORWARD_COHORT, 1, strategy_id,
+            tier.market_type, FORWARD_COHORT, 1, strategy_id,
             row["decision_source"], row["decision_id"],
             tier.leverage, notional / tier.leverage, tier.tier,
             tier.independent_signal_count, json.dumps(tier.signal_sources),
@@ -1132,13 +1169,7 @@ def run(now=None):
         policy_version=POLICY_VERSION,
         initial_capital=INITIAL_CAPITAL,
     )
-    exchange_metadata = None
-    if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
-        exchange_metadata = load_cache(
-            os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
-            PAPER_MARKET,
-            max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
-        )
+    exchange_metadata = load_execution_metadata()
     con = connect()
     try:
         ensure_tables(con)
@@ -1161,11 +1192,10 @@ def run(now=None):
             "pending_entries": pending_entry_schedule(con),
             "daily_report": daily,
             "authority": authority,
-            "exchange_metadata": ({
-                "market": exchange_metadata.market,
-                "symbols": len(exchange_metadata.symbols),
-                "fetched_at": exchange_metadata.fetched_at,
-            } if exchange_metadata else None),
+            "exchange_metadata": ({key: {
+                "symbols": len(value.symbols), "fetched_at": value.fetched_at,
+            } for key, value in exchange_metadata.items()}
+                if exchange_metadata else None),
         }
     finally:
         con.close()
@@ -1182,13 +1212,7 @@ def run_behavior_selection(now=None):
     con = connect()
     try:
         ensure_tables(con)
-        exchange_metadata = None
-        if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
-            exchange_metadata = load_cache(
-                os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
-                PAPER_MARKET,
-                max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
-            )
+        exchange_metadata = load_execution_metadata()
         filled_before, cancelled_before = fill_pending(con, now, exchange_metadata)
         closed = settle_open(con, now, exchange_metadata)
         selected = select_new_positions(con, now)

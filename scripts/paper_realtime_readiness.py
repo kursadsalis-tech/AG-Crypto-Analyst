@@ -21,7 +21,7 @@ from paper_trading.position_management import (
 from paper_trading.realtime_market import WS_URL, apply_message, subscription_args
 
 
-async def live_state(symbol, timeout=15):
+async def live_state(symbol, market_type="USD_M_PERPETUAL", timeout=15):
     context = ssl.create_default_context(cafile=certifi.where())
     states = {}
     async with websockets.connect(
@@ -29,7 +29,7 @@ async def live_state(symbol, timeout=15):
     ) as socket:
         await socket.send(json.dumps({
             "id": str(int(time.time() * 1000)), "op": "subscribe",
-            "args": subscription_args([symbol]),
+            "args": subscription_args([(symbol, market_type)]),
         }))
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -43,7 +43,7 @@ async def live_state(symbol, timeout=15):
     raise RuntimeError("COMPLETE_REALTIME_STATE_UNAVAILABLE")
 
 
-def memory_database(state, leverage=1.0):
+def memory_database(state, leverage=1.0, market_type="USD_M_PERPETUAL"):
     market_at = datetime.fromtimestamp(state.market_timestamp_ms / 1000, tz=timezone.utc)
     entry_at = market_at - timedelta(seconds=1)
     entry_price = state.last_price / 1.02
@@ -77,25 +77,27 @@ def memory_database(state, leverage=1.0):
                 (state.symbol, (entry_at - timedelta(seconds=1)).isoformat()))
     ensure_tables(con)
     con.execute("""UPDATE paper_agent_positions SET leverage=?,margin_allocated=?,
-        liquidation_price=? WHERE position_id=1""", (
+        liquidation_price=?,market_type=? WHERE position_id=1""", (
         leverage, margin, liquidation_price(
             entry_price=entry_price, direction="LONG", leverage=leverage,
-        ),
+        ) if market_type == "USD_M_PERPETUAL" else None, market_type,
     ))
     return con, market_at
 
 
-async def run(symbol, leverage=1.0):
-    state = await live_state(symbol)
+async def run(symbol, leverage=1.0, market_type="USD_M_PERPETUAL"):
+    state = await live_state(symbol, market_type)
     metadata = load_cache(
-        os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
-        "USD_M_PERPETUAL",
+        (os.getenv("AGCA_SPOT_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-spot.json")
+         if market_type == "SPOT" else
+         os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json")),
+        market_type,
         max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
     )
     rules = rules_for(metadata, symbol)
     if rules is None:
         raise RuntimeError("LIVE_SYMBOL_RULES_UNAVAILABLE")
-    con, market_at = memory_database(state, leverage)
+    con, market_at = memory_database(state, leverage, market_type)
     try:
         initialized = initialize_open_positions(con, market_at)
         result = process_market_state(con, state, market_at, rules)
@@ -121,6 +123,7 @@ async def run(symbol, leverage=1.0):
             "taker_imbalance": state.taker_imbalance,
             "management_result": result, "events": events,
             "leverage": leverage,
+            "market_type": market_type,
             "authoritative_database_mutated": False, "real_order_allowed": False,
         }
     finally:
@@ -131,8 +134,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--leverage", type=float, choices=(1, 2, 3, 4, 5), default=1)
+    parser.add_argument("--market", choices=("SPOT", "USD_M_PERPETUAL"),
+                        default="USD_M_PERPETUAL")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(run(args.symbol.upper(), args.leverage)), sort_keys=True))
+    if args.market == "SPOT" and args.leverage != 1:
+        parser.error("SPOT PAPER leverage must be 1")
+    print(json.dumps(asyncio.run(
+        run(args.symbol.upper(), args.leverage, args.market)
+    ), sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -46,10 +46,14 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(row[2:], ("BEHAVIOR_CORE_V3", "MARKET_BEHAVIOR_CORE", 7))
         notional = self.con.execute("SELECT notional FROM paper_agent_positions").fetchone()[0]
         self.assertAlmostEqual(notional, 50.0)
-        leverage, margin, tier = self.con.execute(
-            "SELECT leverage,margin_allocated,risk_tier FROM paper_agent_positions"
+        leverage, margin, tier, market = self.con.execute(
+            """SELECT leverage,margin_allocated,risk_tier,market_type
+            FROM paper_agent_positions"""
         ).fetchone()
-        self.assertEqual((leverage, margin, tier), (1.0, 50.0, "PAPER_RISK_TIER_1"))
+        self.assertEqual(
+            (leverage, margin, tier, market),
+            (1.0, 50.0, "PAPER_RISK_TIER_1", "SPOT"),
+        )
         thesis = self.con.execute(
             "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
         ).fetchone()
@@ -125,7 +129,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         from database.runtime_store import REMOTE_RUNTIME_TABLES
         self.assertNotIn("paper_behavior_selection_runs", REMOTE_RUNTIME_TABLES)
 
-    def test_dynamic_symbol_fills_from_usdm_without_fixed_spot_candle(self):
+    def test_low_conviction_long_fills_through_spot_route(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 9, "symbol": "CRVUSDT",
                           "evidence_sha256": "c" * 64})
@@ -141,6 +145,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             )
         self.assertEqual((filled, cancelled), (1, 0))
         self.assertEqual(capture.call_args.kwargs["symbol"], "CRVUSDT")
+        self.assertEqual(capture.call_args.kwargs["market_type"], "SPOT")
         self.assertEqual(
             self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0],
             "OPEN",
@@ -164,7 +169,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
                 FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "EXACT_USDM_ENTRY_CAPTURE_UNAVAILABLE"),
+            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_UNAVAILABLE"),
         )
 
 

@@ -17,6 +17,7 @@ OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
 OKX_TICKER_URL = "https://www.okx.com/api/v5/market/ticker"
 BINANCE_SPOT_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_SPOT_TICKER_URL = "https://data-api.binance.vision/api/v3/ticker/price"
+BINANCE_SPOT_24H_URL = "https://data-api.binance.vision/api/v3/ticker/24hr"
 USER_AGENT = "AG-Crypto-Analyst/paper-execution-observation-v1"
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_ENTRY_OBSERVATION_DELAY = timedelta(minutes=10)
@@ -186,8 +187,35 @@ def fetch_entry_snapshot(symbol: str, observed_at: datetime):
     return market_time, price, quote_volume, digest
 
 
+def fetch_spot_snapshot(symbol: str, observed_at: datetime):
+    """Capture direct Binance Spot price/liquidity evidence for SPOT PAPER."""
+    response = requests.get(
+        BINANCE_SPOT_24H_URL,
+        params={"symbol": symbol},
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError(f"{symbol}: Binance spot ticker response failed")
+    price = float(payload.get("lastPrice", 0))
+    quote_volume_24h = float(payload.get("quoteVolume", 0))
+    market_ms = int(payload.get("closeTime", 0))
+    market_time = datetime.fromtimestamp(market_ms / 1000, tz=timezone.utc)
+    if price <= 0 or quote_volume_24h <= 0 or market_ms <= 0:
+        raise ValueError(f"{symbol}: non-executable Binance spot ticker")
+    if abs((observed_at - market_time).total_seconds()) > 30:
+        raise ValueError(f"{symbol}: stale Binance spot ticker")
+    digest = hashlib.sha256(json.dumps(
+        payload, separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+    return market_time, price, quote_volume_24h / (24.0 * 60.0), digest
+
+
 def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
-                      purpose: str, observed_at: datetime):
+                      purpose: str, observed_at: datetime,
+                      market_type: str = "USD_M_PERPETUAL"):
     ensure_table(con)
     row = con.execute("""
         SELECT market_time,reference_price,quote_volume
@@ -201,7 +229,11 @@ def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
         return None
     if purpose == "ENTRY" and observed_at - expected > MAX_ENTRY_OBSERVATION_DELAY:
         return None
-    if purpose == "ENTRY":
+    if market_type == "SPOT":
+        market_time, price, quote_volume, digest = fetch_spot_snapshot(
+            symbol, observed_at
+        )
+    elif purpose == "ENTRY":
         market_time, price, quote_volume, digest = fetch_entry_snapshot(
             symbol, observed_at
         )
@@ -218,8 +250,10 @@ def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
     """, (
         position_id, purpose, symbol, _iso(expected), _iso(market_time),
         _iso(observed_at), price, quote_volume,
-        ("OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK"
-         if purpose == "ENTRY" else
-         "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK"), digest,
+        ("BINANCE_SPOT_24H_TICKER"
+         if market_type == "SPOT" else
+         ("OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK"
+          if purpose == "ENTRY" else
+          "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK")), digest,
     ))
     return market_time, price, quote_volume

@@ -1,4 +1,4 @@
-"""Normalized OKX public WebSocket events for PAPER execution only."""
+"""Normalized OKX public WebSocket events for SPOT and SWAP PAPER only."""
 from __future__ import annotations
 
 import asyncio
@@ -15,16 +15,18 @@ WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 MAX_EVENT_AGE_MS = 2_000
 
 
-def instrument(symbol: str) -> str:
+def instrument(symbol: str, market_type: str = "USD_M_PERPETUAL") -> str:
     value = str(symbol).upper()
     if not value.endswith("USDT") or len(value) <= 4:
         raise ValueError("unsupported PAPER symbol")
-    return f"{value[:-4]}-USDT-SWAP"
+    suffix = "-USDT" if market_type == "SPOT" else "-USDT-SWAP"
+    return f"{value[:-4]}{suffix}"
 
 
 @dataclass
 class LiveState:
     symbol: str
+    market_type: str = "USD_M_PERPETUAL"
     last_price: float | None = None
     best_bid: float | None = None
     best_ask: float | None = None
@@ -54,8 +56,9 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
     channel, inst_id = arg.get("channel"), arg.get("instId")
     if not inst_id or not isinstance(message.get("data"), list):
         return []
-    symbol = inst_id.replace("-USDT-SWAP", "USDT")
-    state = states.setdefault(symbol, LiveState(symbol))
+    market_type = "USD_M_PERPETUAL" if inst_id.endswith("-SWAP") else "SPOT"
+    symbol = inst_id.replace("-USDT-SWAP", "USDT").replace("-USDT", "USDT")
+    state = states.setdefault(symbol, LiveState(symbol, market_type))
     updates = []
     for row in message["data"]:
         timestamp = int(row.get("ts", 0))
@@ -96,9 +99,13 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
 
 
 def subscription_args(symbols):
+    normalized = {
+        (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
+        for item in symbols
+    }
     return [
-        {"channel": channel, "instId": instrument(symbol)}
-        for symbol in sorted(set(symbols))
+        {"channel": channel, "instId": instrument(symbol, market_type)}
+        for symbol, market_type in sorted(normalized)
         for channel in ("tickers", "books5", "trades")
     ]
 

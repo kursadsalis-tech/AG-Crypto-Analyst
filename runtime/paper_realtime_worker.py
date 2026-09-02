@@ -41,11 +41,25 @@ async def run():
         policy_version="PAPER_OPPORTUNITY_POLICY_V3_IMMEDIATE_EXECUTION",
         initial_capital=float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000")),
     )
-    metadata = load_cache(
-        os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
-        "USD_M_PERPETUAL",
-        max_age_seconds=float(os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")),
-    )
+    max_metadata_age = float(os.getenv(
+        "AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200"
+    ))
+    metadata = {
+        "USD_M_PERPETUAL": load_cache(
+            os.getenv(
+                "AGCA_EXCHANGE_METADATA_CACHE",
+                "/var/lib/agca/exchange-info-usdm.json",
+            ),
+            "USD_M_PERPETUAL", max_age_seconds=max_metadata_age,
+        ),
+        "SPOT": load_cache(
+            os.getenv(
+                "AGCA_SPOT_EXCHANGE_METADATA_CACHE",
+                "/var/lib/agca/exchange-info-spot.json",
+            ),
+            "SPOT", max_age_seconds=max_metadata_age,
+        ),
+    }
     con = connect(DB_NAME, timeout=30)
     ensure_tables(con)
     position_management.ensure_tables(con)
@@ -57,8 +71,9 @@ async def run():
 
     def symbols():
         position_management.initialize_open_positions(con, now())
-        return [row[0] for row in con.execute(
-            "SELECT symbol FROM paper_agent_positions WHERE status='OPEN' ORDER BY symbol"
+        return [tuple(row) for row in con.execute(
+            """SELECT symbol,market_type FROM paper_agent_positions
+            WHERE status='OPEN' ORDER BY symbol"""
         ).fetchall()]
 
     def health(state, error):
@@ -67,7 +82,7 @@ async def run():
     async def on_state(state, observed_ms):
         nonlocal last_health_at
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
-        rule = rules_for(metadata, state.symbol)
+        rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
             write_health("DEGRADED", error="LIVE_SYMBOL_RULES_UNAVAILABLE",
                          symbol=state.symbol)

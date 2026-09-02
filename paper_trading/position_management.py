@@ -101,6 +101,7 @@ def ensure_tables(con):
     for name, definition in (
         ("margin_allocated", "REAL"), ("funding_source", "TEXT"),
         ("liquidation_price", "REAL"), ("leverage", "REAL NOT NULL DEFAULT 1"),
+        ("market_type", "TEXT NOT NULL DEFAULT 'USD_M_PERPETUAL'"),
         ("liquidation_fee", "REAL NOT NULL DEFAULT 0"),
         ("liquidated", "INTEGER NOT NULL DEFAULT 0"),
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
@@ -181,10 +182,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                m.realized_net_pnl,m.realized_gross_pnl,m.tp1_done,m.tp2_done,
                m.opposing_events,m.last_market_at,m.last_thesis_at,m.last_exit_attempt_at,
                p.liquidation_price,p.leverage,p.independent_signal_count,
-               p.signal_sources_json
+               p.signal_sources_json,p.market_type
         FROM paper_agent_positions p JOIN paper_position_management m USING(position_id)
-        WHERE p.symbol=? AND p.status='OPEN'
-    """, (live.symbol,)).fetchone()
+        WHERE p.symbol=? AND p.market_type=? AND p.status='OPEN'
+    """, (live.symbol, live.market_type)).fetchone()
     if not row:
         return {"status": "NO_OPEN_POSITION"}
     (position_id, direction, entry_price, due_time, _, stop_distance, stop_price,
@@ -192,7 +193,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
      unallocated_funding, last_funding_at, realized_net, realized_gross,
      tp1_done, tp2_done, opposing_events, last_market_at, last_thesis_at,
      last_exit_attempt_at, liquidation_threshold, leverage, signal_count,
-     signal_sources_json) = row
+     signal_sources_json, market_type) = row
     if market_at <= parse(last_market_at):
         return {"status": "DUPLICATE_OR_OLD_EVENT"}
 
@@ -222,7 +223,8 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         now=market_at, maximum_exit_at=parse(due_time),
     )
     forced_liquidation = bool(
-        liquidation_threshold is not None and liquidation_breached(
+        market_type == "USD_M_PERPETUAL" and liquidation_threshold is not None
+        and liquidation_breached(
             direction=direction, threshold=float(liquidation_threshold),
             low=float(live.last_price), high=float(live.last_price),
         )
@@ -316,13 +318,17 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
     # Funding lookup stays outside the latency-critical path. A segment exists
     # only after a real fill; rejected/retried exits cannot pollute the ledger.
-    funding_pending, new_funding = True, 0.0
-    con.execute("""INSERT OR IGNORE INTO paper_funding_reconciliation_segments(
-        position_id,start_at,end_at,direction,quantity,status
-    ) VALUES(?,?,?,?,?,'PENDING')""", (
-        position_id, last_funding_at, iso(market_at), direction, remaining_qty,
-    ))
-    evidence["funding_status"] = "PENDING_RECONCILIATION"
+    funding_pending = market_type == "USD_M_PERPETUAL"
+    new_funding = 0.0
+    if funding_pending:
+        con.execute("""INSERT OR IGNORE INTO paper_funding_reconciliation_segments(
+            position_id,start_at,end_at,direction,quantity,status
+        ) VALUES(?,?,?,?,?,'PENDING')""", (
+            position_id, last_funding_at, iso(market_at), direction, remaining_qty,
+        ))
+        evidence["funding_status"] = "PENDING_RECONCILIATION"
+    else:
+        evidence["funding_status"] = "SPOT_NOT_APPLICABLE"
     fill_ratio = closed_qty / float(fill.quantity)
     exit_fee = fill.fee * fill_ratio
     spread_cost = fill.spread_cost * fill_ratio
@@ -374,7 +380,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
             exit_price=?,close_reason=?,funding_source=?
             WHERE position_id=? AND status='OPEN'""",
             (iso(market_at), fill.price, decision.reason,
-             "PENDING_RECONCILIATION" if funding_pending else "BINANCE_USD_M_FUNDING_HISTORY",
+             "PENDING_RECONCILIATION" if funding_pending else "SPOT_NOT_APPLICABLE",
              position_id))
     con.commit()
     return {"status": event_type, "reason": decision.reason,
@@ -384,8 +390,11 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
 def reconcile_pending_funding(con, funding_loader, now):
     """Apply previously unavailable funding without reopening trade outcomes."""
     ensure_tables(con)
-    rows = con.execute("""SELECT segment_id,position_id,start_at,end_at,direction,quantity
-        FROM paper_funding_reconciliation_segments WHERE status='PENDING'
+    rows = con.execute("""SELECT s.segment_id,s.position_id,s.start_at,s.end_at,
+               s.direction,s.quantity
+        FROM paper_funding_reconciliation_segments s
+        JOIN paper_agent_positions p USING(position_id)
+        WHERE s.status='PENDING' AND p.market_type='USD_M_PERPETUAL'
         ORDER BY position_id,start_at,segment_id""").fetchall()
     resolved, blocked = 0, 0
     grouped = {}

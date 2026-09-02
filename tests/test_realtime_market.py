@@ -12,6 +12,17 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual(len(args), 6)
         self.assertIn({"channel": "trades", "instId": "CRV-USDT-SWAP"}, args)
 
+    def test_spot_position_subscribes_to_spot_instrument(self):
+        args = subscription_args([("BTCUSDT", "SPOT")])
+        self.assertEqual(len(args), 3)
+        self.assertIn({"channel": "books5", "instId": "BTC-USDT"}, args)
+        states = {}
+        message = {"arg": {"channel": "tickers", "instId": "BTC-USDT"},
+                   "data": [{"ts": str(NOW), "last": "100", "bidPx": "99.9",
+                             "askPx": "100.1"}]}
+        state = apply_message(states, message, NOW)[0]
+        self.assertEqual((state.symbol, state.market_type), ("BTCUSDT", "SPOT"))
+
     def test_stale_event_is_rejected(self):
         states = {}
         message = {"arg": {"channel": "tickers", "instId": "CRV-USDT-SWAP"},

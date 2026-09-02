@@ -133,6 +133,22 @@ class PositionManagementTests(unittest.TestCase):
             "SELECT funding_source FROM paper_agent_positions"
         ).fetchone()[0], "BINANCE_USD_M_FUNDING_HISTORY")
 
+    def test_spot_close_has_no_funding_segment_or_liquidation(self):
+        self.con.execute("""UPDATE paper_agent_positions SET market_type='SPOT',
+            liquidation_price=99 WHERE position_id=1""")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        live = self.live(98, 2)
+        live.market_type = "SPOT"
+        result = process_market_state(
+            self.con, live, ENTRY + timedelta(seconds=2), self.rules,
+        )
+        self.assertEqual(result["status"], "POSITION_CLOSED")
+        row = self.con.execute("""SELECT funding_source,liquidated
+            FROM paper_agent_positions""").fetchone()
+        self.assertEqual(row, ("SPOT_NOT_APPLICABLE", 0))
+        self.assertEqual(self.con.execute("""SELECT COUNT(*)
+            FROM paper_funding_reconciliation_segments""").fetchone()[0], 0)
+
     def test_rejected_exit_is_throttled_and_creates_no_funding_segment(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         illiquid = self.live(98, 2)

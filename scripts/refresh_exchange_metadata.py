@@ -8,20 +8,28 @@ from paper_trading.exchange_metadata import refresh_cache_via_postgres
 
 
 def main():
-    metadata = refresh_cache_via_postgres(
-        os.getenv(
+    database_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
+    results = []
+    for market, path in (
+        ("USD_M_PERPETUAL", os.getenv(
             "AGCA_EXCHANGE_METADATA_CACHE",
             "/var/lib/agca/exchange-info-usdm.json",
-        ),
-        "USD_M_PERPETUAL",
-        os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
-    )
-    print(json.dumps({
-        "market": metadata.market,
-        "symbols": len(metadata.symbols),
-        "fetched_at": metadata.fetched_at,
-        "payload_sha256": metadata.payload_sha256,
-    }, sort_keys=True))
+        )),
+        ("SPOT", os.getenv(
+            "AGCA_SPOT_EXCHANGE_METADATA_CACHE",
+            "/var/lib/agca/exchange-info-spot.json",
+        )),
+    ):
+        metadata = refresh_cache_via_postgres(
+            path, market, database_url,
+        )
+        results.append({
+            "market": metadata.market,
+            "symbols": len(metadata.symbols),
+            "fetched_at": metadata.fetched_at,
+            "payload_sha256": metadata.payload_sha256,
+        })
+    print(json.dumps(results, sort_keys=True))
 
 
 if __name__ == "__main__":

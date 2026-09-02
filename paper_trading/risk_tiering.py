@@ -14,6 +14,7 @@ class RiskTier:
     independent_signal_count: int
     signal_sources: tuple[str, ...]
     tier: str
+    market_type: str
 
 
 def _directional_sources(candidate):
@@ -54,4 +55,10 @@ def tier_for(candidate) -> RiskTier:
         independent_signal_count=count,
         signal_sources=sources,
         tier=f"PAPER_RISK_TIER_{int(leverage)}",
+        # Spot is a genuine lower-risk route for a small LONG hypothesis.
+        # SHORT exposure requires a derivative even at 1x.
+        market_type=(
+            "SPOT" if leverage == 1.0 and candidate["direction"] == "LONG"
+            else "USD_M_PERPETUAL"
+        ),
     )

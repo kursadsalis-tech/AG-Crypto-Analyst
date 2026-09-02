@@ -80,6 +80,26 @@ class ExecutionMarketDataTests(unittest.TestCase):
             )
         self.assertIsNone(result)
 
+    def test_spot_entry_uses_direct_spot_price_and_is_frozen(self):
+        payload = {
+            "symbol": "BTCUSDT", "lastPrice": "100", "quoteVolume": "1440000",
+            "closeTime": int(self.expected.timestamp() * 1000),
+        }
+        with patch.object(
+            market.requests, "get", return_value=self.response(payload)
+        ) as get:
+            result = market.capture_reference(
+                self.con, position_id=44, symbol="BTCUSDT",
+                expected=self.expected, purpose="ENTRY",
+                observed_at=self.expected + timedelta(seconds=2),
+                market_type="SPOT",
+            )
+        self.assertEqual(result, (self.expected, 100.0, 1000.0))
+        self.assertEqual(get.call_args.args[0], market.BINANCE_SPOT_24H_URL)
+        stored = self.con.execute("""SELECT source,real_order_allowed
+            FROM paper_execution_market_observations WHERE position_id=44""").fetchone()
+        self.assertEqual(stored, ("BINANCE_SPOT_24H_TICKER", 0))
+
     def test_exit_uses_exact_preceding_usdm_hour_close(self):
         opened = self.expected - timedelta(hours=1)
         close = self.expected - timedelta(milliseconds=1)
