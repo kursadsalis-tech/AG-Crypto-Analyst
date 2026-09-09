@@ -85,8 +85,16 @@ class ExecutionMarketDataTests(unittest.TestCase):
             "symbol": "BTCUSDT", "lastPrice": "100", "quoteVolume": "1440000",
             "closeTime": int(self.expected.timestamp() * 1000),
         }
+        okx = {"code": "0", "data": [{
+            "last": "100", "volCcy24h": "14400",
+            "ts": str(int(self.expected.timestamp() * 1000)),
+        }]}
+        responses = {
+            market.BINANCE_SPOT_24H_URL: self.response(payload),
+            market.OKX_TICKER_URL: self.response(okx),
+        }
         with patch.object(
-            market.requests, "get", return_value=self.response(payload)
+            market.requests, "get", side_effect=lambda url, **_: responses[url]
         ) as get:
             result = market.capture_reference(
                 self.con, position_id=44, symbol="BTCUSDT",
@@ -95,10 +103,32 @@ class ExecutionMarketDataTests(unittest.TestCase):
                 market_type="SPOT",
             )
         self.assertEqual(result, (self.expected, 100.0, 1000.0))
-        self.assertEqual(get.call_args.args[0], market.BINANCE_SPOT_24H_URL)
+        self.assertEqual(get.call_count, 2)
         stored = self.con.execute("""SELECT source,real_order_allowed
             FROM paper_execution_market_observations WHERE position_id=44""").fetchone()
-        self.assertEqual(stored, ("BINANCE_SPOT_24H_TICKER", 0))
+        self.assertEqual(stored, (
+            "BINANCE_SPOT_24H_TICKER_WITH_OKX_SPOT_MANAGEMENT_CHECK", 0,
+        ))
+
+    def test_spot_entry_rejects_missing_okx_management_instrument(self):
+        payload = {
+            "symbol": "LAUSDT", "lastPrice": "0.06", "quoteVolume": "1440000",
+            "closeTime": int(self.expected.timestamp() * 1000),
+        }
+        responses = {
+            market.BINANCE_SPOT_24H_URL: self.response(payload),
+            market.OKX_TICKER_URL: self.response({"code": "51001", "data": []}),
+        }
+        with patch.object(
+            market.requests, "get", side_effect=lambda url, **_: responses[url]
+        ):
+            with self.assertRaises(market.SpotManagementVenueUnavailable):
+                market.capture_reference(
+                    self.con, position_id=45, symbol="LAUSDT",
+                    expected=self.expected, purpose="ENTRY",
+                    observed_at=self.expected + timedelta(seconds=2),
+                    market_type="SPOT",
+                )
 
     def test_exit_uses_exact_preceding_usdm_hour_close(self):
         opened = self.expected - timedelta(hours=1)

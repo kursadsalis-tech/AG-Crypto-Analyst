@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import unittest
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -42,8 +43,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         row = self.con.execute("""SELECT forecast_id,policy_version,strategy_id,
             decision_source,decision_reference_id FROM paper_agent_positions""").fetchone()
         self.assertEqual(row[0], -7)
-        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V3_RISK_TIERED_LEARNING")
-        self.assertEqual(row[2:], ("BEHAVIOR_CORE_V3", "MARKET_BEHAVIOR_CORE", 7))
+        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V4_EXECUTION_CALIBRATED")
+        self.assertEqual(row[2:], ("BEHAVIOR_CORE_V4", "MARKET_BEHAVIOR_CORE", 7))
         notional = self.con.execute("SELECT notional FROM paper_agent_positions").fetchone()[0]
         self.assertAlmostEqual(notional, 50.0)
         leverage, margin, tier, market = self.con.execute(
@@ -71,6 +72,20 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT notional FROM paper_agent_positions"
         ).fetchone()[0]
         self.assertAlmostEqual(notional, 25.0)
+
+    def test_own_execution_feedback_changes_next_experiment_size(self):
+        candidate = self.candidate()
+        candidate["execution_size_multiplier"] = 0.8
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            selected = agent.select_new_positions(self.con, NOW)
+        self.assertEqual(selected, 1)
+        notional, reason = self.con.execute(
+            "SELECT notional,selection_reason FROM paper_agent_positions"
+        ).fetchone()
+        self.assertAlmostEqual(notional, 40.0)
+        self.assertIn("execution_size_multiplier=0.800", reason)
 
     def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
         candidate = self.candidate()
@@ -171,6 +186,61 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
                 FROM paper_agent_positions""").fetchone(),
             ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_UNAVAILABLE"),
         )
+
+    def test_missing_okx_spot_management_route_cancels_before_open(self):
+        candidate = self.candidate()
+        candidate.update({"decision_id": 11, "symbol": "LAUSDT",
+                          "evidence_sha256": "e" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            agent.select_new_positions(self.con, NOW)
+        planned = agent.immediate_paper_entry_time(NOW)
+        with patch.object(
+            agent.execution_market_data, "capture_reference",
+            side_effect=agent.execution_market_data.SpotManagementVenueUnavailable(
+                "LAUSDT: OKX Spot management instrument unavailable"
+            ),
+        ):
+            filled, cancelled = agent.fill_pending(self.con, planned)
+        self.assertEqual((filled, cancelled), (0, 1))
+        self.assertEqual(
+            self.con.execute("""SELECT status,cancel_reason
+                FROM paper_agent_positions""").fetchone(),
+            ("CANCELLED", "OKX_SPOT_MANAGEMENT_UNAVAILABLE"),
+        )
+
+    def test_minute_cycle_skips_heavy_learning_without_new_close(self):
+        with patch.object(agent, "load_execution_metadata", return_value=None), \
+                patch.object(agent, "fill_pending", return_value=(0, 0)), \
+                patch.object(agent, "settle_open", return_value=0), \
+                patch.object(agent, "select_new_positions", return_value=0), \
+                patch.object(agent.experience_memory, "review_closed_positions",
+                             return_value=0), \
+                patch.object(agent.trade_learning, "run") as learning:
+            result = agent.run_behavior_selection(NOW)
+        learning.assert_not_called()
+        self.assertEqual(result["trade_learning"]["status"], "NO_NEW_CLOSED_TRADE")
+
+    def test_infeasible_exchange_rules_reject_before_position_is_written(self):
+        rejected = SimpleNamespace(fill=None, reason="EXCHANGE_FILTER_REJECTION")
+        rules = SimpleNamespace(quantity_step=1000.0, price_tick=0.1, min_notional=5.0)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [self.candidate()], "review": {},
+        }), patch.object(agent, "rules_for", return_value=rules), patch.object(
+            agent, "simulated_decision", return_value=rejected,
+        ):
+            selected = agent.select_new_positions(
+                self.con, NOW, exchange_metadata={"SPOT": object()},
+            )
+        self.assertEqual(selected, 0)
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM paper_agent_positions").fetchone()[0], 0,
+        )
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertEqual(reasons, {"PRESELECTION_EXCHANGE_FILTER_REJECTION": 1})
 
 
 if __name__ == "__main__":

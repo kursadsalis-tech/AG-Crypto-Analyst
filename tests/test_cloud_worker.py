@@ -37,11 +37,16 @@ class CloudWorkerHealthTests(unittest.TestCase):
         self.assertIn("runtime.cloud_attestation", service)
         self.assertIn("OnUnitActiveSec=5min", timer)
 
-    def test_worker_runs_lightweight_behavior_selection_each_minute(self):
+    def test_behavior_selection_is_isolated_from_heavy_worker(self):
         source = Path(cloud_worker.__file__).read_text(encoding="utf-8")
-        self.assertIn("paper_behavior_selection", source)
-        self.assertIn("run_behavior_selection(selection_now)", source)
-        self.assertIn("last_minute", source)
+        self.assertNotIn("run_behavior_selection", source)
+        service = Path("deploy/agca-paper-selection.service").read_text()
+        timer = Path("deploy/agca-paper-selection.timer").read_text()
+        self.assertIn("runtime.paper_selection_cycle", service)
+        self.assertIn("AGCA_EXECUTION_MODE=PAPER_ONLY", service)
+        self.assertIn("TimeoutStartSec=120", service)
+        self.assertIn("OnUnitInactiveSec=60s", timer)
+        self.assertNotIn("OnCalendar=", timer)
 
 
 if __name__ == "__main__":

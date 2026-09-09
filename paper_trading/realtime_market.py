@@ -153,7 +153,10 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
                     received_ms = int(time.time() * 1000)
                     message = json.loads(raw)
                     if message.get("event") == "error":
-                        raise RuntimeError("OKX_SUBSCRIPTION_ERROR")
+                        if health_callback:
+                            code = str(message.get("code") or "UNKNOWN")
+                            health_callback("DEGRADED", f"OKX_SUBSCRIPTION_ERROR_{code}")
+                        continue
                     for state in apply_message(states, message, received_ms):
                         await on_state(state, received_ms)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,

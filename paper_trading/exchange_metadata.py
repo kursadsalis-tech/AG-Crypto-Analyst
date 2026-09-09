@@ -167,7 +167,8 @@ def refresh_cache_via_postgres(
                 row = cursor.fetchone()
     except Exception as exc:
         raise ExchangeMetadataError("SUPABASE_EXCHANGE_INFO_UNAVAILABLE") from exc
-    if not row or row[0] != 200 or row[1] != "application/json":
+    content_type = str(row[1] or "").split(";", 1)[0].strip().lower() if row else ""
+    if not row or row[0] != 200 or content_type != "application/json":
         raise ExchangeMetadataError("OFFICIAL_SOURCE_INVALID_RESPONSE")
     raw = row[2].encode("utf-8")
     try:

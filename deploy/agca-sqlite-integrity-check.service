@@ -9,7 +9,8 @@ Group=kursadsalis
 WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
 Environment=AGCA_SQLITE_INTEGRITY_CACHE_PATH=/var/lib/agca/sqlite-integrity-health.json
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.sqlite_integrity_check
-Nice=19
-IOSchedulingClass=idle
-TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=90min
 UMask=0077

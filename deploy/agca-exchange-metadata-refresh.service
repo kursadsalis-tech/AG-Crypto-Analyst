@@ -1,0 +1,16 @@
+[Unit]
+Description=Refresh validated Binance exchange metadata for AGCA PAPER execution
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m scripts.refresh_exchange_metadata
+UMask=0077

@@ -19,7 +19,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
-from paper_trading.execution_model import PAPER_MARKET, simulated_fill
+from paper_trading.execution_model import PAPER_MARKET, simulated_decision, simulated_fill
 from paper_trading.exchange_metadata import (
     ExchangeMetadataError, load_cache, rules_for,
 )
@@ -463,6 +463,13 @@ def fill_pending(con, now, exchange_metadata=None):
                     expected=planned, purpose="ENTRY", observed_at=now,
                     market_type=market_type,
                 )
+            except execution_market_data.SpotManagementVenueUnavailable:
+                con.execute("""
+                    UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                    WHERE position_id=? AND status='PENDING_ENTRY'
+                """, ("OKX_SPOT_MANAGEMENT_UNAVAILABLE", position_id))
+                cancelled += 1
+                continue
             except (requests.RequestException, ValueError):
                 result = None
         if result is None:
@@ -720,7 +727,7 @@ def latest_candidates(con, now=None):
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
-def select_new_positions(con, now):
+def select_new_positions(con, now, exchange_metadata=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con)
     active = con.execute("""
@@ -762,7 +769,10 @@ def select_new_positions(con, now):
             reject("SYMBOL_ALREADY_ACTIVE")
             continue
         tier = risk_tiering.tier_for(row)
-        base_margin = snapshot["equity"] * tier.margin_fraction
+        base_margin = (
+            snapshot["equity"] * tier.margin_fraction
+            * float(row.get("execution_size_multiplier", 1.0))
+        )
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
@@ -776,10 +786,31 @@ def select_new_positions(con, now):
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
             continue
+        if exchange_metadata is not None:
+            metadata = exchange_metadata.get(tier.market_type)
+            try:
+                rules = rules_for(metadata, row["symbol"]) if metadata else None
+            except ExchangeMetadataError:
+                rules = None
+            if rules is None:
+                reject(f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE")
+                continue
+            executable = simulated_decision(
+                reference_price=float(row["current_price"]),
+                requested_notional=notional,
+                side="BUY" if row["direction"] == "LONG" else "SELL",
+                symbol=row["symbol"], quantity_step=rules.quantity_step,
+                price_tick=rules.price_tick, min_notional=rules.min_notional,
+                require_liquidity=False,
+            )
+            if executable.fill is None:
+                reject(f"PRESELECTION_{executable.reason}")
+                continue
         reason = (
             f"BEHAVIOR {row['horizon']}h {row['direction']} | "
             f"cost_after_win={100*row['confidence']:.1f}% | "
             f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
+            f"execution_size_multiplier={row.get('execution_size_multiplier', 1.0):.3f} | "
             f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
             f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
             f"signals={','.join(tier.signal_sources)} | "
@@ -1175,7 +1206,7 @@ def run(now=None):
         ensure_tables(con)
         filled, cancelled = fill_pending(con, now, exchange_metadata)
         closed = settle_open(con, now, exchange_metadata)
-        selected = select_new_positions(con, now)
+        selected = select_new_positions(con, now, exchange_metadata)
         new_experience_reviews = experience_memory.review_closed_positions(con, now)
         learning = trade_learning.run(con, FORWARD_COHORT, now)
         learning["new_experience_reviews"] = new_experience_reviews
@@ -1215,10 +1246,19 @@ def run_behavior_selection(now=None):
         exchange_metadata = load_execution_metadata()
         filled_before, cancelled_before = fill_pending(con, now, exchange_metadata)
         closed = settle_open(con, now, exchange_metadata)
-        selected = select_new_positions(con, now)
+        selected = select_new_positions(con, now, exchange_metadata)
         filled_now, cancelled_now = fill_pending(con, utcnow(), exchange_metadata)
         new_experience_reviews = experience_memory.review_closed_positions(con, now)
-        learning = trade_learning.run(con, FORWARD_COHORT, now)
+        if closed or new_experience_reviews:
+            learning = trade_learning.run(con, FORWARD_COHORT, now)
+        else:
+            learning = {
+                "status": "NO_NEW_CLOSED_TRADE",
+                "closed": 0,
+                "weeks": 0,
+                "patterns": [],
+                "promotion_allowed": False,
+            }
         learning["new_experience_reviews"] = new_experience_reviews
         return {
             "status": "SUCCESS", "selected": selected,

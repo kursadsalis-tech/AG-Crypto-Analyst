@@ -97,6 +97,22 @@ class ExchangeMetadataTests(unittest.TestCase):
                 fake_psycopg.connect.call_args.kwargs["tcp_user_timeout"], 20000
             )
 
+    def test_supabase_transport_accepts_json_charset_parameter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cursor = MagicMock()
+            cursor.fetchone.return_value = (
+                200, "application/json;charset=UTF-8", json.dumps(payload()),
+            )
+            connection = MagicMock()
+            connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+            fake_psycopg = MagicMock()
+            fake_psycopg.connect.return_value = connection
+            with patch.dict("sys.modules", {"psycopg": fake_psycopg}):
+                cache = refresh_cache_via_postgres(
+                    Path(directory) / "cache.json", "SPOT", "postgres://example",
+                )
+            self.assertEqual(rules_for(cache, "BTCUSDT").min_notional, 100)
+
 
 if __name__ == "__main__":
     unittest.main()

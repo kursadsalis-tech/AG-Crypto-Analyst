@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import requests
 
@@ -22,6 +24,10 @@ USER_AGENT = "AG-Crypto-Analyst/paper-execution-observation-v1"
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_ENTRY_OBSERVATION_DELAY = timedelta(minutes=10)
 MAX_CROSS_SOURCE_DEVIATION_PCT = 2.0
+
+
+class SpotManagementVenueUnavailable(ValueError):
+    """Raised when a Binance Spot PAPER fill cannot be managed on OKX Spot."""
 
 
 def _iso(value: datetime) -> str:
@@ -187,16 +193,51 @@ def fetch_entry_snapshot(symbol: str, observed_at: datetime):
     return market_time, price, quote_volume, digest
 
 
+def _postgres_json_get(database_url: str, url: str):
+    import psycopg
+
+    timeout_ms = REQUEST_TIMEOUT_SECONDS * 1000
+    with psycopg.connect(
+        database_url, connect_timeout=REQUEST_TIMEOUT_SECONDS,
+        tcp_user_timeout=timeout_ms,
+    ) as con:
+        with con.cursor() as cursor:
+            cursor.execute(f"SET LOCAL statement_timeout = '{timeout_ms}ms'")
+            cursor.execute(
+                "SELECT extensions.http_set_curlopt('CURLOPT_CONNECTTIMEOUT_MS', %s)",
+                (str(timeout_ms),),
+            )
+            cursor.execute(
+                "SELECT extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', %s)",
+                (str(timeout_ms),),
+            )
+            cursor.execute(
+                "SELECT status,content_type,content FROM extensions.http_get(%s)",
+                (url,),
+            )
+            row = cursor.fetchone()
+    content_type = str(row[1] or "").split(";", 1)[0].strip().lower() if row else ""
+    if not row or row[0] != 200 or content_type != "application/json":
+        raise ValueError("Binance Spot source returned an invalid response")
+    return json.loads(row[2])
+
+
 def fetch_spot_snapshot(symbol: str, observed_at: datetime):
-    """Capture direct Binance Spot price/liquidity evidence for SPOT PAPER."""
-    response = requests.get(
-        BINANCE_SPOT_24H_URL,
-        params={"symbol": symbol},
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-    )
-    response.raise_for_status()
-    payload = response.json()
+    """Capture Binance Spot PAPER fill evidence with an OKX management check."""
+    database_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
+    if database_url:
+        payload = _postgres_json_get(
+            database_url, f"{BINANCE_SPOT_24H_URL}?{urlencode({'symbol': symbol})}",
+        )
+    else:
+        response = requests.get(
+            BINANCE_SPOT_24H_URL,
+            params={"symbol": symbol},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError(f"{symbol}: Binance spot ticker response failed")
     price = float(payload.get("lastPrice", 0))
@@ -207,10 +248,40 @@ def fetch_spot_snapshot(symbol: str, observed_at: datetime):
         raise ValueError(f"{symbol}: non-executable Binance spot ticker")
     if abs((observed_at - market_time).total_seconds()) > 30:
         raise ValueError(f"{symbol}: stale Binance spot ticker")
+
+    okx_response = requests.get(
+        OKX_TICKER_URL,
+        params={"instId": f"{symbol[:-4]}-USDT"},
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    okx_response.raise_for_status()
+    okx_payload = okx_response.json()
+    okx_rows = okx_payload.get("data") if isinstance(okx_payload, dict) else None
+    if str(okx_payload.get("code")) != "0" or not isinstance(okx_rows, list) or len(okx_rows) != 1:
+        raise SpotManagementVenueUnavailable(
+            f"{symbol}: OKX Spot management instrument unavailable"
+        )
+    okx_row = okx_rows[0]
+    okx_price = float(okx_row.get("last", 0))
+    okx_base_volume = float(okx_row.get("volCcy24h", 0))
+    okx_ms = int(okx_row.get("ts", 0))
+    okx_time = datetime.fromtimestamp(okx_ms / 1000, tz=timezone.utc)
+    if okx_price <= 0 or okx_base_volume <= 0 or okx_ms <= 0:
+        raise SpotManagementVenueUnavailable(f"{symbol}: non-executable OKX Spot ticker")
+    if abs((observed_at - okx_time).total_seconds()) > 30:
+        raise SpotManagementVenueUnavailable(f"{symbol}: stale OKX Spot ticker")
+    deviation = abs(price - okx_price) / ((price + okx_price) / 2.0) * 100.0
+    if deviation > MAX_CROSS_SOURCE_DEVIATION_PCT:
+        raise SpotManagementVenueUnavailable(
+            f"{symbol}: Binance/OKX Spot price deviation too high"
+        )
+    okx_quote_volume = okx_base_volume * okx_price / (24.0 * 60.0)
     digest = hashlib.sha256(json.dumps(
-        payload, separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+        {"binance_spot": payload, "okx_spot": okx_row}, separators=(",", ":"),
+        ensure_ascii=True, sort_keys=True,
     ).encode("utf-8")).hexdigest()
-    return market_time, price, quote_volume_24h / (24.0 * 60.0), digest
+    return market_time, price, min(quote_volume_24h / (24.0 * 60.0), okx_quote_volume), digest
 
 
 def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
@@ -250,7 +321,7 @@ def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
     """, (
         position_id, purpose, symbol, _iso(expected), _iso(market_time),
         _iso(observed_at), price, quote_volume,
-        ("BINANCE_SPOT_24H_TICKER"
+        ("BINANCE_SPOT_24H_TICKER_WITH_OKX_SPOT_MANAGEMENT_CHECK"
          if market_type == "SPOT" else
          ("OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK"
           if purpose == "ENTRY" else

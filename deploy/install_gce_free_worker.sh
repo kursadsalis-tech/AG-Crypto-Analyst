@@ -36,8 +36,14 @@ sudo install -m 644 deploy/agca-cloud-worker.service /etc/systemd/system/agca-cl
 sudo install -m 644 deploy/agca-paper-realtime-worker.service /etc/systemd/system/agca-paper-realtime-worker.service
 sudo install -m 644 deploy/agca-paper-realtime-health-monitor.service /etc/systemd/system/agca-paper-realtime-health-monitor.service
 sudo install -m 644 deploy/agca-paper-realtime-health-monitor.timer /etc/systemd/system/agca-paper-realtime-health-monitor.timer
+sudo install -m 644 deploy/agca-exchange-metadata-refresh.service /etc/systemd/system/agca-exchange-metadata-refresh.service
+sudo install -m 644 deploy/agca-exchange-metadata-refresh.timer /etc/systemd/system/agca-exchange-metadata-refresh.timer
+sudo install -m 644 deploy/agca-paper-selection.service /etc/systemd/system/agca-paper-selection.service
+sudo install -m 644 deploy/agca-paper-selection.timer /etc/systemd/system/agca-paper-selection.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now agca-cloud-worker.service
 sudo systemctl enable --now agca-paper-realtime-worker.service
 sudo systemctl enable --now agca-paper-realtime-health-monitor.timer
+sudo systemctl enable --now agca-exchange-metadata-refresh.timer
+sudo systemctl enable --now agca-paper-selection.timer
 echo "BACKUP=$backup"

@@ -876,3 +876,38 @@ durdurması hedef sözleşmesini ihlal eder.
   leverage ile hesaplanır; gap eşiği aşarsa liquidation fee ve sonuç öğrenmeye
   yazılır. Bu yetki PAPER_ONLY'dır; gerçek emir kapısı değişmez ve Unified
   Forecast yürütmeye bağlanmaz.
+
+## Karar 037 - Kendi PAPER Sonuçları Kararları Kalibre Etmelidir
+
+- Piyasa olaylarının ileri sonuçları hipotez üretir; ajanın kendi kapanmış PAPER
+  işlemleri ise aynı olay/desen/yön anahtarında seçim puanını ve sonraki deney
+  boyutunu kalibre eder. Yalnız bütün yürütme maliyetleri sonrası net sonuç ve
+  `exit_time` kesim zamanından önce olan kayıtlar kullanılabilir.
+- Tek işlem politika değiştirmez veya beceri kanıtlamaz. Kendi işlem kanıtı
+  küçültmeli bir öncülle piyasa-olayı kanıtına karıştırılır; kaybeden örüntüler
+  sıralamada ve boyutta kademeli geriler, kazananlar sınırlı biçimde güçlenir.
+  Bu geri besleme küçük PAPER keşfini sert veto ile durduramaz.
+- Bir örüntü, gözlemsel eşikleri geçse bile en az 10 kapanmış kendi işlemi ve üç
+  bağımsız gün olmadan terfi edemez. Terfi için kalibre edilmiş maliyet-sonrası
+  kazanma oranı ve ortalama getiri eşikleri de geçilmelidir.
+- Her yeni kapanış sayısında kullanılan kalibrasyon yerel SQLite'a değişmez
+  kanıt olarak yazılır. Unified Forecast baseline-only, tek yaşam boyu kasa,
+  PAPER_ONLY ve gerçek-emir kapalı sözleşmeleri değişmez.
+
+## Karar 038 - Dakikalık PAPER Yürütme Ağır Ürün Çevriminden Bağımsızdır
+
+- Davranış seçimi, dolum ve sonuç öğrenmesi `agca-paper-selection.timer` ile her
+  dakika ayrı oneshot süreçte çalışır. Beş dakikalık ürün collector'ları veya
+  Unified Forecast hesabı bu kritik yolu geciktiremez.
+- Ana cloud worker PAPER seçimi çağırmaz. Böylece aynı karar iki ayrı süreçten
+  seçilemez; yaşam boyu kasa ve idempotent karar bağı korunur.
+- Dakikalık çevrimde yeni kapanış yoksa pahalı tarihsel trade-learning bakımı
+  tekrar çalıştırılmaz. Kendi kapanmış PAPER sonuçlarından örüntü kalibrasyonu
+  seçim içinde devam eder; yeni kapanış olduğunda tez incelemesi ve tam öğrenme
+  zorunludur.
+- Üç ardışık SPOT kanıt çağrısı Supabase PostgreSQL egress yolunda 50 saniyeyi
+  geçebildiği için seçim servisi 120 saniyede fail-closed olur. Timer kaçırılan
+  takvim dakikalarını aralıksız telafi etmez; tamamlanan çevrimden 60 saniye
+  sonra tek yeni oneshot başlatır. Küçük sağlık dosyası yazılır ve yalnız
+  `PAPER_ONLY` kabul edilir. Unified Forecast baseline-only ve gerçek emir
+  yetkisi kapalı kalır.

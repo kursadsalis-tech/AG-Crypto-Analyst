@@ -43,6 +43,11 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 policy_snapshot_id INTEGER,symbol TEXT,new_position_allowed INTEGER,
                 max_position_pct REAL,price REAL,as_of TEXT
             );
+            CREATE TABLE paper_agent_positions(
+                position_id INTEGER PRIMARY KEY,decision_reference_id INTEGER,
+                decision_source TEXT,status TEXT,evidence_eligible INTEGER,
+                net_pnl REAL,notional REAL,exit_time TEXT,direction TEXT
+            );
             INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1);
             INSERT INTO asset_risk_snapshots VALUES(
                 1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00'
@@ -129,11 +134,64 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "ACTIONABLE")
         candidate = result["candidates"][0]
         self.assertEqual(candidate["direction"], "LONG")
-        self.assertEqual(candidate["experiment_tier"], "PROMOTION_READY")
+        self.assertEqual(candidate["experiment_tier"], "EXPLORATORY_LEARNING")
         self.assertEqual(candidate["decision_source"], "MARKET_BEHAVIOR_CORE")
         self.assertFalse(candidate["evidence"]["unified_forecast_used"])
+        self.assertTrue(
+            candidate["evidence"]["learned_pattern"]["observational_promotion_ready"]
+        )
+        self.assertFalse(candidate["evidence"]["learned_pattern"]["promotion_ready"])
         self.assertIn("ORDER_BOOK", candidate["evidence"]["capabilities_used"])
         self.assertIn("LIQUIDATIONS", candidate["evidence"]["capabilities_used"])
+
+    def test_own_cost_after_losses_recalibrate_ranking_and_size(self):
+        self.add_history(days=3)
+        self.add_current()
+        first = core.evaluate(self.con, NOW)["candidates"][0]
+        learned = first["evidence"]["learned_pattern"]
+        for index in range(2):
+            self.con.execute("""INSERT INTO paper_agent_positions VALUES(
+                ?,?,'MARKET_BEHAVIOR_CORE','CLOSED',1,-1,100,?,?
+            )""", (
+                index + 1, first["decision_id"],
+                (NOW - timedelta(minutes=index + 1)).isoformat(), first["direction"],
+            ))
+        feedback = core.execution_feedback(self.con, NOW)
+        key = (
+            first["evidence"]["event"]["kind"],
+            learned["flow_pattern"],
+            first["direction"],
+        )
+        calibrated = core.calibrate_pattern(learned, feedback[key])
+        self.assertEqual(calibrated["execution_feedback"]["closed_count"], 2)
+        self.assertLess(calibrated["calibrated_net_edge_pct"], learned["mean_net_edge_pct"])
+        self.assertLess(calibrated["execution_size_multiplier"], 1.0)
+        self.assertFalse(calibrated["promotion_ready"])
+
+    def test_future_or_ineligible_trade_cannot_recalibrate(self):
+        self.add_history(days=1)
+        self.add_current()
+        first = core.evaluate(self.con, NOW)["candidates"][0]
+        self.con.execute("""INSERT INTO paper_agent_positions VALUES(
+            1,?,'MARKET_BEHAVIOR_CORE','CLOSED',1,5,100,?,'LONG'
+        )""", (first["decision_id"], (NOW + timedelta(minutes=1)).isoformat()))
+        self.con.execute("""INSERT INTO paper_agent_positions VALUES(
+            2,?,'MARKET_BEHAVIOR_CORE','CLOSED',0,5,100,?,'LONG'
+        )""", (first["decision_id"], (NOW - timedelta(minutes=1)).isoformat()))
+        self.assertEqual(core.execution_feedback(self.con, NOW), {})
+
+    def test_negative_expectancy_reduces_size_despite_more_wins(self):
+        pattern = {
+            "mean_net_edge_pct": 1.0, "cost_after_win_rate": 0.7,
+            "promotion_ready": True,
+        }
+        feedback = {
+            "closed_count": 3, "independent_days": 1,
+            "mean_net_return_pct": -0.75, "cost_after_win_rate": 2 / 3,
+        }
+        calibrated = core.calibrate_pattern(pattern, feedback)
+        self.assertLess(calibrated["execution_size_multiplier"], 1.0)
+        self.assertFalse(calibrated["promotion_ready"])
 
     def test_newer_eventless_minute_does_not_hide_fresh_event_minute(self):
         self.add_history(days=1)

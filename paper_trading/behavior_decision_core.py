@@ -10,13 +10,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 
-VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V3"
-POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V3_RISK_TIERED_LEARNING"
-STRATEGY_ID = "BEHAVIOR_CORE_V3"
+VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V4"
+POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V4_EXECUTION_CALIBRATED"
+STRATEGY_ID = "BEHAVIOR_CORE_V4"
+EXECUTION_CALIBRATION_VERSION = "PAPER_EXECUTION_CALIBRATION_V1"
 HORIZON_MINUTES = 240
 # Exploration gates only establish a testable, cost-positive PAPER hypothesis.
 # They are deliberately separate from the evidence required to trust/promote it.
@@ -26,6 +28,9 @@ MIN_PATTERN_SAMPLES = 30
 MIN_INDEPENDENT_DAYS = 3
 MIN_COST_AFTER_WIN_RATE = 0.55
 MIN_MEAN_NET_EDGE_PCT = 0.05
+MIN_EXECUTION_TRADES_FOR_PROMOTION = 10
+MIN_EXECUTION_DAYS_FOR_PROMOTION = 3
+EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
 ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
@@ -90,7 +95,123 @@ def ensure_tables(con):
             real_order_allowed INTEGER NOT NULL DEFAULT 0,
             UNIQUE(core_version,event_id,instrument,evidence_minute_end_ms,rejection_reason)
         );
+        CREATE TABLE IF NOT EXISTS paper_behavior_execution_calibrations (
+            calibration_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            calibration_version TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            pattern_key TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            closed_count INTEGER NOT NULL,
+            independent_days INTEGER NOT NULL,
+            cutoff_position_id INTEGER NOT NULL,
+            mean_net_return_pct REAL NOT NULL,
+            cost_after_win_rate REAL NOT NULL,
+            evidence_json TEXT NOT NULL,
+            real_order_allowed INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(calibration_version,event_kind,pattern_key,direction,
+                   closed_count,cutoff_position_id)
+        );
     """)
+
+
+def execution_feedback(con, now=None):
+    """Summarize only matured, cost-after outcomes from this decision core."""
+    now = now or datetime.now(timezone.utc)
+    tables = {row[0] for row in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    required = {"paper_agent_positions", "paper_behavior_decisions"}
+    if not required.issubset(tables):
+        return {}
+    rows = con.execute("""
+        SELECT d.event_kind,d.pattern_key,p.direction,p.position_id,p.exit_time,
+               100.0*p.net_pnl/p.notional
+        FROM paper_agent_positions p
+        JOIN paper_behavior_decisions d ON d.decision_id=p.decision_reference_id
+        WHERE p.decision_source='MARKET_BEHAVIOR_CORE'
+          AND p.status='CLOSED' AND p.evidence_eligible=1
+          AND p.net_pnl IS NOT NULL AND p.notional>0 AND p.exit_time<=?
+        ORDER BY p.position_id
+    """, (iso(now),)).fetchall()
+    grouped = defaultdict(list)
+    for event_kind, pattern_key, direction, position_id, exit_time, net_return in rows:
+        grouped[(str(event_kind), str(pattern_key), str(direction))].append({
+            "position_id": int(position_id), "exit_time": str(exit_time),
+            "net_return_pct": float(net_return),
+        })
+    feedback = {}
+    for key, samples in grouped.items():
+        returns = [sample["net_return_pct"] for sample in samples]
+        days = {
+            datetime.fromisoformat(sample["exit_time"].replace("Z", "+00:00")).date()
+            for sample in samples
+        }
+        evidence = {
+            "basis": "OWN_CLOSED_PAPER_TRADES_NET_AFTER_ALL_EXECUTION_COSTS",
+            "event_kind": key[0], "pattern_key": key[1], "direction": key[2],
+            "closed_count": len(samples), "independent_days": len(days),
+            "mean_net_return_pct": statistics.fmean(returns),
+            "cost_after_win_rate": statistics.fmean(value > 0 for value in returns),
+            "cutoff_position_id": max(sample["position_id"] for sample in samples),
+            "outcome_cutoff_at": iso(now), "real_orders": False,
+        }
+        con.execute("""INSERT OR IGNORE INTO paper_behavior_execution_calibrations(
+            created_at,calibration_version,event_kind,pattern_key,direction,
+            closed_count,independent_days,cutoff_position_id,mean_net_return_pct,
+            cost_after_win_rate,evidence_json,real_order_allowed
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,0)""", (
+            iso(now), EXECUTION_CALIBRATION_VERSION, key[0], key[1], key[2],
+            evidence["closed_count"], evidence["independent_days"],
+            evidence["cutoff_position_id"], evidence["mean_net_return_pct"],
+            evidence["cost_after_win_rate"],
+            json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+        ))
+        feedback[key] = evidence
+    return feedback
+
+
+def calibrate_pattern(pattern, feedback):
+    """Blend own execution evidence without allowing a tiny sample to veto learning."""
+    calibrated = dict(pattern)
+    calibrated["observational_promotion_ready"] = bool(pattern["promotion_ready"])
+    if not feedback:
+        calibrated.update({
+            "execution_feedback": None,
+            "calibrated_net_edge_pct": pattern["mean_net_edge_pct"],
+            "calibrated_win_rate": pattern["cost_after_win_rate"],
+            "execution_size_multiplier": 1.0,
+        })
+        calibrated["promotion_ready"] = False
+        calibrated["ready"] = False
+        return calibrated
+    count = feedback["closed_count"]
+    weight = count / (count + EXECUTION_PRIOR_STRENGTH)
+    edge = ((1.0 - weight) * pattern["mean_net_edge_pct"]
+            + weight * feedback["mean_net_return_pct"])
+    win_rate = ((1.0 - weight) * pattern["cost_after_win_rate"]
+                + weight * feedback["cost_after_win_rate"])
+    win_signal = 2.0 * feedback["cost_after_win_rate"] - 1.0
+    expectancy_signal = math.tanh(feedback["mean_net_return_pct"] / 0.5)
+    performance_signal = 0.5 * win_signal + 0.5 * expectancy_signal
+    size_multiplier = max(0.5, min(1.25, 1.0 + weight * performance_signal))
+    execution_confirmed = (
+        count >= MIN_EXECUTION_TRADES_FOR_PROMOTION
+        and feedback["independent_days"] >= MIN_EXECUTION_DAYS_FOR_PROMOTION
+        and edge >= MIN_MEAN_NET_EDGE_PCT
+        and win_rate >= MIN_COST_AFTER_WIN_RATE
+    )
+    calibrated.update({
+        "execution_feedback": feedback,
+        "execution_feedback_weight": weight,
+        "execution_performance_signal": performance_signal,
+        "calibrated_net_edge_pct": edge,
+        "calibrated_win_rate": win_rate,
+        "execution_size_multiplier": size_multiplier,
+        "promotion_ready": bool(pattern["promotion_ready"] and execution_confirmed),
+    })
+    calibrated["ready"] = calibrated["promotion_ready"]
+    return calibrated
 
 
 def settle_missed_opportunities(con):
@@ -236,7 +357,14 @@ def learned_patterns(con, now=None):
             # never whether a small PAPER learning experiment may be opened.
             "ready": promotion_ready,
         }
-    return output
+    own_results = execution_feedback(con, now)
+    return {
+        key: calibrate_pattern(
+            pattern,
+            own_results.get((key[0], key[1], pattern["direction"])),
+        )
+        for key, pattern in output.items()
+    }
 
 
 def _latest_risk(con):
@@ -281,7 +409,9 @@ def evaluate(con, now=None):
         "promotion_gates": {"minimum_samples": MIN_PATTERN_SAMPLES,
                             "minimum_independent_days": MIN_INDEPENDENT_DAYS,
                             "minimum_cost_after_win_rate": MIN_COST_AFTER_WIN_RATE,
-                            "minimum_mean_net_edge_pct": MIN_MEAN_NET_EDGE_PCT},
+                            "minimum_mean_net_edge_pct": MIN_MEAN_NET_EDGE_PCT,
+                            "minimum_own_execution_trades": MIN_EXECUTION_TRADES_FOR_PROMOTION,
+                            "minimum_own_execution_days": MIN_EXECUTION_DAYS_FOR_PROMOTION},
         "unified_forecast_used": False, "real_orders": False,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -405,7 +535,7 @@ def _candidate_for_hypothesis(
             iso(now), VERSION, event_id, kind, instrument, symbol, latest,
             learned["direction"], hypothesis_pattern,
             "RISK_COVERAGE_MISSING" if not risk else "RISK_VETO",
-            learned["mean_net_edge_pct"], learned["sample_count"],
+            learned["calibrated_net_edge_pct"], learned["sample_count"],
             learned["independent_days"],
         ))
         return []
@@ -446,6 +576,13 @@ def _candidate_for_hypothesis(
             "quality_gates": json.loads(quality_json),
         },
         "learned_pattern": learned,
+        "execution_calibration": {
+            "feedback": learned["execution_feedback"],
+            "feedback_weight": learned.get("execution_feedback_weight", 0.0),
+            "calibrated_net_edge_pct": learned["calibrated_net_edge_pct"],
+            "calibrated_win_rate": learned["calibrated_win_rate"],
+            "size_multiplier": learned["execution_size_multiplier"],
+        },
         "experiment_tier": ("PROMOTION_READY" if learned["promotion_ready"]
                             else "EXPLORATORY_LEARNING"),
         "risk": risk, "capabilities_used": capabilities,
@@ -464,7 +601,7 @@ def _candidate_for_hypothesis(
     DO NOTHING""", (
         iso(now), VERSION, POLICY_VERSION, instrument, symbol, latest,
         HORIZON_MINUTES, learned["direction"], kind, hypothesis_pattern,
-        learned["mean_net_edge_pct"], learned["cost_after_win_rate"],
+        learned["calibrated_net_edge_pct"], learned["calibrated_win_rate"],
         learned["sample_count"], learned["independent_days"],
         json.dumps(evidence, ensure_ascii=False, sort_keys=True), digest,
         ("PROMOTION_READY_PAPER_EXPERIMENT" if learned["promotion_ready"]
@@ -484,12 +621,13 @@ def _candidate_for_hypothesis(
     return [{
         "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
         "symbol": symbol, "instrument": instrument, "horizon": 4,
-        "direction": learned["direction"], "confidence": learned["cost_after_win_rate"],
-        "expected_net_edge_pct": learned["mean_net_edge_pct"],
+        "direction": learned["direction"], "confidence": learned["calibrated_win_rate"],
+        "expected_net_edge_pct": learned["calibrated_net_edge_pct"],
+        "execution_size_multiplier": learned["execution_size_multiplier"],
         "experiment_tier": evidence["experiment_tier"],
         "current_price": float(mid), "target_price": float(mid) * (
             1 + (1 if learned["direction"] == "LONG" else -1)
-            * max(learned["mean_net_edge_pct"], 0.01) / 100.0),
+            * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
         "risk_cap_pct": risk["cap_pct"], "evidence": evidence,
         "evidence_sha256": digest,
     }]
