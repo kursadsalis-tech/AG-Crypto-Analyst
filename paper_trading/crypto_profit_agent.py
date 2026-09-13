@@ -873,9 +873,12 @@ def report_window(now):
     report_date = local.date()
     end_local = datetime.combine(
         report_date, datetime.min.time(), tzinfo=ISTANBUL
-    ) + timedelta(hours=3)
+    ) + timedelta(hours=11, minutes=10)
     if local < end_local:
-        return None
+        # A persistent timer may recover after midnight but before today's
+        # deadline. Recover the latest closed window, never a future report.
+        report_date -= timedelta(days=1)
+        end_local -= timedelta(days=1)
     start_local = end_local - timedelta(days=1)
     return (
         report_date.isoformat(),
@@ -1093,11 +1096,11 @@ def markdown_report(payload):
 
 
 def _confirm_remote_report_delivery(con, report_date):
-    """Mark delivery complete only if that exact state reaches the remote mirror."""
+    """Confirm persistence only; persistence is not recipient delivery."""
     mirrored_at = iso(utcnow())
     con.execute("""
         UPDATE paper_agent_daily_reports SET remote_mirror_status='HEALTHY',
-            remote_mirrored_at=?,delivery_complete=1 WHERE report_date=?
+            remote_mirrored_at=? WHERE report_date=?
     """, (mirrored_at, report_date))
     con.commit()
     if con.remote_mirror_result.succeeded_for("paper_agent_daily_reports"):
@@ -1105,7 +1108,7 @@ def _confirm_remote_report_delivery(con, report_date):
     # The local delivery flag must never claim success when the remote write failed.
     sqlite3.Connection.execute(con, """
         UPDATE paper_agent_daily_reports SET remote_mirror_status='PENDING',
-            remote_mirrored_at=NULL,delivery_complete=0 WHERE report_date=?
+            remote_mirrored_at=NULL WHERE report_date=?
     """, (report_date,))
     sqlite3.Connection.commit(con)
     return False
@@ -1122,9 +1125,7 @@ def maybe_daily_report(con, now):
     """, (report_date,)).fetchone()
     if existing:
         payload = json.loads(existing[0])
-        payload["delivery_complete"] = bool(existing[1]) or _confirm_remote_report_delivery(
-            con, report_date
-        )
+        payload["delivery_complete"] = bool(existing[1])
         return payload
     payload = build_daily_report(con, report_date, start, end)
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1139,10 +1140,7 @@ def maybe_daily_report(con, now):
         json.dumps(payload, ensure_ascii=False),
     ))
     con.commit()
-    payload["delivery_complete"] = (
-        con.remote_mirror_result.succeeded_for("paper_agent_daily_reports")
-        and _confirm_remote_report_delivery(con, report_date)
-    )
+    payload["delivery_complete"] = False
     return payload
 
 
@@ -1162,7 +1160,7 @@ def render(result):
     if result["daily_report"]:
         report = result["daily_report"]
         print(
-            f"03:00 raporu: {report['report_date']} | "
+            f"11:15 raporu: {report['report_date']} | "
             f"açılan={report['opened_count']} | kapanan={report['closed_count']} | "
             f"net={report['daily_net_pnl']:+.2f} USDT"
         )
@@ -1260,8 +1258,10 @@ def run_behavior_selection(now=None):
                 "promotion_allowed": False,
             }
         learning["new_experience_reviews"] = new_experience_reviews
+        selection = con.execute("SELECT core_status FROM paper_behavior_selection_runs ORDER BY run_id DESC LIMIT 1").fetchone()
         return {
             "status": "SUCCESS", "selected": selected,
+            "decision_status": selection[0] if selection else "NO_SELECTION_EVIDENCE",
             "filled": filled_before + filled_now,
             "cancelled": cancelled_before + cancelled_now,
             "closed": closed, "trade_learning": learning,

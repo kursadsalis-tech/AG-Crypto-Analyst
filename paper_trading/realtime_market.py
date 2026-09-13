@@ -1,4 +1,4 @@
-"""Normalized OKX public WebSocket events for SPOT and SWAP PAPER only."""
+"""Normalized official exchange WebSocket events for PAPER position management."""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +12,7 @@ import websockets
 
 
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
+BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
 MAX_EVENT_AGE_MS = 2_000
 
 
@@ -98,6 +99,68 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
     return updates
 
 
+def apply_binance_message(states: dict[str, LiveState], message: dict, received_ms: int):
+    """Normalize Binance Spot ticker, depth and aggregate-trade events."""
+    event = message.get("e")
+    symbol = str(message.get("s") or "").upper()
+    if event not in {"24hrTicker", "depthUpdate", "aggTrade"} or not symbol:
+        return []
+    timestamp = int(message.get("E", 0))
+    if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
+        return []
+    state = states.setdefault(symbol, LiveState(symbol, "SPOT"))
+    if event == "24hrTicker":
+        state.last_price = _positive(message["c"])
+        state.best_bid = _positive(message["b"])
+        state.best_ask = _positive(message["a"])
+        bid_value = state.best_bid * _positive(message["B"])
+        ask_value = state.best_ask * _positive(message["A"])
+        total = bid_value + ask_value
+        state.visible_quote_volume = total
+        state.book_imbalance = (bid_value - ask_value) / total
+    elif event == "depthUpdate":
+        bids, asks = message.get("b") or [], message.get("a") or []
+        bid_value = sum(_positive(level[0]) * _positive(level[1]) for level in bids)
+        ask_value = sum(_positive(level[0]) * _positive(level[1]) for level in asks)
+        total = bid_value + ask_value
+        if total <= 0:
+            return []
+        state.book_imbalance = (bid_value - ask_value) / total
+        state.visible_quote_volume = total
+        if bids:
+            state.best_bid = _positive(bids[0][0])
+        if asks:
+            state.best_ask = _positive(asks[0][0])
+    else:
+        notional = _positive(message["p"]) * _positive(message["q"])
+        # Binance `m` means the buyer is the maker, hence the aggressive side
+        # is SELL.  This preserves taker-flow semantics used by the policy.
+        if bool(message.get("m")):
+            state.trade_sell_notional += notional
+        else:
+            state.trade_buy_notional += notional
+        total = state.trade_buy_notional + state.trade_sell_notional
+        state.taker_imbalance = (
+            (state.trade_buy_notional - state.trade_sell_notional) / total
+            if total else None
+        )
+    state.market_timestamp_ms = timestamp
+    return [state]
+
+
+def binance_subscription_params(symbols):
+    normalized = {
+        (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
+        for item in symbols
+    }
+    return [
+        f"{symbol.lower()}@{channel}"
+        for symbol, market_type in sorted(normalized)
+        if market_type == "SPOT"
+        for channel in ("ticker", "aggTrade")
+    ]
+
+
 def subscription_args(symbols):
     normalized = {
         (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
@@ -110,15 +173,13 @@ def subscription_args(symbols):
     ]
 
 
-async def stream(symbols, on_state, stop_event, health_callback=None):
+async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
     """Reconnect forever; never expands PAPER authority or persists raw events."""
     context = ssl.create_default_context(cafile=certifi.where())
     states = {}
     backoff = 1
     while not stop_event.is_set():
         if not symbols():
-            if health_callback:
-                health_callback("IDLE", None)
             await asyncio.sleep(1)
             continue
         try:
@@ -165,3 +226,72 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
                 health_callback("DISCONNECTED", type(exc).__name__)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
+
+
+async def _binance_spot_stream(symbols, on_state, stop_event, health_callback=None):
+    context = ssl.create_default_context(cafile=certifi.where())
+    states, backoff = {}, 1
+    while not stop_event.is_set():
+        desired = binance_subscription_params(symbols())
+        if not desired:
+            await asyncio.sleep(1)
+            continue
+        try:
+            async with websockets.connect(
+                BINANCE_SPOT_WS_URL, ssl=context, open_timeout=10,
+                ping_interval=20, ping_timeout=10, max_queue=1024,
+            ) as socket:
+                active = desired
+                await socket.send(json.dumps({"method": "SUBSCRIBE", "params": active, "id": 1}))
+                backoff = 1
+                if health_callback:
+                    health_callback("CONNECTED", None)
+                while not stop_event.is_set():
+                    desired = binance_subscription_params(symbols())
+                    removed, added = sorted(set(active) - set(desired)), sorted(set(desired) - set(active))
+                    if removed:
+                        await socket.send(json.dumps({"method": "UNSUBSCRIBE", "params": removed, "id": 2}))
+                    if added:
+                        await socket.send(json.dumps({"method": "SUBSCRIBE", "params": added, "id": 3}))
+                    active = desired
+                    try:
+                        raw = await asyncio.wait_for(socket.recv(), timeout=1)
+                    except asyncio.TimeoutError:
+                        continue
+                    received_ms = int(time.time() * 1000)
+                    message = json.loads(raw)
+                    if message.get("code") is not None:
+                        if health_callback:
+                            health_callback("DEGRADED", f"BINANCE_SUBSCRIPTION_ERROR_{message['code']}")
+                        continue
+                    for state in apply_binance_message(states, message, received_ms):
+                        await on_state(state, received_ms)
+        except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
+                websockets.WebSocketException) as exc:
+            if health_callback:
+                health_callback("DISCONNECTED", type(exc).__name__)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+
+
+async def stream(symbols, on_state, stop_event, health_callback=None):
+    """Manage SPOT on Binance and legacy USD-M positions on OKX concurrently."""
+    def spot_symbols():
+        return [item for item in symbols()
+                if not isinstance(item, str) and tuple(item)[1] == "SPOT"]
+
+    def swap_symbols():
+        return [item for item in symbols()
+                if isinstance(item, str) or tuple(item)[1] != "SPOT"]
+
+    async def idle_health():
+        while not stop_event.is_set():
+            if not symbols() and health_callback:
+                health_callback("IDLE", None)
+            await asyncio.sleep(1)
+
+    await asyncio.gather(
+        _binance_spot_stream(spot_symbols, on_state, stop_event, health_callback),
+        _okx_stream(swap_symbols, on_state, stop_event, health_callback),
+        idle_health(),
+    )

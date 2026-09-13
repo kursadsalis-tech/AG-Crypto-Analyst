@@ -130,10 +130,20 @@ def initialize_open_positions(con, now):
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
         """, (symbol, entry_time)).fetchone()
-        if not risk:
+        stale_recovery = not risk and now >= parse(con.execute(
+            "SELECT due_time FROM paper_agent_positions WHERE position_id=?",
+            (position_id,),
+        ).fetchone()[0])
+        if not risk and not stale_recovery:
             blocked.append((int(position_id), "MISSING_ENTRY_RISK_SNAPSHOT"))
             continue
-        state = initialize(direction, float(entry_price), float(risk[0]))
+        # A missing entry snapshot must block a new/active thesis, but it must
+        # not make an already expired PAPER position immortal.  The stop value
+        # is immaterial here because the first fresh tick is forced through the
+        # maximum-hold exit; MAX_STOP_PCT is used only to create the accounting
+        # state required for that audited close.
+        stop_reference = float(risk[0]) if risk else 5.0
+        state = initialize(direction, float(entry_price), stop_reference)
         con.execute("""INSERT INTO paper_position_management(
             position_id,manager_version,initialized_at,last_market_at,
             stop_distance_pct,current_stop_price,best_price,original_quantity,
@@ -145,7 +155,9 @@ def initialize_open_positions(con, now):
             entry_time, entry_time,
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
-               "ENTRY_RISK_SNAPSHOT", float(entry_price), None, 0, 0, 0, 0,
+               ("STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
+                if stale_recovery else "ENTRY_RISK_SNAPSHOT"),
+               float(entry_price), None, 0, 0, 0, 0,
                None, state.stop_price, {"risk_stop_pct": state.stop_distance_pct})
         initialized += 1
     con.commit()
