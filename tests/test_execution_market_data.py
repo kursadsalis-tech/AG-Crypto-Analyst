@@ -1,169 +1,121 @@
+import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from paper_trading import execution_market_data as market
+from paper_trading.execution_contract import ExecutionRules, OrderIntent
+from paper_trading.execution_model import execute_paper
+
+NOW = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+MS = int(NOW.timestamp() * 1000)
 
 
 class ExecutionMarketDataTests(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
+        self.addCleanup(self.con.close)
+        clock = patch.object(market, "datetime", wraps=datetime)
+        self.clock = clock.start()
+        self.clock.now.return_value = NOW
+        self.addCleanup(clock.stop)
+
+    def response(self, **overrides):
+        row = {"symbol": "DYNAMICUSDT", "time": MS,
+               "bidPrice": "99", "askPrice": "101", "bidQty": "10000", "askQty": "20000",
+               "lastPrice": "777"}
+        row.update(overrides)
+        response = Mock()
+        response.json.return_value = row
+        return response
+
+    def capture(self, purpose="ENTRY", observed_at=NOW):
+        return market.capture_reference(
+            self.con, position_id=1, symbol="DYNAMICUSDT", expected=NOW,
+            purpose=purpose, observed_at=observed_at, side="BUY",
+            market_type="USD_M_PERPETUAL",
+        )
+
+    def test_usdm_uses_selected_book_side_and_its_visible_size(self):
+        with patch.object(market.requests, "get", return_value=self.response()) as get:
+            buy = market.fetch_executable_quote("DYNAMICUSDT", "USD_M_PERPETUAL", "BUY")
+            sell = market.fetch_executable_quote("DYNAMICUSDT", "USD_M_PERPETUAL", "SELL")
+        self.assertEqual((buy.reference_price, buy.available_quote_volume), (101, 2020000))
+        self.assertEqual((sell.reference_price, sell.available_quote_volume), (99, 990000))
+        self.assertEqual(buy.quote_timestamp_ms, MS)
+        self.assertEqual(get.call_args.args[0], "https://fapi.binance.com/fapi/v1/ticker/bookTicker")
+
+    def test_retry_acquires_new_quote_instead_of_reusing_frozen_reference(self):
         market.ensure_table(self.con)
-        self.expected = datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc)
-
-    def tearDown(self):
-        self.con.close()
-
-    def response(self, payload):
-        result = Mock()
-        result.raise_for_status.return_value = None
-        result.json.return_value = payload
-        return result
-
-    def source_responses(self, okx_row, binance_row):
-        def get(url, **kwargs):
-            if url == market.OKX_CANDLES_URL:
-                return self.response({"code": "0", "data": [okx_row]})
-            if url == market.BINANCE_SPOT_KLINES_URL:
-                return self.response([binance_row])
-            raise AssertionError(url)
-        return get
-
-    def ticker_responses(self, okx_ticker, binance_ticker):
-        def get(url, **kwargs):
-            if url == market.OKX_TICKER_URL:
-                return self.response({"code": "0", "data": [okx_ticker]})
-            if url == market.BINANCE_SPOT_TICKER_URL:
-                return self.response(binance_ticker)
-            raise AssertionError(url)
-        return get
-
-    def test_dynamic_symbol_entry_is_captured_from_usdm_and_frozen(self):
-        okx_ticker = {"last": "0.50", "volCcy24h": "720000000",
-                      "ts": str(int(self.expected.timestamp() * 1000))}
-        binance_ticker = {"symbol": "CRVUSDT", "price": "0.505"}
-        with patch.object(market.requests, "get", side_effect=self.ticker_responses(
-            okx_ticker, binance_ticker
-        )) as get:
-            first = market.capture_reference(
-                self.con, position_id=41, symbol="CRVUSDT",
-                expected=self.expected, purpose="ENTRY",
-                observed_at=self.expected + timedelta(seconds=10),
-            )
-        self.assertEqual(first, (self.expected, 0.5, 250000.0))
+        self.con.execute("""INSERT INTO paper_execution_market_observations
+            VALUES(1,'ENTRY','DYNAMICUSDT',?,?,?,777,100000,'OLD_LAST','hash',0)""",
+            (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()))
+        with patch.object(market.requests, "get", side_effect=[self.response(), self.response(askPrice="102")]) as get:
+            first, second = self.capture(), self.capture()
         self.assertEqual(get.call_count, 2)
-        self.assertEqual(get.call_args.kwargs["params"]["symbol"], "CRVUSDT")
-        with patch.object(market, "fetch_reference", side_effect=AssertionError(
-            "immutable observation must be reused"
-        )):
-            second = market.capture_reference(
-                self.con, position_id=41, symbol="CRVUSDT",
-                expected=self.expected, purpose="ENTRY",
-                observed_at=self.expected + timedelta(minutes=5),
-            )
-        self.assertEqual(second, first)
-        stored = self.con.execute("""SELECT source,real_order_allowed,
-            length(payload_sha256) FROM paper_execution_market_observations""").fetchone()
-        self.assertEqual(stored, (
-            "OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK", 0, 64
-        ))
+        self.assertEqual((first.best_ask, second.best_ask), (101, 102))
+        self.assertEqual(self.con.execute("SELECT reference_price FROM paper_execution_market_observations").fetchone()[0], 777)
 
-    def test_late_entry_cannot_be_backfilled_with_future_liquidity(self):
-        with patch.object(market, "fetch_reference", side_effect=AssertionError(
-            "late entry must remain unavailable"
-        )):
-            result = market.capture_reference(
-                self.con, position_id=42, symbol="DASHUSDT",
-                expected=self.expected, purpose="ENTRY",
-                observed_at=self.expected + timedelta(minutes=11),
-            )
-        self.assertIsNone(result)
+    def test_due_close_acquires_current_book_never_historical_candle(self):
+        self.clock.now.return_value = NOW + timedelta(seconds=10)
+        with patch.object(market.requests, "get", return_value=self.response(time=MS+10000)) as get, \
+                patch.object(market, "fetch_reference", side_effect=AssertionError("no candle")):
+            result = self.capture("EXIT", NOW+timedelta(seconds=10))
+        self.assertEqual(result.quote_timestamp_ms, MS+10000)
+        self.assertEqual(get.call_count, 1)
 
-    def test_spot_entry_uses_direct_spot_price_and_is_frozen(self):
-        payload = {
-            "symbol": "BTCUSDT", "lastPrice": "100", "quoteVolume": "1440000",
-            "closeTime": int(self.expected.timestamp() * 1000),
-        }
-        okx = {"code": "0", "data": [{
-            "last": "100", "volCcy24h": "14400",
-            "ts": str(int(self.expected.timestamp() * 1000)),
-        }]}
-        responses = {
-            market.BINANCE_SPOT_24H_URL: self.response(payload),
-            market.OKX_TICKER_URL: self.response(okx),
-        }
-        with patch.object(
-            market.requests, "get", side_effect=lambda url, **_: responses[url]
-        ) as get:
-            result = market.capture_reference(
-                self.con, position_id=44, symbol="BTCUSDT",
-                expected=self.expected, purpose="ENTRY",
-                observed_at=self.expected + timedelta(seconds=2),
-                market_type="SPOT",
-            )
-        self.assertEqual(result, (self.expected, 100.0, 1000.0))
-        self.assertEqual(get.call_count, 2)
-        stored = self.con.execute("""SELECT source,real_order_allowed
-            FROM paper_execution_market_observations WHERE position_id=44""").fetchone()
-        self.assertEqual(stored, (
-            "BINANCE_SPOT_24H_TICKER_WITH_OKX_SPOT_MANAGEMENT_CHECK", 0,
-        ))
+    def test_late_or_not_yet_due_entry_does_not_backfill(self):
+        with patch.object(market, "fetch_executable_quote", side_effect=AssertionError("no backfill")):
+            self.assertIsNone(self.capture(observed_at=NOW+timedelta(minutes=11)))
+            self.assertIsNone(self.capture(observed_at=NOW-timedelta(seconds=1)))
 
-    def test_spot_entry_rejects_missing_okx_management_instrument(self):
-        payload = {
-            "symbol": "LAUSDT", "lastPrice": "0.06", "quoteVolume": "1440000",
-            "closeTime": int(self.expected.timestamp() * 1000),
-        }
-        responses = {
-            market.BINANCE_SPOT_24H_URL: self.response(payload),
-            market.OKX_TICKER_URL: self.response({"code": "51001", "data": []}),
-        }
-        with patch.object(
-            market.requests, "get", side_effect=lambda url, **_: responses[url]
-        ):
-            with self.assertRaises(market.SpotManagementVenueUnavailable):
-                market.capture_reference(
-                    self.con, position_id=45, symbol="LAUSDT",
-                    expected=self.expected, purpose="ENTRY",
-                    observed_at=self.expected + timedelta(seconds=2),
-                    market_type="SPOT",
-                )
+    def test_http_failure_has_no_okx_or_last_fallback(self):
+        with patch.object(market.requests, "get", side_effect=market.requests.ConnectionError) as get:
+            with self.assertRaisesRegex(ValueError, "SOURCE_UNAVAILABLE"):
+                self.capture()
+        self.assertEqual(get.call_count, 1)
 
-    def test_exit_uses_exact_preceding_usdm_hour_close(self):
-        opened = self.expected - timedelta(hours=1)
-        close = self.expected - timedelta(milliseconds=1)
-        binance_row = [
-            int(opened.timestamp() * 1000), "50", "52", "49", "51",
-            "100", int(close.timestamp() * 1000), "500000", 10,
-            "50", "250000", "0",
-        ]
-        okx_row = [int(opened.timestamp() * 1000), "50", "52", "49", "51",
-                   "100", "400000", "500000", "1"]
-        with patch.object(market.requests, "get", side_effect=self.source_responses(
-            okx_row, binance_row
-        )):
-            result = market.capture_reference(
-                self.con, position_id=43, symbol="DASHUSDT",
-                expected=self.expected, purpose="EXIT",
-                observed_at=self.expected + timedelta(minutes=2),
-            )
-        self.assertEqual(result, (close, 51.0, 500000.0))
+    def test_timestamp_age_uses_response_observation_not_cycle_start(self):
+        self.clock.now.return_value = NOW + timedelta(seconds=3)
+        with patch.object(market.requests, "get", return_value=self.response()):
+            captured = self.capture()
+        result = execute_paper(OrderIntent("DYNAMICUSDT", "BUY", 100), captured,
+                               ExecutionRules(.001, .01, 5))
+        self.assertEqual(result.reason, "STALE_QUOTE")
+        self.assertIsNone(result.fill)
 
-    def test_cross_source_price_conflict_fails_closed(self):
-        okx_ticker = {"last": "100", "volCcy24h": "100000",
-                      "ts": str(int(self.expected.timestamp() * 1000))}
-        binance_ticker = {"symbol": "CRVUSDT", "price": "110"}
-        with patch.object(market.requests, "get", side_effect=self.ticker_responses(
-            okx_ticker, binance_ticker
-        )):
-            with self.assertRaisesRegex(ValueError, "deviation"):
-                market.fetch_reference("CRVUSDT", self.expected, "ENTRY")
+    def test_missing_side_cannot_be_replaced_by_ticker_last(self):
+        with patch.object(market.requests, "get", return_value=self.response(askPrice=None)):
+            captured = self.capture()
+        result = execute_paper(OrderIntent("DYNAMICUSDT", "BUY", 100), captured,
+                               ExecutionRules(.001, .01, 5))
+        self.assertEqual(result.reason, "MISSING_ASK")
+        self.assertIsNone(result.fill)
 
-    def test_execution_observations_are_local_only(self):
+    def test_spot_uses_timestamped_websocket_sides_not_last(self):
+        socket = Mock()
+        socket.recv.return_value = json.dumps({"e": "24hrTicker", "s": "DYNAMICUSDT", "E": MS,
+                                                "b": "99", "a": "101", "B": "10000", "A": "20000", "c": "777"})
+        with patch("websockets.sync.client.connect") as connect, \
+                patch.object(market.requests, "get", side_effect=AssertionError("no REST fallback")):
+            connect.return_value.__enter__.return_value = socket
+            result = market.fetch_executable_quote("DYNAMICUSDT", "SPOT", "BUY")
+        self.assertEqual((result.best_bid, result.best_ask, result.quote_timestamp_ms), (99, 101, MS))
+        self.assertEqual(result.available_quote_volume, 2020000)
+
+    def test_spot_websocket_outage_fails_closed(self):
+        with patch("websockets.sync.client.connect", side_effect=OSError), \
+                patch.object(market.requests, "get", side_effect=AssertionError("no fallback")):
+            with self.assertRaisesRegex(ValueError, "SOURCE_UNAVAILABLE"):
+                market.fetch_executable_quote("DYNAMICUSDT", "SPOT", "BUY")
+
+    def test_wrong_symbol_response_is_rejected(self):
+        with patch.object(market.requests, "get", return_value=self.response(symbol="WRONGUSDT")):
+            with self.assertRaisesRegex(ValueError, "SYMBOL_MISMATCH"):
+                self.capture()
+
+    def test_execution_observations_remain_local_only(self):
         from database.runtime_store import REMOTE_RUNTIME_TABLES
         self.assertNotIn("paper_execution_market_observations", REMOTE_RUNTIME_TABLES)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertNotIn("paper_position_events", REMOTE_RUNTIME_TABLES)

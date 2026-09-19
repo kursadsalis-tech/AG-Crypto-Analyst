@@ -6,6 +6,14 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from paper_trading import crypto_profit_agent as agent
+from paper_trading.execution_contract import MarketSnapshot, ExecutionRules
+
+
+def quote(at, price=100, market_type="USD_M_PERPETUAL"):
+    ms = int(at.timestamp() * 1000)
+    return MarketSnapshot(price, 1_000_000, observed_at=at.isoformat(),
+                          best_bid=price, best_ask=price, quote_timestamp_ms=ms,
+                          liquidity_timestamp_ms=ms, source="TEST_BOOK", market_type=market_type)
 
 
 NOW = datetime(2026, 9, 4, 12, 2, tzinfo=timezone.utc)
@@ -15,6 +23,11 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         agent.ensure_tables(self.con)
+        self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
+        rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
+        rules_patch.start()
+        self.addCleanup(rules_patch.stop)
+        self.addCleanup(self.con.close)
 
     def candidate(self):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
@@ -106,8 +119,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(gross, 1000)
         planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=(planned, 100.0, 1_000_000.0)):
-            self.assertEqual(agent.fill_pending(self.con, planned), (1, 0))
+                          return_value=quote(planned)):
+            self.assertEqual(agent.fill_pending(self.con, planned, self.metadata), (1, 0))
         cash = self.con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0]
@@ -154,9 +167,9 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
         planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=(planned, 0.5, 1_000_000.0)) as capture:
+                          return_value=quote(planned + timedelta(minutes=2), .5, "SPOT")) as capture:
             filled, cancelled = agent.fill_pending(
-                self.con, planned + timedelta(minutes=2)
+                self.con, planned + timedelta(minutes=2), self.metadata
             )
         self.assertEqual((filled, cancelled), (1, 0))
         self.assertEqual(capture.call_args.kwargs["symbol"], "CRVUSDT")
@@ -178,7 +191,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         with patch.object(agent.execution_market_data, "capture_reference",
                           return_value=None):
             filled, cancelled = agent.fill_pending(
-                self.con, planned + timedelta(minutes=11)
+                self.con, planned + timedelta(minutes=11), self.metadata
             )
         self.assertEqual((filled, cancelled), (0, 1))
         self.assertEqual(
@@ -202,7 +215,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
                 "LAUSDT: OKX Spot management instrument unavailable"
             ),
         ):
-            filled, cancelled = agent.fill_pending(self.con, planned)
+            filled, cancelled = agent.fill_pending(self.con, planned, self.metadata)
         self.assertEqual((filled, cancelled), (0, 1))
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
@@ -211,7 +224,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         )
 
     def test_minute_cycle_skips_heavy_learning_without_new_close(self):
-        with patch.object(agent, "load_execution_metadata", return_value=None), \
+        with patch.object(agent, "connect", return_value=sqlite3.connect(":memory:")), \
+                patch.object(agent, "load_execution_metadata", return_value=None), \
                 patch.object(agent, "fill_pending", return_value=(0, 0)), \
                 patch.object(agent, "settle_open", return_value=0), \
                 patch.object(agent, "select_new_positions", return_value=0), \
@@ -223,12 +237,12 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(result["trade_learning"]["status"], "NO_NEW_CLOSED_TRADE")
 
     def test_infeasible_exchange_rules_reject_before_position_is_written(self):
-        rejected = SimpleNamespace(fill=None, reason="EXCHANGE_FILTER_REJECTION")
+        rejected = SimpleNamespace(status="REJECTED", reason="EXCHANGE_FILTER_REJECTION")
         rules = SimpleNamespace(quantity_step=1000.0, price_tick=0.1, min_notional=5.0)
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [self.candidate()], "review": {},
         }), patch.object(agent, "rules_for", return_value=rules), patch.object(
-            agent, "simulated_decision", return_value=rejected,
+            agent, "estimate_order_rules", return_value=rejected,
         ):
             selected = agent.select_new_positions(
                 self.con, NOW, exchange_metadata={"SPOT": object()},

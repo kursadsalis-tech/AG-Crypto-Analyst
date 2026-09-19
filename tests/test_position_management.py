@@ -54,8 +54,11 @@ class PositionManagementTests(unittest.TestCase):
         return LiveState(
             "BTCUSDT", last_price=price, best_bid=price-.01, best_ask=price+.01,
             book_imbalance=book, taker_imbalance=taker,
-            visible_quote_volume=1_000_000,
+            visible_quote_volume=1_000_000, bid_quote_volume=1_000_000,
+            ask_quote_volume=1_000_000, quote_source="TEST_BOOK",
             market_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
+            quote_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
+            liquidity_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
         )
 
     def test_initializes_stop_from_entry_risk_snapshot(self):
@@ -153,6 +156,7 @@ class PositionManagementTests(unittest.TestCase):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         illiquid = self.live(98, 2)
         illiquid.visible_quote_volume = .01
+        illiquid.bid_quote_volume = .01
         first = process_market_state(
             self.con, illiquid, ENTRY + timedelta(seconds=2), self.rules,
         )
@@ -196,8 +200,11 @@ class PositionManagementTests(unittest.TestCase):
         live = LiveState(
             "BTCUSDT", last_price=77680, best_bid=77679.9, best_ask=77680.1,
             book_imbalance=.1, taker_imbalance=.1,
-            visible_quote_volume=1_000_000,
+            visible_quote_volume=1_000_000, bid_quote_volume=1_000_000,
+            ask_quote_volume=1_000_000, quote_source="TEST_BOOK",
             market_timestamp_ms=int((ENTRY + timedelta(seconds=2)).timestamp()*1000),
+            quote_timestamp_ms=int((ENTRY + timedelta(seconds=2)).timestamp()*1000),
+            liquidity_timestamp_ms=int((ENTRY + timedelta(seconds=2)).timestamp()*1000),
         )
         result = process_market_state(self.con, live, ENTRY + timedelta(seconds=2),
                                       self.rules)
@@ -219,8 +226,8 @@ class PositionManagementTests(unittest.TestCase):
         row = self.con.execute("""SELECT status,liquidated,liquidation_fee,exit_price
             FROM paper_agent_positions""").fetchone()
         self.assertEqual(row[:2], ("CLOSED", 1))
-        self.assertAlmostEqual(row[2], 10.0)
-        self.assertEqual(row[3], 80)
+        self.assertLess(row[3], 78.99)
+        self.assertAlmostEqual(row[2], 10 * row[3] * .0125)
 
     def test_opposing_flow_cannot_invalidate_news_only_thesis(self):
         self.con.execute("""UPDATE paper_agent_positions SET

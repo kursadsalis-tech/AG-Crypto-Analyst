@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import math
 from datetime import datetime, timezone
 
-from paper_trading.execution_model import simulated_decision
-from paper_trading.execution_contract import ExecutionFill
+from paper_trading.execution_model import execute_paper, quote_evidence, validate_quote
+from paper_trading.execution_contract import ExecutionFill, ExecutionDecision, MarketSnapshot, OrderIntent
 from paper_trading.futures_costs import (
     FuturesCostError, directional_funding_payment, liquidation_breached,
 )
@@ -85,6 +86,9 @@ def ensure_tables(con):
             UNIQUE(position_id,start_at,end_at,quantity)
         );
     """)
+    event_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_position_events)")}
+    if "evidence_json" not in event_columns:
+        con.execute("ALTER TABLE paper_position_events ADD COLUMN evidence_json TEXT")
     columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_position_management)"
     )}
@@ -167,18 +171,50 @@ def initialize_open_positions(con, now):
 def _event(con, position_id, market_at, observed_at, event_type, reason,
            reference_price, fill_price, fill_quantity, fee, spread, slippage,
            stop_before, stop_after, evidence):
-    digest = hashlib.sha256(json.dumps(
-        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-    ).encode()).hexdigest()
+    def safe(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {key: safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [safe(item) for item in value]
+        return value
+    evidence_json = json.dumps(safe(evidence), sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True)
+    digest = hashlib.sha256(evidence_json.encode()).hexdigest()
     con.execute("""INSERT OR IGNORE INTO paper_position_events(
         position_id,market_at,observed_at,event_type,reason,reference_price,
         fill_price,fill_quantity,fee,spread_cost,slippage_cost,stop_before,
-        stop_after,evidence_sha256,real_order_allowed
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
+        stop_after,evidence_sha256,evidence_json,real_order_allowed
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
         position_id, iso(market_at), iso(observed_at), event_type, reason,
         reference_price, fill_price, fill_quantity, fee, spread, slippage,
-        stop_before, stop_after, digest,
+        stop_before, stop_after, digest, evidence_json,
     ))
+
+
+def record_execution(con, position_id, observed_at, purpose, symbol, side,
+                     market_type, decision, market=None):
+    evidence = {
+        "observed_at": iso(observed_at), "quote_timestamp_ms": None,
+        "best_bid": None, "best_ask": None,
+        "selected_executable_side": "ASK" if side == "BUY" else "BID",
+        "executable_reference_price": None, "final_simulated_fill_price": None,
+        "quote_age_ms": None, "fee": 0, "slippage": 0, "quantity": 0,
+        "notional": 0, "partial": False,
+        **decision.evidence,
+    }
+    evidence.update({"symbol": symbol, "side": side, "market_type": market_type,
+                     "decision_at": iso(observed_at), "real_order_allowed": 0})
+    evidence.setdefault("status", decision.status)
+    evidence.setdefault("rejection_reason", decision.reason if not decision.fill else None)
+    fill = decision.fill
+    reference = evidence.get("executable_reference_price") or 0.0
+    _event(con, position_id, observed_at, observed_at,
+           purpose + ("_FILLED" if fill else "_REJECTED"), decision.reason,
+           reference, fill.price if fill else None, fill.quantity if fill else 0,
+           fill.fee if fill else 0, fill.spread_cost if fill else 0,
+           fill.slippage_cost if fill else 0, None, None, evidence)
 
 
 def process_market_state(con, live, observed_at, rules, funding_loader=None):
@@ -266,8 +302,6 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         con.commit()
         return {"status": decision.action, "reason": decision.reason}
 
-    if live.visible_quote_volume is None and not forced_liquidation:
-        return {"status": "BLOCKED", "reason": "MISSING_VISIBLE_LIQUIDITY"}
     retry_seconds = max(0.1, float(os.getenv("AGCA_PAPER_EXIT_RETRY_SECONDS", "1")))
     if (last_exit_attempt_at is not None and
             (market_at - parse(last_exit_attempt_at)).total_seconds() < retry_seconds):
@@ -275,8 +309,49 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                     (iso(market_at), position_id))
         con.commit()
         return {"status": "EXIT_RETRY_THROTTLED", "reason": decision.reason}
+    exit_side = "SELL" if direction == "LONG" else "BUY"
+    market = MarketSnapshot(
+        reference_price=live.last_price,
+        available_quote_volume=(live.ask_quote_volume if exit_side == "BUY" else live.bid_quote_volume),
+        observed_at=iso(observed_at), best_bid=live.best_bid, best_ask=live.best_ask,
+        quote_timestamp_ms=live.quote_timestamp_ms,
+        liquidity_timestamp_ms=live.liquidity_timestamp_ms,
+        market_type=market_type, source=live.quote_source,
+    )
+    reference, quote_reason = validate_quote(market, exit_side)
+    evidence.update(quote_evidence(market, exit_side))
+    if quote_reason or rules is None:
+        reason = quote_reason or "EXCHANGE_RULES_UNAVAILABLE"
+        record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                         exit_side, market_type,
+                         ExecutionDecision("REJECTED", reason, evidence=evidence))
+        con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "BLOCKED", "reason": reason}
+    if market_type == "USD_M_PERPETUAL" and (live.quote_source or "").startswith("OKX_"):
+        from paper_trading.execution_market_data import fetch_executable_quote
+        try:
+            market = fetch_executable_quote(live.symbol, market_type, exit_side)
+        except ValueError:
+            record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                             exit_side, market_type,
+                             ExecutionDecision("REJECTED", "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"))
+            con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                        (iso(market_at), position_id))
+            con.commit()
+            return {"status": "BLOCKED", "reason": "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"}
+    reference, quote_reason = validate_quote(market, exit_side)
+    if quote_reason:
+        record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                         exit_side, market_type, ExecutionDecision(
+                             "REJECTED", quote_reason, evidence=quote_evidence(market, exit_side)))
+        con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "BLOCKED", "reason": quote_reason}
     target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
-    if decision.action == "REDUCE" and target_qty * float(live.last_price) < rules.min_notional:
+    if decision.action == "REDUCE" and target_qty * reference < rules.min_notional:
         deferred_reason = f"{decision.reason}_BELOW_MIN_NOTIONAL"
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,current_stop_price=?,best_price=?,opposing_events=?,
@@ -296,30 +371,23 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     # otherwise one exact quantity step can round to zero. The accounted fill
     # is still capped to target_qty below, so this can never reverse exposure.
     exit_notional_buffer = 1.02 if direction == "SHORT" else 1.0
-    if forced_liquidation:
-        liquidation_notional = target_qty * float(liquidation_threshold)
+    execution = execute_paper(
+        OrderIntent(live.symbol, exit_side, target_qty * reference * exit_notional_buffer,
+                    reduce_only=True), market, rules,
+    )
+    fill = execution.fill
+    evidence.update(execution.evidence)
+    if fill is not None and forced_liquidation:
         fill = ExecutionFill(
-            price=float(liquidation_threshold), quantity=target_qty,
-            fee=liquidation_notional * float(rules.liquidation_fee_rate),
-            spread_cost=0.0, slippage_cost=0.0, partial=False,
+            price=fill.price, quantity=fill.quantity,
+            fee=fill.quantity * fill.price * float(rules.liquidation_fee_rate),
+            spread_cost=fill.spread_cost, slippage_cost=fill.slippage_cost,
+            partial=fill.partial,
         )
-        execution = None
-    else:
-        execution = simulated_decision(
-            reference_price=float(live.last_price),
-            requested_notional=target_qty * float(live.last_price) * exit_notional_buffer,
-            side="SELL" if direction == "LONG" else "BUY",
-            available_quote_volume=float(live.visible_quote_volume),
-            require_liquidity=True, symbol=live.symbol,
-            quantity_step=rules.quantity_step, price_tick=rules.price_tick,
-            min_notional=rules.min_notional,
-            reduce_only=True,
-        )
-        fill = execution.fill
     if fill is None:
         rejection_reason = execution.reason
         _event(con, position_id, market_at, observed_at, "EXIT_REJECTED",
-               rejection_reason, live.last_price, None, 0, 0, 0, 0,
+               rejection_reason, reference, None, 0, 0, 0, 0,
                stop_price, stop_price, evidence)
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,last_exit_attempt_at=? WHERE position_id=?""",
@@ -327,6 +395,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         con.commit()
         return {"status": "BLOCKED", "reason": rejection_reason}
 
+    # Funding/exposure stops at the executable observation, not an older
+    # trigger trade timestamp (quote acquisition may have taken time).
+    observed_at = parse(market.observed_at)
+    market_at = observed_at
     closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
     # Funding lookup stays outside the latency-critical path. A segment exists
     # only after a real fill; rejected/retried exits cannot pollute the ledger.
@@ -383,9 +455,14 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         float(realized_gross) + gross, float(realized_net) + net,
         exit_fee if forced_liquidation else 0.0, int(forced_liquidation), position_id,
     ))
+    evidence.update({"decision_at": iso(observed_at), "quantity": closed_qty,
+                     "fee": exit_fee, "slippage": slippage_cost,
+                     "notional": closed_qty * fill.price,
+                     "status": "FILLED" if final else "PARTIAL",
+                     "partial": not final})
     event_type = "POSITION_CLOSED" if final else "POSITION_REDUCED"
     _event(con, position_id, market_at, observed_at, event_type, decision.reason,
-           live.last_price, fill.price, closed_qty, exit_fee, spread_cost,
+           reference, fill.price, closed_qty, exit_fee, spread_cost,
            slippage_cost, stop_price, decision.stop_price, evidence)
     if final:
         con.execute("""UPDATE paper_agent_positions SET status='CLOSED',exit_time=?,

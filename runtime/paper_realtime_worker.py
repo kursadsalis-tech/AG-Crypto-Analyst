@@ -84,6 +84,9 @@ async def run():
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
+            # Missing rules must leave durable rejection evidence for an exit,
+            # not just an overwritten health-file message.
+            position_management.process_market_state(con, state, observed_at, None)
             write_health("DEGRADED", error="LIVE_SYMBOL_RULES_UNAVAILABLE",
                          symbol=state.symbol)
             return

@@ -1,3 +1,113 @@
+# 2026-09-19 — Decision 026: fresh executable PAPER quotes
+
+## Scope and Git checkpoint
+
+Canonical checkout: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+The user explicitly authorized an isolated worktree so the canonical checkout's
+existing staged, unstaged and untracked work stays intact.
+Implementation worktree: `/Users/elifzilan/Documents/AGCA-decision-026`.
+Branch: `codex/decision-026-executable-quotes`.
+Base/parent: `dedcfb3cfc5dfd9943aa5d05b28df58b0732fd6c`.
+The checkpoint containing this handoff is titled
+`fix: require fresh executable quotes for PAPER fills (Decision 026)`;
+resolve its exact SHA with `git rev-parse codex/decision-026-executable-quotes`.
+The preserved `agent/vm-checkpoint-20260919` checkpoint and `main` are unchanged.
+
+## Completed
+
+- BUY fills require fresh ask; SELL fills require fresh bid, for both entry and
+  exit. Last/candle/reference-only calls cannot produce a fill. The bounded quote
+  and required liquidity freshness limit is 2,000 ms; future/invalid timestamps,
+  absent/nonfinite/nonpositive sides, crossed book, unavailable rules and missing
+  liquidity reject explicitly.
+- Quote timestamps remain separate from trade timestamps. Reconnect clears old
+  states; unsynchronized depth deltas cannot masquerade as best-book snapshots.
+- Actual bid/ask fills apply no synthetic spread. Slippage/latency and tick
+  rounding are adverse only. Participation and selected-side visible base-unit
+  capacity are enforced; reduce-only accounting cannot close more than filled.
+- Legacy due-close uses the existing position manager for executable quotes and
+  partial accounting. Liquidation threshold remains a trigger, never a fill;
+  liquidation also needs executable quote/liquidity and retains its fee.
+- Existing `paper_position_events` gains additive `evidence_json`, covered by the
+  existing hash, with full quote/fill/rejection evidence and real-order flag 0.
+  No Supabase/mirror table, authority gate, learning/ranking or risk policy changed.
+- The selection rule-feasibility estimate is preserved as a non-executing helper;
+  it cannot authorize or return a fill.
+
+## Verification
+
+Targeted execution/regression suite: **91 passed, 0 failed**:
+
+```bash
+PYTHONPATH=tests python3 -m unittest test_executable_quotes test_execution_model test_execution_contract test_execution_market_data test_position_management test_realtime_market test_behavior_paper_integration test_crypto_profit_agent_fail_closed -q
+```
+
+Complete suite: **358 run, 356 passed, 2 failed**:
+
+```bash
+python3 -m unittest discover -s tests -q
+```
+
+Both failures were reproduced by loading the original checkpoint's agent module
+from `git show` into memory and rerunning the exact tests (no source copy or
+baseline checkout mutation):
+
+- `test_paper_selection_cycle.PaperSelectionCycleTests.test_success_health_is_small_and_fail_closed`:
+  fixture omits `decision_status`; baseline correctly returns `DATA_BLOCKED`
+  whereas the test expects `SUCCESS`.
+- `test_runtime_store.RuntimeStoreTests.test_report_delivery_completes_after_successful_remote_mirror`:
+  baseline leaves `delivery_complete=0`; test expects 1 after mirror-only success.
+
+These are existing checkpoint test/contract mismatches, outside this narrow fix.
+They were not hidden, skipped or repaired by changing unrelated product behavior.
+Full-suite green status and deployment readiness are **not claimed**.
+
+The earlier `test_realtime_market` subscription-error test was also reproduced
+failing on the original realtime module: it supplied OKX messages to the Binance
+Spot route. Its fixture now uses the existing OKX swap route, preserving the
+subscription-error behavior assertion. Other changed execution tests now supply
+realistic quote evidence rather than permitting last/candle-only execution.
+
+## External state and remaining limitations
+
+No deployment, VM access, service/timer restart, live database access, remote
+schema edit, real-order action or trading credential was performed in this task.
+Tests use synthetic quotes and temporary/in-memory data; they prove the execution
+contract, not market profitability or current production connectivity.
+
+Execution sources are Binance Spot timestamped ticker WebSocket sides and Binance
+USD-M bookTicker (including transaction timestamp and base-unit sizes). Existing
+OKX swap WebSocket policy triggers require a fresh Binance execution quote at exit;
+OKX contract counts are not misused as Binance base-unit liquidity. An unavailable
+Binance USD-M source, including the previously documented VM HTTP 451 limitation,
+blocks fills explicitly. No provider/last/candle fallback was introduced.
+Production source availability was not retested and this branch was not deployed.
+
+The narrow implementation is committed for review; the two unrelated baseline
+suite failures remain a validation blocker. Do not treat this record as authority
+to deploy or broaden into selection/reporting changes.
+
+## Files changed
+
+- `paper_trading/crypto_profit_agent.py`
+- `paper_trading/execution_contract.py`
+- `paper_trading/execution_market_data.py`
+- `paper_trading/execution_model.py`
+- `paper_trading/position_management.py`
+- `paper_trading/realtime_market.py`
+- `runtime/paper_realtime_worker.py`
+- `tests/test_behavior_paper_integration.py`
+- `tests/test_executable_quotes.py`
+- `tests/test_execution_contract.py`
+- `tests/test_execution_market_data.py`
+- `tests/test_execution_model.py`
+- `tests/test_position_management.py`
+- `tests/test_realtime_market.py`
+- `docs/PAPER_EXECUTION_GATE_REGISTER.md`
+- `docs/LAST_SESSION_HANDOFF.md`
+
+# Earlier handoffs — historical provenance, not active instructions
+
 # Latest AGCA Session Handoff
 
 # 2026-09-02 — Oturum kapanışı: doğal SPOT ve mobil teslimat kanıtı

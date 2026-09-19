@@ -19,7 +19,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
-from paper_trading.execution_model import PAPER_MARKET, simulated_decision, simulated_fill
+from paper_trading.execution_model import PAPER_MARKET, execute_paper, estimate_order_rules
+from paper_trading.execution_contract import ExecutionDecision, OrderIntent
+from paper_trading.position_management import record_execution
 from paper_trading.exchange_metadata import (
     ExchangeMetadataError, load_cache, rules_for,
 )
@@ -448,7 +450,10 @@ def fill_pending(con, now, exchange_metadata=None):
             rules = rules_for(metadata, symbol) if metadata else None
         except ExchangeMetadataError:
             rules = None
-        if exchange_metadata is not None and rules is None:
+        if rules is None:
+            record_execution(con, position_id, now, "ENTRY", symbol,
+                             "BUY" if direction == "LONG" else "SELL", market_type,
+                             ExecutionDecision("REJECTED", "EXCHANGE_RULES_UNAVAILABLE"))
             con.execute("""
                 UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
                 WHERE position_id=? AND status='PENDING_ENTRY'
@@ -462,6 +467,7 @@ def fill_pending(con, now, exchange_metadata=None):
                     con, position_id=position_id, symbol=symbol,
                     expected=planned, purpose="ENTRY", observed_at=now,
                     market_type=market_type,
+                    side="BUY" if direction == "LONG" else "SELL",
                 )
             except execution_market_data.SpotManagementVenueUnavailable:
                 con.execute("""
@@ -470,9 +476,17 @@ def fill_pending(con, now, exchange_metadata=None):
                 """, ("OKX_SPOT_MANAGEMENT_UNAVAILABLE", position_id))
                 cancelled += 1
                 continue
-            except (requests.RequestException, ValueError):
+            except (requests.RequestException, ValueError) as exc:
                 result = None
+                record_execution(con, position_id, now, "ENTRY", symbol,
+                                 "BUY" if direction == "LONG" else "SELL", market_type,
+                                 ExecutionDecision("REJECTED", "EXECUTABLE_QUOTE_UNAVAILABLE",
+                                                   evidence={"error_type": type(exc).__name__}))
         if result is None:
+            if now >= planned:
+                record_execution(con, position_id, now, "ENTRY", symbol,
+                                 "BUY" if direction == "LONG" else "SELL", market_type,
+                                 ExecutionDecision("REJECTED", "EXECUTABLE_QUOTE_UNAVAILABLE"))
             if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
                 con.execute("""
                     UPDATE paper_agent_positions
@@ -484,23 +498,24 @@ def fill_pending(con, now, exchange_metadata=None):
                 ))
                 cancelled += 1
             continue
-        entry_time, reference_price, quote_volume = result
         notional = float(notional)
         side = "BUY" if direction == "LONG" else "SELL"
-        fill = simulated_fill(
-            reference_price=reference_price, requested_notional=notional,
-            side=side, available_quote_volume=quote_volume,
-            require_liquidity=True,
-            symbol=symbol,
-            quantity_step=rules.quantity_step if rules else 1e-8,
-            price_tick=rules.price_tick if rules else 1e-8,
-            min_notional=rules.min_notional if rules else 5.0,
-        )
+        execution = execute_paper(OrderIntent(symbol, side, notional), result, rules)
+        fill = execution.fill
+        try:
+            entry_time = parse_time(result.observed_at) if result.observed_at else now
+        except (TypeError, ValueError):
+            entry_time = now
+        if result.market_type != market_type:
+            execution = ExecutionDecision("REJECTED", "QUOTE_MARKET_MISMATCH")
+            fill = None
         if fill is None:
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
+                             market_type, execution)
             con.execute("""
                 UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
                 WHERE position_id=? AND status='PENDING_ENTRY'
-            """, ("SIMULATED_EXCHANGE_REJECTION", position_id))
+            """, (execution.reason, position_id))
             cancelled += 1
             continue
         entry_price, fee = fill.price, fill.fee
@@ -510,6 +525,8 @@ def fill_pending(con, now, exchange_metadata=None):
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0])
         if cash + 1e-9 < margin + fee:
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
+                             market_type, ExecutionDecision("REJECTED", "INSUFFICIENT_VIRTUAL_CASH"))
             con.execute("""
                 UPDATE paper_agent_positions
                 SET status='CANCELLED',cancel_reason=?
@@ -537,123 +554,68 @@ def fill_pending(con, now, exchange_metadata=None):
             SET cash=cash-?,total_fees=total_fees+?
             WHERE portfolio_id=1
         """, (margin + fee, fee))
+        record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
+                         market_type, execution)
         filled += 1
     con.commit()
     return filled, cancelled
 
 
 def settle_open(con, now, exchange_metadata=None):
+    """Due legacy positions use the same bounded executable exit/accounting path.
+
+    No historical candle or liquidation threshold can act as a fill. Partial
+    exits remain under the existing position manager for subsequent fresh quotes.
+    """
+    from paper_trading.realtime_market import LiveState
+    from paper_trading.position_management import initialize_open_positions, process_market_state
+    from paper_trading.execution_model import validate_quote
+
     rows = con.execute("""
-        SELECT p.position_id,p.symbol,p.direction,p.due_time,p.entry_time,
-               p.entry_price,p.quantity,p.notional,p.entry_fee,p.liquidation_price,
-               p.margin_allocated,p.leverage,p.market_type
+        SELECT p.position_id,p.symbol,p.direction,p.due_time,p.market_type
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN' AND p.due_time<=? AND m.position_id IS NULL
         ORDER BY due_time,position_id
     """, (iso(now),)).fetchall()
     closed = 0
-    for row in rows:
-        (position_id, symbol, direction, due, entry_time, entry, quantity,
-         notional, entry_fee, liq_price, margin_allocated, leverage,
-         market_type) = row
-        result = None
-        if market_type in {"USD_M_PERPETUAL", "SPOT"}:
-            try:
-                result = execution_market_data.capture_reference(
-                    con, position_id=position_id, symbol=symbol,
-                    expected=parse_time(due), purpose="EXIT", observed_at=now,
-                    market_type=market_type,
-                )
-            except (requests.RequestException, ValueError):
-                result = None
-        else:
-            result = exact_close(con, symbol, due)
-        if result is None:
-            continue
-        exit_time, reference_price, quote_volume = result
-        entry = float(entry)
-        quantity = float(quantity)
-        notional = float(notional)
-        entry_fee = float(entry_fee)
-        exit_side = "SELL" if direction == "LONG" else "BUY"
-        metadata = (
-            exchange_metadata.get(market_type)
-            if isinstance(exchange_metadata, dict) else exchange_metadata
-        )
+    for position_id, symbol, direction, due, market_type in rows:
+        side = "SELL" if direction == "LONG" else "BUY"
+        metadata = exchange_metadata.get(market_type) if isinstance(exchange_metadata, dict) else exchange_metadata
         try:
             rules = rules_for(metadata, symbol) if metadata else None
         except ExchangeMetadataError:
             rules = None
-        if exchange_metadata is not None and rules is None:
+        reason = "EXCHANGE_RULES_UNAVAILABLE" if rules is None else None
+        quote = None
+        if reason is None:
+            try:
+                quote = execution_market_data.capture_reference(
+                    con, position_id=position_id, symbol=symbol,
+                    expected=parse_time(due), purpose="EXIT", observed_at=now,
+                    market_type=market_type, side=side,
+                )
+                reference, reason = validate_quote(quote, side) if quote else (None, "EXECUTABLE_QUOTE_UNAVAILABLE")
+            except (requests.RequestException, ValueError):
+                reason = "EXECUTABLE_QUOTE_UNAVAILABLE"
+        if reason:
+            record_execution(con, position_id, now, "EXIT", symbol, side, market_type,
+                             ExecutionDecision("REJECTED", reason))
             continue
-        liquidation_time = None
-        if market_type == "USD_M_PERPETUAL" and liq_price is not None:
-            liquidation_time = first_liquidation_event(
-                con, symbol, entry_time, due, direction, float(liq_price),
-            )
-        if liquidation_time is not None:
-            exit_time = liquidation_time
-            exit_price = float(liq_price)
-            exit_fee = quantity * exit_price * rules.liquidation_fee_rate
-            exit_spread_cost = 0.0
-            exit_slippage_cost = 0.0
-            liquidated = 1
-            close_reason = f"CONSERVATIVE_{float(leverage):g}X_LIQUIDATION"
-        else:
-            fill = simulated_fill(
-                reference_price=reference_price,
-                requested_notional=quantity * reference_price,
-                side=exit_side,
-                available_quote_volume=quote_volume,
-                require_liquidity=True,
-                symbol=symbol,
-                quantity_step=rules.quantity_step if rules else 1e-8,
-                price_tick=rules.price_tick if rules else 1e-8,
-                min_notional=rules.min_notional if rules else 5.0,
-            )
-            if fill is None:
-                continue
-            exit_price = fill.price
-            exit_fee = quantity * exit_price * (fill.fee / (fill.quantity * fill.price))
-            exit_spread_cost = fill.spread_cost
-            exit_slippage_cost = fill.slippage_cost
-            liquidated = 0
-            close_reason = "HORIZON_DUE_CLOSE"
-        gross = directional_pnl(direction, entry, exit_price, quantity)
-        if market_type == "USD_M_PERPETUAL":
-            funding_events = fetch_funding_history_via_postgres(
-                database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
-                symbol=symbol, start=parse_time(entry_time), end=exit_time,
-            )
-            funding = directional_funding_payment(
-                direction=direction, quantity=quantity, events=funding_events,
-            )
-            funding_source = "BINANCE_USD_M_FUNDING_HISTORY"
-        else:
-            funding_events = []
-            funding = 0.0
-            funding_source = "SPOT_NOT_APPLICABLE"
-        recovery = max(0.0, float(margin_allocated) + gross - exit_fee - funding)
-        net = recovery - float(margin_allocated) - entry_fee
-        con.execute("""
-            UPDATE paper_agent_positions SET
-                status='CLOSED',exit_time=?,exit_price=?,exit_fee=?,
-                gross_pnl=?,net_pnl=?,exit_spread_cost=?,exit_slippage_cost=?,funding_cost=?,
-                funding_event_count=?,funding_source=?,liquidation_fee=?,liquidated=?,close_reason=?
-            WHERE position_id=? AND status='OPEN'
-        """, (
-            iso(exit_time), exit_price, exit_fee, gross, net,
-            exit_spread_cost, exit_slippage_cost, funding, len(funding_events), funding_source,
-            exit_fee if liquidated else 0.0, liquidated, close_reason, position_id,
-        ))
-        con.execute("""
-            UPDATE paper_agent_portfolio SET
-                cash=cash+?,realized_pnl=realized_pnl+?,
-                total_fees=total_fees+?
-            WHERE portfolio_id=1
-        """, (recovery, net, exit_fee))
-        closed += 1
+        initialize_open_positions(con, now)
+        live = LiveState(
+            symbol=symbol, market_type=market_type,
+            last_price=(quote.best_bid + quote.best_ask) / 2,
+            best_bid=quote.best_bid, best_ask=quote.best_ask,
+            market_timestamp_ms=quote.quote_timestamp_ms,
+            quote_timestamp_ms=quote.quote_timestamp_ms,
+            liquidity_timestamp_ms=quote.liquidity_timestamp_ms,
+            quote_source=quote.source, visible_quote_volume=quote.available_quote_volume,
+            bid_quote_volume=quote.available_quote_volume if side == "SELL" else None,
+            ask_quote_volume=quote.available_quote_volume if side == "BUY" else None,
+        )
+        result = process_market_state(con, live, parse_time(quote.observed_at), rules)
+        closed += int(result.get("status") == "POSITION_CLOSED")
     con.commit()
     return closed
 
@@ -795,15 +757,14 @@ def select_new_positions(con, now, exchange_metadata=None):
             if rules is None:
                 reject(f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE")
                 continue
-            executable = simulated_decision(
+            executable = estimate_order_rules(
                 reference_price=float(row["current_price"]),
                 requested_notional=notional,
                 side="BUY" if row["direction"] == "LONG" else "SELL",
                 symbol=row["symbol"], quantity_step=rules.quantity_step,
                 price_tick=rules.price_tick, min_notional=rules.min_notional,
-                require_liquidity=False,
             )
-            if executable.fill is None:
+            if executable.status == "REJECTED":
                 reject(f"PRESELECTION_{executable.reason}")
                 continue
         reason = (

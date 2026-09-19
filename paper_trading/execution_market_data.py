@@ -258,45 +258,82 @@ def fetch_spot_snapshot(symbol: str, observed_at: datetime):
 
 def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
                       purpose: str, observed_at: datetime,
-                      market_type: str = "USD_M_PERPETUAL"):
-    ensure_table(con)
-    row = con.execute("""
-        SELECT market_time,reference_price,quote_volume
-        FROM paper_execution_market_observations
-        WHERE position_id=? AND purpose=?
-    """, (position_id, purpose)).fetchone()
-    if row:
-        market_time = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
-        return market_time, float(row[1]), float(row[2])
+                      market_type: str = "USD_M_PERPETUAL", side: str):
+    """Acquire a new executable quote for every attempt; never reuse old marks.
+
+    The historical observation table remains readable for provenance only.
+    Fill/rejection evidence is persisted by the caller in paper_position_events.
+    """
     if observed_at < expected:
         return None
     if purpose == "ENTRY" and observed_at - expected > MAX_ENTRY_OBSERVATION_DELAY:
         return None
-    if market_type == "SPOT":
-        market_time, price, quote_volume, digest = fetch_spot_snapshot(
-            symbol, observed_at
+    return fetch_executable_quote(symbol, market_type, side)
+
+
+def fetch_executable_quote(symbol: str, market_type: str, side: str):
+    """Public Binance executable sides, with no alternate price/source fallback.
+
+    Spot bookTicker REST has no exchange timestamp. Use the existing timestamped
+    Spot ticker WebSocket instead, reading only its bid/ask and displayed sizes.
+    USD-M bookTicker REST includes the order-book transaction timestamp.
+    """
+    import ssl
+    import time
+    import certifi
+    from websockets.sync.client import connect
+    from paper_trading.execution_contract import MarketSnapshot
+    from paper_trading.realtime_market import BINANCE_SPOT_WS_URL
+
+    started = time.monotonic()
+    try:
+        if market_type == "SPOT":
+            with connect(
+                f"{BINANCE_SPOT_WS_URL}/{symbol.lower()}@ticker",
+                ssl=ssl.create_default_context(cafile=certifi.where()),
+                open_timeout=2, close_timeout=0.1,
+            ) as socket:
+                row = json.loads(socket.recv(timeout=2))
+                observed = datetime.now(timezone.utc)
+            if row.get("s") != symbol or row.get("e") != "24hrTicker":
+                raise ValueError("QUOTE_SYMBOL_OR_EVENT_MISMATCH")
+            bid, ask = row.get("b"), row.get("a")
+            bid_size, ask_size = row.get("B"), row.get("A")
+            timestamp = row.get("E")
+            source = "BINANCE_SPOT_WS_TICKER_BID_ASK"
+        elif market_type == "USD_M_PERPETUAL":
+            response = requests.get(
+                "https://fapi.binance.com/fapi/v1/ticker/bookTicker",
+                params={"symbol": symbol}, timeout=2,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            )
+            response.raise_for_status()
+            row = response.json()
+            observed = datetime.now(timezone.utc)
+            if not isinstance(row, dict) or row.get("symbol") != symbol:
+                raise ValueError("QUOTE_SYMBOL_MISMATCH")
+            bid, ask = row.get("bidPrice"), row.get("askPrice")
+            bid_size, ask_size = row.get("bidQty"), row.get("askQty")
+            timestamp = row.get("time")
+            source = "BINANCE_USD_M_BOOK_TICKER"
+        else:
+            raise ValueError("UNSUPPORTED_MARKET")
+        if time.monotonic() - started > 2:
+            raise ValueError("QUOTE_ACQUISITION_TIMEOUT")
+        bid = float(bid) if bid is not None else None
+        ask = float(ask) if ask is not None else None
+        size = ask_size if side == "BUY" else bid_size
+        price = ask if side == "BUY" else bid
+        volume = float(size) * price if size is not None and price is not None else None
+        timestamp = int(timestamp) if timestamp is not None else None
+        return MarketSnapshot(
+            reference_price=price, available_quote_volume=volume,
+            observed_at=observed.isoformat(), best_bid=bid, best_ask=ask,
+            quote_timestamp_ms=timestamp, liquidity_timestamp_ms=timestamp,
+            market_type=market_type, source=source,
         )
-    elif purpose == "ENTRY":
-        market_time, price, quote_volume, digest = fetch_entry_snapshot(
-            symbol, observed_at
-        )
-    else:
-        market_time, price, quote_volume, digest = fetch_reference(
-            symbol, expected, purpose
-        )
-    con.execute("""
-        INSERT INTO paper_execution_market_observations(
-            position_id,purpose,symbol,expected_time,market_time,observed_at,
-            reference_price,quote_volume,source,payload_sha256,real_order_allowed
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,0)
-        ON CONFLICT(position_id,purpose) DO NOTHING
-    """, (
-        position_id, purpose, symbol, _iso(expected), _iso(market_time),
-        _iso(observed_at), price, quote_volume,
-        ("BINANCE_SPOT_24H_TICKER"
-         if market_type == "SPOT" else
-         ("OKX_USDT_SWAP_TICKER_WITH_BINANCE_SPOT_CROSSCHECK"
-          if purpose == "ENTRY" else
-          "OKX_USDT_SWAP_WITH_BINANCE_SPOT_CROSSCHECK")), digest,
-    ))
-    return market_time, price, quote_volume
+    except ValueError:
+        raise
+    except Exception as exc:
+        # Do not serialize transport exception strings (they may contain URLs).
+        raise ValueError("EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE") from exc

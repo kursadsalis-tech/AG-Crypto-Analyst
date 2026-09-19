@@ -18,6 +18,8 @@ class ExecutionContractParityTests(unittest.TestCase):
             reference_price=overrides.get("reference_price", 100),
             available_quote_volume=overrides.get("available_quote_volume", 10_000),
             observed_at="2026-08-24T20:00:00+00:00",
+            best_bid=100, best_ask=100, quote_timestamp_ms=1787601600000,
+            liquidity_timestamp_ms=1787601600000, source="TEST_BOOK",
         )
         rules = ExecutionRules(
             quantity_step=overrides.get("quantity_step", 1e-8),
@@ -31,6 +33,9 @@ class ExecutionContractParityTests(unittest.TestCase):
         decision = self.contract_decision()
         legacy = simulated_fill(
             symbol="BTCUSDT", reference_price=100,
+            best_bid=100, best_ask=100, quote_timestamp_ms=1787601600000,
+            liquidity_timestamp_ms=1787601600000, source="TEST_BOOK",
+            observed_at="2026-08-24T20:00:00+00:00",
             requested_notional=1000, side="BUY",
             available_quote_volume=10_000, require_liquidity=True,
         )
@@ -41,6 +46,9 @@ class ExecutionContractParityTests(unittest.TestCase):
         decision = self.contract_decision(available_quote_volume=None)
         legacy = simulated_fill(
             symbol="BTCUSDT", reference_price=100,
+            best_bid=100, best_ask=100, quote_timestamp_ms=1787601600000,
+            liquidity_timestamp_ms=1787601600000, source="TEST_BOOK",
+            observed_at="2026-08-24T20:00:00+00:00",
             requested_notional=1000, side="BUY",
             available_quote_volume=None, require_liquidity=True,
         )

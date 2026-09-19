@@ -1,8 +1,18 @@
 import os
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
-from paper_trading.execution_model import simulated_fill
+from paper_trading.execution_model import simulated_fill as execute_fill
+
+
+def simulated_fill(**kwargs):
+    reference = kwargs.get("reference_price", 100)
+    return execute_fill(
+        best_bid=reference, best_ask=reference,
+        quote_timestamp_ms=1788000000000, liquidity_timestamp_ms=1788000000000,
+        observed_at=datetime.fromtimestamp(1788000000, timezone.utc).isoformat(), source="TEST_BOOK", **kwargs,
+    )
 
 
 class ExecutionModelTest(unittest.TestCase):
