@@ -273,6 +273,20 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 50.0, places=6)
 
+    def test_full_portfolio_still_exports_ranked_opportunity_telemetry(self):
+        candidates = [self._candidate("BTCUSDT", edge=1.2)]
+        self._seed_open_positions(5)
+        telemetry = {}
+        with patch.object(agent.behavior_decision_core, "evaluate",
+                          return_value={"status":"ACTIONABLE","candidates":candidates,"review":{}}):
+            selected = agent.select_new_positions(self.con, NOW, telemetry=telemetry)
+        self.assertEqual(selected, 0)
+        self.assertTrue(telemetry["candidates"])
+        self.assertEqual(
+            telemetry["candidates"][0]["reason"],
+            "PORTFOLIO_POSITION_CAPACITY_FULL",
+        )
+
     def test_existing_pending_entry_reserves_cash_and_gross_exposure(self):
         pending = self.candidate()
         pending.update({
