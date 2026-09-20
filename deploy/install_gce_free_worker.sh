@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sudo systemctl disable --now agca-live-cycle.timer agca-hourly-forecast.timer 2>/dev/null || true
+sudo systemctl disable --now agca-live-cycle.timer agca-hourly-forecast.timer agca-paper-selection.timer 2>/dev/null || true
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 stage=/home/kursadsalis/AG-Crypto-Analyst-cloud-new
 backup="/home/kursadsalis/AG-Crypto-Analyst-cloud-backup-${stamp}"
@@ -38,8 +38,6 @@ sudo install -m 644 deploy/agca-paper-realtime-health-monitor.service /etc/syste
 sudo install -m 644 deploy/agca-paper-realtime-health-monitor.timer /etc/systemd/system/agca-paper-realtime-health-monitor.timer
 sudo install -m 644 deploy/agca-exchange-metadata-refresh.service /etc/systemd/system/agca-exchange-metadata-refresh.service
 sudo install -m 644 deploy/agca-exchange-metadata-refresh.timer /etc/systemd/system/agca-exchange-metadata-refresh.timer
-sudo install -m 644 deploy/agca-paper-selection.service /etc/systemd/system/agca-paper-selection.service
-sudo install -m 644 deploy/agca-paper-selection.timer /etc/systemd/system/agca-paper-selection.timer
 sudo install -m 644 deploy/agca-cloud-attestation.service /etc/systemd/system/agca-cloud-attestation.service
 sudo install -m 644 deploy/agca-cloud-attestation.timer /etc/systemd/system/agca-cloud-attestation.timer
 sudo install -m 644 deploy/agca-remote-mirror-drain.service /etc/systemd/system/agca-remote-mirror-drain.service
@@ -51,7 +49,6 @@ sudo systemctl enable --now agca-cloud-worker.service
 sudo systemctl enable --now agca-paper-realtime-worker.service
 sudo systemctl enable --now agca-paper-realtime-health-monitor.timer
 sudo systemctl enable --now agca-exchange-metadata-refresh.timer
-sudo systemctl enable --now agca-paper-selection.timer
 sudo systemctl enable --now agca-cloud-attestation.timer
 sudo systemctl enable --now agca-remote-mirror-drain.timer
 sudo systemctl enable --now agca-sqlite-integrity-check.timer
