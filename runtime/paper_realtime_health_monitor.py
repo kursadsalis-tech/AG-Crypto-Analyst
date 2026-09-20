@@ -10,7 +10,7 @@ from database.runtime_store import connect
 from runtime.cloud_attestation import paper_realtime_health
 
 
-DB_PATH = os.getenv("AGCA_STATE_DB", "/var/lib/agca/crypto_data.db")
+DB_PATH = os.getenv("AGCA_STATE_DB", "crypto_data.db")
 STATE_PATH = Path("/var/lib/agca/paper-realtime-alert-state.json")
 
 
