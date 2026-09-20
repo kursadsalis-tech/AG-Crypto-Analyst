@@ -245,6 +245,14 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertEqual(result["incidents"][0]["kind"], "PIPELINE_VISIBILITY")
             self.assertEqual(result["incidents"][0]["severity"], "KRİTİK")
 
+            health.write_text(json.dumps({
+                "execution_mode":"PAPER_ONLY","real_order_allowed":False,
+                "status":"CONNECTED","at":now.isoformat(),"action":"HOLD"
+            }))
+            healthy_hold = overview(db, state, health, now=now)
+            self.assertEqual(healthy_hold["system"]["pipeline_state"], "ÇALIŞIYOR")
+            self.assertTrue(healthy_hold["system"]["healthy_hold"])
+
 
 if __name__ == "__main__":
     unittest.main()
