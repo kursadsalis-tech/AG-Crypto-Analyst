@@ -146,6 +146,26 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                LEFT JOIN paper_position_management m USING(position_id)
                WHERE p.status='OPEN' ORDER BY p.position_id"""
         ).fetchall()
+        activity = {}
+        for table, time_column, label in (
+            ("paper_behavior_selection_runs", "created_at", "fırsat taraması"),
+            ("paper_agent_positions", "selected_at", "işlem seçimi"),
+            ("paper_position_events", "observed_at", "pozisyon yönetimi"),
+            ("paper_agent_trade_learning_reviews", "created_at", "öğrenme incelemesi"),
+        ):
+            exists = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if not exists:
+                continue
+            columns = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
+            if time_column not in columns:
+                continue
+            row = con.execute(
+                f"SELECT {time_column} FROM {table} WHERE {time_column} IS NOT NULL "
+                f"ORDER BY {time_column} DESC LIMIT 1"
+            ).fetchone()
+            activity[label] = row[0] if row else None
         learning_row = None
         has_learning = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_trade_learning_reviews'"
@@ -340,6 +360,16 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 if pipeline_state == "PİYASA AKIŞI YOK"
                 else "Kanonik worker heartbeat sağlıklı değil."
             ),
+        },
+        "activity": {
+            "stages": [{
+                "name": name,
+                "last_at": stamp,
+                "age_seconds": (
+                    max(0.0, (now - _parse_iso(stamp)).total_seconds())
+                    if stamp else None
+                ),
+            } for name, stamp in activity.items()],
         },
         "portfolio": {
             "initial_capital": initial,
