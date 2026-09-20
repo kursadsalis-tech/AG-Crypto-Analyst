@@ -256,5 +256,25 @@ class PositionManagementTests(unittest.TestCase):
         ).fetchone()[0], "OPEN")
 
 
+    def test_legacy_margin_backfill_respects_position_leverage(self):
+        self.con.execute("DELETE FROM paper_agent_positions")
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            position_id,forecast_id,agent_version,policy_version,symbol,horizon_hours,
+            direction,status,selected_at,as_of,planned_entry_time,due_time,notional,
+            confidence,p_up,p_down,target_price,model_version,artifact_hash,
+            selection_reason,leverage,margin_allocated
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            999,-999,"test","test","LEVUSDT",1,"LONG","CANCELLED",
+            self.now.isoformat(),self.now.isoformat(),self.now.isoformat(),
+            self.now.isoformat(),1000.0,.6,.6,.4,101.0,"test","f"*64,
+            "legacy",5.0,None,
+        ))
+        pm.ensure_tables(self.con)
+        margin = self.con.execute(
+            "SELECT margin_allocated FROM paper_agent_positions WHERE position_id=999"
+        ).fetchone()[0]
+        self.assertAlmostEqual(margin, 200.0)
+
+
 if __name__ == "__main__":
     unittest.main()
