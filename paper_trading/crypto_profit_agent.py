@@ -801,7 +801,11 @@ def select_new_positions(con, now, exchange_metadata=None):
         reject("PORTFOLIO_VALUATION_STALE_OR_MISSING")
         record_run(0, 0.0)
         con.commit()
-        return 0
+        return {
+            "selected_count": 0, "candidates": [],
+            "core_status": behavior_result["status"],
+            "rejection_reasons": dict(reasons),
+        }
     if capacity <= 0:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
         record_run(0, 0.0)
@@ -886,6 +890,21 @@ def select_new_positions(con, now, exchange_metadata=None):
         ),
         reverse=True,
     )
+    candidate_xray = [{
+        "rank": rank,
+        "symbol": row["symbol"],
+        "direction": row["direction"],
+        "horizon_hours": row["horizon"],
+        "confidence": row["confidence"],
+        "expected_net_edge_pct": row["expected_net_edge_pct"],
+        "expected_profit_per_risk": profit_per_risk,
+        "expected_profit_usdt": expected_profit,
+        "current_price": row.get("current_price"),
+        "decision_source": row.get("decision_source"),
+        "experiment_tier": row.get("experiment_tier"),
+        "risk_cap_pct": row.get("risk_cap_pct"),
+    } for rank, (profit_per_risk, expected_profit, row)
+       in enumerate(ranked_candidates[:12], start=1)]
 
     for _, _, row in ranked_candidates:
         if selected >= max_new:
@@ -1009,7 +1028,12 @@ def select_new_positions(con, now, exchange_metadata=None):
             reject("DECISION_ALREADY_SELECTED")
     record_run(selected, available_exposure)
     con.commit()
-    return selected
+    return {
+        "selected_count": selected,
+        "candidates": candidate_xray,
+        "core_status": behavior_result["status"],
+        "rejection_reasons": dict(reasons),
+    }
 
 
 def report_window(now):
