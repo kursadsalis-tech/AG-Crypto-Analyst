@@ -38,3 +38,9 @@ jobs:
             tests.test_crypto_profit_agent_fail_closed \
             tests.test_paper_selection_cycle \
             tests.test_paper_governance
+      - name: Check main merge compatibility without modifying branch
+        run: |
+          git fetch --no-tags origin main
+          git merge-tree --write-tree origin/main HEAD
+      - name: Run broad offline regression suite
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
