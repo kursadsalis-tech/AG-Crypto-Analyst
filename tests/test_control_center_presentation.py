@@ -41,7 +41,7 @@ class ControlCenterPresentationTests(unittest.TestCase):
         }
         view = operator_view(snapshot)
         self.assertEqual(view["işlem_modu"], "PAPER — gerçek emir kapalı")
-        self.assertEqual(view["kanonik_tarama_yaşı"], "—")
+        self.assertEqual(view["kanonik_tarama_yaşı"], "fiyat zamanı bilinmiyor")
         self.assertEqual(view["kanonik_tarama_güncel"], "HAYIR")
         self.assertEqual(view["son_fırsat_taraması"]["durum"], "KAYIT YOK")
         self.assertIn("piyasa verisi gecikmiş", view["durum"])
