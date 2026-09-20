@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/vm-checkpoint-20260919
+      - main
   pull_request:
   workflow_dispatch:
 
