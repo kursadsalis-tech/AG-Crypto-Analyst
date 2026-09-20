@@ -177,6 +177,39 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                    FROM paper_agent_trade_learning_reviews
                    ORDER BY review_id DESC LIMIT 1"""
             ).fetchone()
+        selection = None
+        has_selection = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_behavior_selection_runs'"
+        ).fetchone()
+        if has_selection:
+            selection_columns = {
+                row[1] for row in con.execute("PRAGMA table_info(paper_behavior_selection_runs)")
+            }
+            required = {
+                "created_at", "core_status", "candidate_count", "selected_count",
+                "active_position_count", "capacity", "available_exposure",
+                "reason_counts_json",
+            }
+            if required.issubset(selection_columns):
+                selection_row = con.execute(
+                    """SELECT created_at,core_status,candidate_count,selected_count,
+                              active_position_count,capacity,available_exposure,
+                              reason_counts_json
+                       FROM paper_behavior_selection_runs
+                       ORDER BY run_id DESC LIMIT 1"""
+                ).fetchone()
+                if selection_row:
+                    selection = {
+                        "created_at": selection_row[0],
+                        "core_status": selection_row[1],
+                        "candidate_count": selection_row[2],
+                        "selected_count": selection_row[3],
+                        "active_position_count": selection_row[4],
+                        "capacity": selection_row[5],
+                        "available_exposure": selection_row[6],
+                        "reason_counts": _safe_json_object(selection_row[7]),
+                    }
+
         reports = []
         has_reports = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_daily_reports'"
