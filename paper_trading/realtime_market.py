@@ -157,7 +157,7 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
         state.visible_quote_volume = None
         state.liquidity_timestamp_ms = None
         state.quote_timestamp_ms = timestamp
-        state.quote_source = "BINANCE_SPOT_WS_TICKER_BID_ASK"
+        state.quote_source = ("BINANCE_SPOT_WS_TICKER_BID_ASK" if market_type == "SPOT"\n                              else "BINANCE_USD_M_WS_TICKER_BID_ASK")
         state.last_price = _positive(message["c"])
         state.best_bid = _quote_number(message.get("b"))
         state.best_ask = _quote_number(message.get("a"))
