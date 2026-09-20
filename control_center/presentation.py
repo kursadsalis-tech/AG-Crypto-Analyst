@@ -135,6 +135,21 @@ def operator_view(snapshot):
             brain.get("decision"), brain.get("decision") or "HENÜZ KARAR YOK"
         ),
         "yeni_fırsat": brain.get("decision") == "NEW_POSITION_SELECTED",
+        "fırsat_radarı": [{
+            "sıra": row.get("rank"),
+            "işlem": f'{row.get("symbol") or "—"} {row.get("direction") or "—"}',
+            "ufuk": f'{row.get("horizon_hours") or "—"}s',
+            "güven": round(100 * float(row.get("confidence") or 0), 1),
+            "beklenen_net_kenar": round(float(row.get("expected_net_edge_pct") or 0), 3),
+            "kâr_risk": round(float(row.get("expected_profit_per_risk") or 0), 3),
+            "beklenen_kâr": round(float(row.get("expected_profit_usdt") or 0), 3),
+            "fiyat": _price(row.get("current_price")),
+            "kaynak": row.get("decision_source") or "—",
+            "durum": (
+                "SEÇİLDİ" if brain.get("decision") == "NEW_POSITION_SELECTED"
+                and row.get("rank") == 1 else "DEĞERLENDİRİLİYOR"
+            ),
+        } for row in brain.get("candidates", [])],
     }
     selection = snapshot.get("selection")
     if selection:
