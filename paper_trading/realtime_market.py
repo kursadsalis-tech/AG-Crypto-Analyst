@@ -92,7 +92,67 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
             state.visible_quote_volume = None
             state.liquidity_timestamp_ms = None
             state.quote_timestamp_ms = timestamp
-            state.quote_source = "BINANCE_SPOT_WS_TICKER_BID_ASK" if market_type == "SPOT" else "BINANCE_USD_M_WS_TICKER_BID_ASK"
+            state.quote_source = "OKX_" + channel.upper()
+        if channel == "tickers":
+            state.last_price = _positive(row["last"])
+            state.best_bid = _quote_number(row.get("bidPx"))
+            state.best_ask = _quote_number(row.get("askPx"))
+            if market_type == "SPOT" and row.get("bidSz") and row.get("askSz"):
+                state.bid_quote_volume = _side_notional(state.best_bid, row.get("bidSz"))
+                state.ask_quote_volume = _side_notional(state.best_ask, row.get("askSz"))
+                if state.bid_quote_volume is not None and state.ask_quote_volume is not None:
+                    state.visible_quote_volume = state.bid_quote_volume + state.ask_quote_volume
+                    state.liquidity_timestamp_ms = timestamp
+        elif channel == "books5":
+            bids = row.get("bids") or []
+            asks = row.get("asks") or []
+            bid_value = sum(_positive(level[0]) * _positive(level[1]) for level in bids)
+            ask_value = sum(_positive(level[0]) * _positive(level[1]) for level in asks)
+            total = bid_value + ask_value
+            if total <= 0 or not bids or not asks:
+                continue
+            state.book_imbalance = (bid_value - ask_value) / total
+            state.visible_quote_volume = total
+            state.best_bid = _positive(bids[0][0])
+            state.best_ask = _positive(asks[0][0])
+            if market_type == "SPOT":
+                state.bid_quote_volume = state.best_bid * _positive(bids[0][1])
+                state.ask_quote_volume = state.best_ask * _positive(asks[0][1])
+                state.liquidity_timestamp_ms = timestamp
+        elif channel == "trades":
+            notional = _positive(row["px"]) * _positive(row["sz"])
+            if row.get("side") == "buy":
+                state.trade_buy_notional += notional
+            elif row.get("side") == "sell":
+                state.trade_sell_notional += notional
+            total = state.trade_buy_notional + state.trade_sell_notional
+            state.taker_imbalance = ((state.trade_buy_notional - state.trade_sell_notional) / total if total else None)
+        else:
+            continue
+        state.market_timestamp_ms = timestamp
+        updates.append(state)
+    return updates
+
+
+def apply_binance_message(states: dict[str, LiveState], message: dict, received_ms: int, market_type="SPOT"):
+    """Normalize Binance ticker and aggregate-trade events for PAPER execution."""
+    event = message.get("e")
+    symbol = str(message.get("s") or "").upper()
+    if event not in {"24hrTicker", "depthUpdate", "aggTrade"} or not symbol:
+        return []
+    timestamp = int(message.get("E", 0))
+    if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
+        return []
+    state = states.setdefault(symbol, LiveState(symbol, market_type))
+    if event == "24hrTicker":
+        if state.quote_timestamp_ms is not None and timestamp < state.quote_timestamp_ms:
+            return []
+        state.best_bid = state.best_ask = None
+        state.bid_quote_volume = state.ask_quote_volume = None
+        state.visible_quote_volume = None
+        state.liquidity_timestamp_ms = None
+        state.quote_timestamp_ms = timestamp
+        state.quote_source = "BINANCE_SPOT_WS_TICKER_BID_ASK" if market_type == "SPOT" else "BINANCE_USD_M_WS_TICKER_BID_ASK"
         state.last_price = _positive(message["c"])
         state.best_bid = _quote_number(message.get("b"))
         state.best_ask = _quote_number(message.get("a"))
@@ -108,22 +168,15 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
         else:
             state.book_imbalance = None
     elif event == "depthUpdate":
-        # This stream is not subscribed. Deltas without a synchronized snapshot
-        # cannot prove the best executable side or refresh its timestamp.
         return []
     else:
         notional = _positive(message["p"]) * _positive(message["q"])
-        # Binance `m` means the buyer is the maker, hence the aggressive side
-        # is SELL.  This preserves taker-flow semantics used by the policy.
         if bool(message.get("m")):
             state.trade_sell_notional += notional
         else:
             state.trade_buy_notional += notional
         total = state.trade_buy_notional + state.trade_sell_notional
-        state.taker_imbalance = (
-            (state.trade_buy_notional - state.trade_sell_notional) / total
-            if total else None
-        )
+        state.taker_imbalance = ((state.trade_buy_notional - state.trade_sell_notional) / total if total else None)
     state.market_timestamp_ms = timestamp
     return [state]
 
