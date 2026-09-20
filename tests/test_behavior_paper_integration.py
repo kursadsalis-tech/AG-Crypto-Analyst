@@ -182,6 +182,30 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(selected[0], "LARGEUSDT")
         self.assertAlmostEqual(selected[1], 50.0)
 
+    def test_candidate_ranking_prefers_profit_per_risk_over_raw_profit(self):
+        inefficient = self.candidate()
+        inefficient.update({
+            "decision_id": 23, "symbol": "RISKYUSDT",
+            "expected_net_edge_pct": 0.40, "risk_cap_pct": 10.0,
+            "evidence_sha256": "3" * 64,
+        })
+        efficient = self.candidate()
+        efficient.update({
+            "decision_id": 24, "symbol": "EFFICIENTUSDT",
+            "expected_net_edge_pct": 0.35, "risk_cap_pct": 0.25,
+            "evidence_sha256": "4" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE",
+            "candidates": [inefficient, efficient],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.assertEqual(
+            self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
+            "EFFICIENTUSDT",
+        )
+
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
         too_small["risk_cap_pct"] = 0.05
