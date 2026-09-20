@@ -232,11 +232,19 @@ def review_closed_positions(con, now=None):
 def record_legacy_summary(con, now=None):
     """Retain old experience without inventing outcome-blind historical theses."""
     now = now or datetime.now(timezone.utc)
-    rows = con.execute("""
+    position_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_agent_positions)"
+    )}
+    funding_clause = (
+        "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
+        if "funding_source" in position_columns else ""
+    )
+    rows = con.execute(f"""
         SELECT position_id,direction,horizon_hours,net_pnl,notional,selected_at
         FROM paper_agent_positions p
         WHERE status='CLOSED' AND net_pnl IS NOT NULL
           AND evidence_eligible=1
+          {funding_clause}
           AND NOT EXISTS (SELECT 1 FROM paper_agent_decision_theses t
                           WHERE t.position_id=p.position_id)
         ORDER BY position_id
