@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -368,7 +369,8 @@ def fetch_full_cohort():
     return {"data_version": version, "total": total, "rows": rows}
 
 
-def collect(database="crypto_data.db", now=None):
+def collect(database=None, now=None):
+    database = database or os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
     started = time.monotonic()
     now = now or datetime.now(timezone.utc)
     observed_at = now.astimezone(timezone.utc).isoformat()
