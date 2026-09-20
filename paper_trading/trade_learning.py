@@ -65,6 +65,32 @@ def ensure_tables(con):
     """)
 
 
+def _execution_evidence_clause():
+    # A learnable trade must prove both executable entry and executable final
+    # exit. evidence_eligible describes the decision cohort; it is not itself
+    # proof that bid/ask execution evidence exists.
+    return """
+      AND EXISTS (
+        SELECT 1 FROM paper_position_events ee
+        WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
+          AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
+          AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
+      )
+      AND EXISTS (
+        SELECT 1 FROM paper_position_events xe
+        WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
+          AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
+          AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
+      )
+    """
+
+
 def load_closed(con, validation_cohort):
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"
@@ -90,6 +116,7 @@ def load_closed(con, validation_cohort):
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
           AND p.validation_cohort=? AND p.net_pnl IS NOT NULL
+          {_execution_evidence_clause()}
           {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """, (validation_cohort,)).fetchall()
