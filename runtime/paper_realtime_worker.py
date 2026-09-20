@@ -182,11 +182,22 @@ async def run():
             except asyncio.TimeoutError:
                 pass
 
+    async def heartbeat():
+        # Liveness must not depend on receiving a market callback. A quiet or
+        # reconnecting stream can otherwise make a healthy worker look stale.
+        while not stop_event.is_set():
+            write_health("CONNECTED", active_symbols=symbols(), heartbeat=True)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                pass
+
     write_health("STARTING", active_symbols=symbols())
     try:
         await asyncio.gather(
             realtime_market.stream(symbols, on_state, stop_event, health),
             maintenance(),
+            heartbeat(),
         )
     finally:
         con.close()
