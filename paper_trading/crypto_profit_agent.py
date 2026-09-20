@@ -402,16 +402,33 @@ def first_liquidation_event(con, symbol, entry_time, due_time, direction, thresh
     return None
 
 
-def latest_mark(con, symbol):
+MAX_PORTFOLIO_MARK_AGE_SECONDS = float(
+    os.getenv("AGCA_PORTFOLIO_MARK_MAX_AGE_SECONDS", "3900")
+)
+
+
+def latest_mark(con, symbol, now=None):
+    """Return a closed-candle mark only when it is fresh enough for risk sizing."""
     row = con.execute("""
-        SELECT close FROM market_klines
+        SELECT close,close_time FROM market_klines
         WHERE symbol=? AND interval='1h'
         ORDER BY close_time DESC LIMIT 1
     """, (symbol,)).fetchone()
-    return float(row[0]) if row else None
+    if not row:
+        return None
+    now = now or datetime.now(timezone.utc)
+    try:
+        mark_time = parse_time(row[1])
+        age = (now - mark_time).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    if age < -60.0 or age > MAX_PORTFOLIO_MARK_AGE_SECONDS:
+        return None
+    mark = float(row[0])
+    return (mark, mark_time) if mark > 0.0 else None
 
 
-def portfolio_snapshot(con):
+def portfolio_snapshot(con, now=None):
     portfolio = con.execute("""
         SELECT initial_capital,cash,realized_pnl,total_fees,
                validation_cohort,evidence_start_at
@@ -427,17 +444,24 @@ def portfolio_snapshot(con):
     """).fetchall()
     reserved = 0.0
     unrealized = 0.0
+    gross_exposure = 0.0
+    valuation_complete = True
+    missing_marks = []
     for symbol, direction, entry, quantity, margin_basis in open_rows:
         # Cash is debited by allocated margin at entry, not gross leveraged
         # notional. Equity therefore adds back only the remaining margin basis.
         # Treating margin as gross exposure would manufacture equity under
         # leverage and distort all downstream sizing.
         reserved += float(margin_basis)
-        mark = latest_mark(con, symbol)
-        if mark is not None:
-            unrealized += directional_pnl(
-                direction, float(entry), mark, float(quantity)
-            )
+        mark_state = latest_mark(con, symbol, now)
+        if mark_state is None:
+            valuation_complete = False
+            missing_marks.append(symbol)
+            continue
+        mark, _ = mark_state
+        qty = float(quantity)
+        unrealized += directional_pnl(direction, float(entry), mark, qty)
+        gross_exposure += abs(qty * mark)
     initial, cash, realized, fees = map(float, portfolio[:4])
     equity = cash + reserved + unrealized
     return {
@@ -448,6 +472,9 @@ def portfolio_snapshot(con):
         "unrealized_pnl": unrealized,
         "total_fees": fees,
         "equity": equity,
+        "gross_exposure": gross_exposure,
+        "valuation_complete": valuation_complete,
+        "missing_marks": tuple(missing_marks),
         "return_pct": (equity / initial - 1.0) * 100.0,
         "open_positions": len(open_rows),
         "validation_cohort": portfolio[4],
@@ -733,7 +760,7 @@ def latest_candidates(con, now=None):
 
 def select_new_positions(con, now, exchange_metadata=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
-    snapshot = portfolio_snapshot(con)
+    snapshot = portfolio_snapshot(con, now)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
@@ -755,6 +782,11 @@ def select_new_positions(con, now, exchange_metadata=None):
             json.dumps(reasons, sort_keys=True),
         ))
 
+    if not snapshot["valuation_complete"]:
+        reject("PORTFOLIO_VALUATION_STALE_OR_MISSING")
+        record_run(0, 0.0)
+        con.commit()
+        return 0
     if capacity <= 0:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
         record_run(0, 0.0)
@@ -762,16 +794,9 @@ def select_new_positions(con, now, exchange_metadata=None):
         return 0
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
-    open_gross_exposure = float(con.execute("""
-        SELECT COALESCE(SUM(
-            CASE WHEN m.remaining_quantity IS NOT NULL AND p.entry_price IS NOT NULL
-                 THEN m.remaining_quantity * p.entry_price
-                 ELSE p.notional END
-        ),0)
-        FROM paper_agent_positions p
-        LEFT JOIN paper_position_management m USING(position_id)
-        WHERE p.status='OPEN'
-    """).fetchone()[0] or 0.0)
+    # Fresh marked exposure comes from the same valuation used for equity.
+    # Entry price is historical accounting data and must not size new risk.
+    open_gross_exposure = float(snapshot["gross_exposure"])
     pending = con.execute("""
         SELECT COALESCE(SUM(notional),0),
                COALESCE(SUM(notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END),0)
