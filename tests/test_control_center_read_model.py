@@ -23,6 +23,8 @@ class ControlCenterReadModelTests(unittest.TestCase):
                     position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
                     direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
                     notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT DEFAULT 'PAPER_OPPORTUNITY_POLICY',
+                    decision_reference_id INTEGER,
                     exit_time TEXT, exit_price REAL, net_pnl REAL, close_reason TEXT,
                     entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0
                 );
@@ -34,7 +36,7 @@ class ControlCenterReadModelTests(unittest.TestCase):
                 INSERT INTO paper_agent_portfolio VALUES(1,10000,9000,25,5);
                 INSERT INTO paper_agent_positions VALUES(
                     7,'ETHUSDT','USD_M_PERPETUAL','LONG','2026-09-21T10:00:00+00:00',
-                    2300,2,4600,1,'test rationale','OPEN',NULL,NULL,NULL,NULL,0,0
+                    2300,2,4600,1,'test rationale','OPEN','PAPER_OPPORTUNITY_POLICY',101,NULL,NULL,NULL,NULL,0,0
                 );
                 INSERT INTO paper_position_management VALUES(7,2,2254,0,0,2);
             """)
@@ -72,6 +74,12 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertEqual(position["tp1_price"], 2346)
             self.assertEqual(position["tp2_price"], 2392)
             self.assertFalse(position["tp1_done"])
+            flow = position["decision_flow"]
+            self.assertEqual(flow["observation"]["status"], "CANLI")
+            self.assertEqual(flow["opportunity"]["reason"], "test rationale")
+            self.assertEqual(flow["decision"]["direction"], "LONG")
+            self.assertEqual(flow["decision"]["reference_id"], 101)
+            self.assertEqual(flow["execution"]["status"], "AÇIK")
 
     def test_short_marks_against_ask_and_stale_data_is_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -87,6 +95,8 @@ class ControlCenterReadModelTests(unittest.TestCase):
                     position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
                     direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
                     notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT DEFAULT 'PAPER_OPPORTUNITY_POLICY',
+                    decision_reference_id INTEGER,
                     exit_time TEXT, exit_price REAL, net_pnl REAL, close_reason TEXT,
                     entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0
                 );
@@ -98,7 +108,7 @@ class ControlCenterReadModelTests(unittest.TestCase):
                 INSERT INTO paper_agent_portfolio VALUES(1,10000,9000,0,0);
                 INSERT INTO paper_agent_positions VALUES(
                     8,'BTCUSDT','USD_M_PERPETUAL','SHORT','2026-09-21T10:00:00+00:00',
-                    60000,0.1,6000,1,'test rationale','OPEN',NULL,NULL,NULL,NULL,0,0
+                    60000,0.1,6000,1,'test rationale','OPEN','PAPER_OPPORTUNITY_POLICY',102,NULL,NULL,NULL,NULL,0,0
                 );
                 INSERT INTO paper_position_management VALUES(8,1,60600,1,0,0.075);
             """)
