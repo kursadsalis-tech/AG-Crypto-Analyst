@@ -146,11 +146,10 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertIn("ORDER_BOOK", candidate["evidence"]["capabilities_used"])
         self.assertIn("LIQUIDATIONS", candidate["evidence"]["capabilities_used"])
 
-    def test_own_cost_after_losses_recalibrate_ranking_and_size(self):
+    def test_own_cost_after_losses_without_execution_ledger_cannot_recalibrate(self):
         self.add_history(days=3)
         self.add_current()
         first = core.evaluate(self.con, NOW)["candidates"][0]
-        learned = first["evidence"]["learned_pattern"]
         for index in range(2):
             self.con.execute("""INSERT INTO paper_agent_positions VALUES(
                 ?,?,'MARKET_BEHAVIOR_CORE','CLOSED',1,-1,100,?,?
@@ -158,17 +157,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 index + 1, first["decision_id"],
                 (NOW - timedelta(minutes=index + 1)).isoformat(), first["direction"],
             ))
-        feedback = core.execution_feedback(self.con, NOW)
-        key = (
-            first["evidence"]["event"]["kind"],
-            learned["flow_pattern"],
-            first["direction"],
-        )
-        calibrated = core.calibrate_pattern(learned, feedback[key])
-        self.assertEqual(calibrated["execution_feedback"]["closed_count"], 2)
-        self.assertLess(calibrated["calibrated_net_edge_pct"], learned["mean_net_edge_pct"])
-        self.assertLess(calibrated["execution_size_multiplier"], 1.0)
-        self.assertFalse(calibrated["promotion_ready"])
+        # Legacy PnL without executable entry/exit quotes cannot earn trust.
+        self.assertEqual(core.execution_feedback(self.con, NOW), {})
 
     def test_future_or_ineligible_trade_cannot_recalibrate(self):
         self.add_history(days=1)
