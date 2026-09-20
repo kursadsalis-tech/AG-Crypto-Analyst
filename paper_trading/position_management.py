@@ -429,11 +429,18 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     funding_part = funding_pool * fraction
     gross = ((fill.price - float(entry_price)) * closed_qty
              if direction == "LONG" else (float(entry_price) - fill.price) * closed_qty)
-    net = gross - entry_fee_part - exit_fee - funding_part
+    liquidation_fee = exit_fee if forced_liquidation else 0.0
+    # The execution model's normal taker fee and the exchange liquidation fee
+    # are distinct costs.  A forced liquidation must pay both; previously the
+    # liquidation fee was only reported in a column and never deducted from
+    # cash/net PnL.
+    net = gross - entry_fee_part - exit_fee - liquidation_fee - funding_part
     # remaining_cost_basis is allocated margin, not gross notional. PnL is
     # calculated from full leveraged quantity, while only margin is returned
     # to cash on close.
-    recovery = max(0.0, cost_basis + gross - exit_fee - funding_part)
+    recovery = max(
+        0.0, cost_basis + gross - exit_fee - liquidation_fee - funding_part
+    )
     new_qty = float(remaining_qty) - closed_qty
     final = new_qty <= max(1e-12, rules.quantity_step / 2)
     con.execute("""UPDATE paper_position_management SET
@@ -461,7 +468,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         WHERE position_id=?""", (
         exit_fee, spread_cost, slippage_cost, funding_part,
         float(realized_gross) + gross, float(realized_net) + net,
-        exit_fee if forced_liquidation else 0.0, int(forced_liquidation), position_id,
+        liquidation_fee, int(forced_liquidation), position_id,
     ))
     evidence.update({"decision_at": iso(observed_at), "quantity": closed_qty,
                      "fee": exit_fee, "slippage": slippage_cost,
