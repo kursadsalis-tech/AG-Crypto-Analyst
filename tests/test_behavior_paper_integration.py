@@ -293,6 +293,64 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertGreater(second_notional, 0)
         self.assertLessEqual(first_notional + second_notional, 10000.0 * agent.MAX_TOTAL_EXPOSURE)
 
+    def test_stale_open_position_mark_blocks_new_risk(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,entry_time,entry_price,quantity,
+            entry_fee
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -90, "test", "test", "STALEUSDT", 1, "LONG", "OPEN",
+            NOW.isoformat(), NOW.isoformat(), NOW.isoformat(),
+            (NOW + timedelta(hours=1)).isoformat(), 100.0, .6, .6, .4, 101.0,
+            "test", "c"*64, "test", "SPOT", agent.FORWARD_COHORT, 1,
+            "test", "MARKET_BEHAVIOR_CORE", 90, 1.0, 100.0, "TEST", 1, "[]",
+            NOW.isoformat(), 100.0, 1.0, 0.1,
+        ))
+        stale_close = int((NOW - timedelta(hours=2)).timestamp() * 1000)
+        self.con.execute("""INSERT INTO market_klines(
+            symbol,interval,open_time,open,high,low,close,volume,close_time,quote_volume
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""", (
+            "STALEUSDT","1h",stale_close-3599999,100,100,100,100,1,stale_close,100,
+        ))
+        candidate = self.candidate()
+        candidate.update({"decision_id": 91, "symbol": "FRESHUSDT", "evidence_sha256": "d"*64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 0)
+
+    def test_portfolio_uses_fresh_mark_for_equity_and_gross_exposure(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,entry_time,entry_price,quantity,
+            entry_fee
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -92, "test", "test", "MARKUSDT", 1, "LONG", "OPEN",
+            NOW.isoformat(), NOW.isoformat(), NOW.isoformat(),
+            (NOW + timedelta(hours=1)).isoformat(), 100.0, .6, .6, .4, 101.0,
+            "test", "e"*64, "test", "SPOT", agent.FORWARD_COHORT, 1,
+            "test", "MARKET_BEHAVIOR_CORE", 92, 1.0, 100.0, "TEST", 1, "[]",
+            NOW.isoformat(), 100.0, 1.0, 0.1,
+        ))
+        close_time = int((NOW - timedelta(minutes=5)).timestamp() * 1000)
+        self.con.execute("""INSERT INTO market_klines(
+            symbol,interval,open_time,open,high,low,close,volume,close_time,quote_volume
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""", (
+            "MARKUSDT","1h",close_time-3599999,100,121,99,120,1,close_time,120,
+        ))
+        snapshot = agent.portfolio_snapshot(self.con, NOW)
+        self.assertTrue(snapshot["valuation_complete"])
+        self.assertAlmostEqual(snapshot["gross_exposure"], 120.0)
+        self.assertAlmostEqual(snapshot["unrealized_pnl"], 20.0)
+
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
         too_small["risk_cap_pct"] = 0.05
