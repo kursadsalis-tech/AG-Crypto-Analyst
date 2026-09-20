@@ -908,6 +908,19 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             "unrealized_pnl": unrealized, "selection_reason": selection_reason,
         })
 
+    strongest_open = None
+    for pos in open_position_xray:
+        basis = float(pos.get("notional") or 0.0)
+        pnl = pos.get("unrealized_pnl")
+        pnl_pct = (100.0 * float(pnl) / basis) if pnl is not None and basis > 0 else None
+        pos["unrealized_pnl_pct"] = pnl_pct
+        if strongest_open is None or (
+            pnl_pct is not None and
+            (strongest_open.get("unrealized_pnl_pct") is None or
+             pnl_pct > strongest_open["unrealized_pnl_pct"])
+        ):
+            strongest_open = pos
+
     candidate_xray = [{
         "rank": rank,
         "symbol": row["symbol"],
@@ -921,6 +934,14 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         "decision_source": row.get("decision_source"),
         "experiment_tier": row.get("experiment_tier"),
         "risk_cap_pct": row.get("risk_cap_pct"),
+        "beats_open_position_on_observed_return": (
+            strongest_open is not None
+            and strongest_open.get("unrealized_pnl_pct") is not None
+            and float(row["expected_net_edge_pct"]) > float(strongest_open["unrealized_pnl_pct"])
+        ),
+        "open_position_return_reference_pct": (
+            strongest_open.get("unrealized_pnl_pct") if strongest_open else None
+        ),
     } for rank, (profit_per_risk, expected_profit, row)
        in enumerate(ranked_candidates[:12], start=1)]
 
