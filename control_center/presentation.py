@@ -84,6 +84,12 @@ def operator_view(snapshot):
     return {
         "durum": health,
         "işlem_modu": "PAPER — gerçek emir kapalı",
+        "sistem_sağlığı": (
+            "SAĞLIKLI" if system.get("worker_healthy") else "KONTROL GEREKİYOR"
+        ),
+        "worker_durumu": system.get("worker_status", "UNKNOWN"),
+        "son_heartbeat": _age(system.get("heartbeat_age_seconds")),
+        "son_aksiyon": system.get("last_action") or "Henüz aksiyon yok",
         "açık_pozisyon": open_count,
         "serbest_nakit": _money(portfolio["cash"]),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
