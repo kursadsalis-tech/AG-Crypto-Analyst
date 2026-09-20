@@ -52,6 +52,22 @@ def operator_view(snapshot):
                 if stale else None
             ),
             "karar_gerekçesi": row["decision_reason"],
+            "karar_akışı": {
+                "gözlem": (
+                    f'{row["decision_flow"]["observation"]["status"]} — '
+                    f'{row["decision_flow"]["observation"]["source"] or "kaynak bilinmiyor"}'
+                ),
+                "fırsat": row["decision_flow"]["opportunity"]["reason"] or "Gerekçe kaydı yok",
+                "karar": (
+                    f'{row["decision_flow"]["decision"]["direction"]} — '
+                    f'{row["decision_flow"]["decision"]["source"] or "kaynak bilinmiyor"}'
+                ),
+                "işlem": (
+                    f'{row["decision_flow"]["execution"]["status"]} — '
+                    f'giriş {_price(row["decision_flow"]["execution"]["entry_price"])} — '
+                    f'anlık {_money(row["decision_flow"]["execution"]["unrealized_pnl"])}'
+                ),
+            },
         })
 
     open_count = system["open_positions"]
