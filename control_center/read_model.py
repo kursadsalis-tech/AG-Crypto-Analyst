@@ -400,16 +400,24 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         (age for age in activity_ages.values() if age is not None),
         default=None,
     )
-    # A healthy heartbeat is not enough: surface silent runtime stalls.
+    # A healthy heartbeat is not enough: the canonical decision loop must
+    # itself keep producing fresh brain/scan telemetry.
+    try:
+        brain_at = _parse_iso(brain.get("at"))
+    except (TypeError, ValueError):
+        brain_at = None
+    brain_age = max(0.0, (now - brain_at).total_seconds()) if brain_at else None
+    scan_fresh = brain_age is not None and brain_age <= 15.0
     last_action = str(health.get("action") or "").upper()
     healthy_hold = last_action in {"HOLD", "NO_ACTION", "NO_OPPORTUNITY"}
     work_stalled = (
         worker_healthy
         and observed_symbols > 0
         and market_fresh == observed_symbols
-        and latest_work_age is not None
-        and latest_work_age > 300.0
-        and not healthy_hold
+        and (
+            not scan_fresh
+            or (latest_work_age is not None and latest_work_age > 300.0 and not healthy_hold)
+        )
     )
     pipeline_state = (
         "İŞ ÜRETMİYOR"
@@ -442,10 +450,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "observed_symbols": observed_symbols,
             "fresh_market_symbols": market_fresh,
             "latest_work_age_seconds": latest_work_age,
+            "brain_scan_age_seconds": brain_age,
+            "brain_scan_fresh": scan_fresh,
             "pipeline_explanation": (
                 "Worker, canlı piyasa akışı ve gerçek AGCA aktivitesi sağlıklı."
                 if pipeline_state == "ÇALIŞIYOR"
-                else "Worker ve piyasa akışı canlı ancak AGCA 5 dakikadan uzun süredir gerçek iş üretmiyor."
+                else "Worker/piyasa canlı ancak kanonik AGCA tarama döngüsü güncel değil."
                 if pipeline_state == "İŞ ÜRETMİYOR"
                 else "Worker çalışıyor ancak piyasa verisinin bir bölümü güncel değil."
                 if pipeline_state == "VERİ GECİKİYOR"
@@ -511,7 +521,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "severity": "KRİTİK" if pipeline_state in {"WORKER SORUNLU", "PİYASA AKIŞI YOK", "İŞ ÜRETMİYOR"} else "UYARI",
             "kind": "PIPELINE_VISIBILITY",
             "message": (
-                "Worker ve piyasa canlı ancak AGCA gerçek iş üretmiyor"
+                "Worker/piyasa canlı ancak AGCA fırsat taraması durmuş veya gecikmiş"
                 if pipeline_state == "İŞ ÜRETMİYOR"
                 else "Sistem çalışıyor görünse de canlı piyasa akışı yok"
                 if pipeline_state == "PİYASA AKIŞI YOK"
