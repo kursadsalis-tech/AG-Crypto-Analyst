@@ -157,9 +157,11 @@ def review_closed_positions(con, now=None):
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
                t.thesis_json,t.thesis_sha256,COALESCE(p.margin_allocated,p.notional),
                COALESCE(p.leverage,1),COALESCE(p.risk_tier,'PAPER_RISK_TIER_1'),
-               COALESCE(p.funding_source,'')
+               COALESCE(p.funding_source,''),p.liquidation_price,
+               m.stop_distance_pct,m.current_stop_price,m.best_price
         FROM paper_agent_positions p
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
+        LEFT JOIN paper_position_management m ON m.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
           AND p.validation_cohort=t.validation_cohort
@@ -170,7 +172,8 @@ def review_closed_positions(con, now=None):
         (position_id, net_pnl, notional, gross_pnl, entry_fee, exit_fee,
          entry_spread, entry_slippage, exit_spread, exit_slippage, funding,
          liquidated, close_reason, thesis_json, thesis_sha, margin_allocated,
-         leverage, risk_tier, funding_source) = row
+         leverage, risk_tier, funding_source, liquidation_price,
+         stop_distance_pct, final_stop_price, best_price) = row
         events = con.execute("""
             SELECT event_type,evidence_json,fill_price,fill_quantity
             FROM paper_position_events
@@ -226,6 +229,23 @@ def review_closed_positions(con, now=None):
                 "leverage": float(leverage), "risk_tier": str(risk_tier),
                 "costs": costs, "liquidated": bool(liquidated),
                 "close_reason": close_reason,
+            },
+            "risk_review": {
+                "planned_stop_distance_pct": stop_distance_pct,
+                "final_stop_price": final_stop_price,
+                "best_price_seen": best_price,
+                "liquidation_price": liquidation_price,
+                "leverage": float(leverage),
+                "margin_allocated": float(margin_allocated),
+                "return_on_margin_pct": 100.0*net_pnl/float(margin_allocated),
+                "close_reason": close_reason,
+                "questions": [
+                    "DID_STOP_GEOMETRY_MATCH_THE_TRADE_THESIS",
+                    "DID_SIZING_KEEP_PLANNED_LOSS_WITHIN_RISK_BUDGET",
+                    "DID_LEVERAGE_ADD_CAPITAL_EFFICIENCY_OR_AMPLIFY_LOSS",
+                    "DID_STOP_OR_TIMEOUT_EXIT_TOO_EARLY_OR_TOO_LATE",
+                ],
+                "claim_level": "EPISODE_OBSERVATION_NOT_CAUSATION",
             },
             "learning": {
                 "experience_retained": True,
