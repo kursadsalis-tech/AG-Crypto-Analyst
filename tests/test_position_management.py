@@ -228,6 +228,17 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(row[:2], ("CLOSED", 1))
         self.assertLess(row[3], 78.99)
         self.assertAlmostEqual(row[2], 10 * row[3] * .0125)
+        # Isolated-margin accounting must remain cash-reconcilable even when
+        # the executable quote gaps beyond the theoretical liquidation level.
+        net_pnl = self.con.execute(
+            "SELECT net_pnl FROM paper_agent_positions"
+        ).fetchone()[0]
+        realized_pnl, total_fees = self.con.execute(
+            "SELECT realized_pnl,total_fees FROM paper_agent_portfolio"
+        ).fetchone()
+        self.assertAlmostEqual(net_pnl, -201.0)
+        self.assertAlmostEqual(realized_pnl, net_pnl)
+        self.assertGreater(total_fees, 1.0 + row[2])
 
     def test_opposing_flow_cannot_invalidate_news_only_thesis(self):
         self.con.execute("""UPDATE paper_agent_positions SET
