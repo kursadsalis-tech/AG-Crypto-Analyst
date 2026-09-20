@@ -267,7 +267,7 @@ class PositionManagementTests(unittest.TestCase):
             999,"LEVUSDT","LONG","CANCELLED",ENTRY.isoformat(),100.0,
             10.0,1000.0,0.0,ENTRY.isoformat(),5.0,None,
         ))
-        pm.ensure_tables(self.con)
+        ensure_tables(self.con)
         margin = self.con.execute(
             "SELECT margin_allocated FROM paper_agent_positions WHERE position_id=999"
         ).fetchone()[0]
