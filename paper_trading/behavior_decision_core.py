@@ -380,7 +380,8 @@ def _latest_risk(con, now=None):
     if latest is None:
         return {}
     policy = con.execute("""
-        SELECT created_at,new_positions_allowed FROM risk_policy_snapshots WHERE id=?
+        SELECT created_at,new_positions_allowed,risk_per_trade_pct
+        FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
         return {}
@@ -413,6 +414,7 @@ def _latest_risk(con, now=None):
             "allowed": bool(row[1]), "cap_pct": float(row[2]),
             "price": float(row[3]), "risk_as_of": str(row[4]),
             "volatility_stop_reference_pct": float(row[5]),
+            "risk_per_trade_pct": float(policy[2]),
             "policy_created_at": str(policy[0]),
         }
     return risks
@@ -662,6 +664,7 @@ def _candidate_for_hypothesis(
             1 + (1 if learned["direction"] == "LONG" else -1)
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
         "risk_cap_pct": risk["cap_pct"],
+        "risk_per_trade_pct": risk["risk_per_trade_pct"],
         "stop_reference_pct": risk["volatility_stop_reference_pct"],
         "evidence": evidence,
         "evidence_sha256": digest,
