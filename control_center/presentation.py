@@ -128,15 +128,18 @@ def operator_view(snapshot):
             "durum": learning_labels.get(learning["status"], learning["status"]),
             "kapanan_kanıtlı_işlem": learning["closed_count"],
             "bağımsız_hafta": learning["independent_weeks"],
-            "davranış_değişikliği_yetkisi": (
-                "İZİNLİ" if learning["promotion_allowed"] else "İZİNSİZ"
+            "anlık_adaptasyon": "AKTİF — yeni deneyim sonraki kararları besleyebilir",
+            "kalıcı_politika_terfisi": (
+                "DOĞRULANDI" if learning["promotion_allowed"]
+                else "HENÜZ DOĞRULANMADI"
             ),
             "sürüm": learning["learning_version"],
         } if learning else {
             "durum": "Henüz öğrenme incelemesi yok",
             "kapanan_kanıtlı_işlem": 0,
             "bağımsız_hafta": 0,
-            "davranış_değişikliği_yetkisi": "İZİNSİZ",
+            "anlık_adaptasyon": "AKTİF — yeni deneyim sonraki kararları besleyebilir",
+            "kalıcı_politika_terfisi": "HENÜZ DOĞRULANMADI",
             "sürüm": "—",
         }),
         "kapanan_işlemler": closed,
