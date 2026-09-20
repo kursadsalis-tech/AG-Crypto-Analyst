@@ -24,11 +24,12 @@ class ControlCenterPresentationTests(unittest.TestCase):
                 "market_status": "GECİKMİŞ",
                 "decision_reason": "PAPER opportunity",
             }],
+            "closed_positions": [],
         }
         view = operator_view(snapshot)
         self.assertEqual(view["işlem_modu"], "PAPER — gerçek emir kapalı")
         self.assertIn("piyasa verisi gecikmiş", view["durum"])
-        position = view["pozisyonlar"][0]
+        position = view["açık_pozisyonlar"][0]
         self.assertEqual(position["piyasa"], "Binance USD-M")
         self.assertEqual(position["durum"], "GECİKMİŞ")
         self.assertIn("ajan güncel fiyatı görmüyor olabilir", position["uyarı"])
@@ -55,8 +56,8 @@ class ControlCenterPresentationTests(unittest.TestCase):
         }
         view = operator_view(snapshot)
         self.assertEqual(view["durum"], "Sistem çalışıyor — canlı piyasa verisi geliyor")
-        self.assertEqual(view["pozisyonlar"][0]["son_fiyat"], "1 saniyeden kısa süre önce")
-        self.assertIsNone(view["pozisyonlar"][0]["uyarı"])
+        self.assertEqual(view["açık_pozisyonlar"][0]["son_fiyat"], "1 saniyeden kısa süre önce")
+        self.assertIsNone(view["açık_pozisyonlar"][0]["uyarı"])
 
 
 if __name__ == "__main__":
