@@ -26,6 +26,10 @@ HEALTH_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_HEALTH",
     "/var/lib/agca/paper-realtime-health.json",
 ))
+BRAIN_STATE_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_BRAIN_STATE",
+    "/var/lib/agca/paper-realtime-brain-state.json",
+))
 
 
 def _utcnow():
@@ -50,6 +54,18 @@ def load_market_state(path=MARKET_STATE_PATH):
         return {"at": payload.get("at"), "live_market": []}
     if payload.get("real_order_allowed") is not False:
         return {"at": payload.get("at"), "live_market": []}
+    return payload
+
+
+def load_brain_state(path=BRAIN_STATE_PATH):
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {"at": None, "phase": "UNKNOWN", "scan": None}
+    if payload.get("execution_mode") != "PAPER_ONLY":
+        return {"at": payload.get("at"), "phase": "UNKNOWN", "scan": None}
+    if payload.get("real_order_allowed") is not False:
+        return {"at": payload.get("at"), "phase": "UNKNOWN", "scan": None}
     return payload
 
 
@@ -128,6 +144,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     now = now or _utcnow()
     market = load_market_state(market_state_path)
     health = load_health(health_path)
+    brain = load_brain_state()
     feedback = load_operator_feedback()
     states = _state_index(market)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -422,6 +439,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 else "Kanonik worker heartbeat sağlıklı değil."
             ),
         },
+        "brain": brain,
         "selection": selection,
         "activity": {
             "stages": [{
