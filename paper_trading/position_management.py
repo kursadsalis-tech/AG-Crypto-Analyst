@@ -140,7 +140,7 @@ def initialize_open_positions(con, now):
     initialized, blocked = 0, []
     for position_id, symbol, direction, entry_time, entry_price, quantity, margin_allocated, fee in rows:
         risk = con.execute("""
-            SELECT volatility_stop_reference_pct,price FROM asset_risk_snapshots
+            SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
         """, (symbol, entry_time)).fetchone()
         thesis_row = con.execute("""
