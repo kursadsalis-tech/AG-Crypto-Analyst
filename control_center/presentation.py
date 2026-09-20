@@ -145,10 +145,8 @@ def operator_view(snapshot):
             "beklenen_kâr": round(float(row.get("expected_profit_usdt") or 0), 3),
             "fiyat": _price(row.get("current_price")),
             "kaynak": row.get("decision_source") or "—",
-            "durum": (
-                "SEÇİLDİ" if brain.get("decision") == "NEW_POSITION_SELECTED"
-                and row.get("rank") == 1 else "DEĞERLENDİRİLİYOR"
-            ),
+            "durum": row.get("status") or "DEĞERLENDİRİLİYOR",
+            "neden": row.get("reason") or "—",
         } for row in brain.get("candidates", [])],
     }
     selection = snapshot.get("selection")
