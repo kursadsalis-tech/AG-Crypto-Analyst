@@ -91,20 +91,34 @@ def main():
             five_key = (now.year, now.month, now.day, now.hour, now.minute // 5)
             hour_key = (now.year, now.month, now.day, now.hour)
             results = {}
-            try:
-                if five_key != last_five:
+            errors = {}
+            if five_key != last_five:
+                try:
                     results["product_cycle"] = forward_shadow_cycle.main()
                     last_five = five_key
-                if now.minute >= 2 and hour_key != last_hour:
+                except Exception as exc:
+                    errors["product_cycle"] = {
+                        "error_type": type(exc).__name__,
+                        "message": str(exc)[:300],
+                    }
+            if now.minute >= 2 and hour_key != last_hour:
+                try:
                     results["hourly_job"] = hourly_forecast_job.main()
                     last_hour = hour_key
-                if results:
-                    last_results.update(results)
-                    _write_health("HEALTHY", last_results=last_results)
-                else:
-                    _write_health("HEALTHY", last_results=last_results)
-            except Exception as exc:
-                _write_health("DEGRADED", error_type=type(exc).__name__, message=str(exc)[:300])
+                except Exception as exc:
+                    errors["hourly_job"] = {
+                        "error_type": type(exc).__name__,
+                        "message": str(exc)[:300],
+                    }
+            if results:
+                last_results.update(results)
+            if errors:
+                _write_health(
+                    "DEGRADED", component_errors=errors,
+                    last_results=last_results,
+                )
+            else:
+                _write_health("HEALTHY", last_results=last_results)
             time.sleep(10)
         _write_health("STOPPED")
 
