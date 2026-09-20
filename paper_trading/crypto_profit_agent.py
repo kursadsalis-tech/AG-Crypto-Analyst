@@ -787,11 +787,21 @@ def select_new_positions(con, now, exchange_metadata=None):
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
         )
-        risk_room = snapshot["equity"] * row["risk_cap_pct"] / 100.0
+        position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
+        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
+        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
+        trade_risk_budget = (
+            snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
+        )
+        risk_sized_notional = (
+            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * FEE_RATE)
+            if trade_risk_budget > 0.0 else 0.0
+        )
         sizing_cap = min(
             base_margin * tier.leverage,
             max_exposure,
-            risk_room,
+            position_cap,
+            risk_sized_notional,
             snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
         )
         expected_profit_usdt = (
@@ -801,8 +811,6 @@ def select_new_positions(con, now, exchange_metadata=None):
         # Rank against this trade's own stop geometry, not a fixed risk
         # percentage.  The stop reference is produced from the fresh asset-risk
         # snapshot and Position Manager clamps the same value to 0.5%-5.0%.
-        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
-        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
         stop_loss_usdt = max(0.0, sizing_cap) * effective_stop_pct / 100.0
         estimated_round_trip_cost_usdt = max(0.0, sizing_cap) * (
             2.0 * FEE_RATE
@@ -840,11 +848,21 @@ def select_new_positions(con, now, exchange_metadata=None):
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
-        risk_room = snapshot["equity"] * row["risk_cap_pct"] / 100.0
+        position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
+        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
+        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
+        trade_risk_budget = (
+            snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
+        )
+        risk_sized_notional = (
+            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * FEE_RATE)
+            if trade_risk_budget > 0.0 else 0.0
+        )
         notional = min(
             base_margin * tier.leverage,
             available_exposure,
-            risk_room,
+            position_cap,
+            risk_sized_notional,
             snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
