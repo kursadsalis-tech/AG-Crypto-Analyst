@@ -134,7 +134,7 @@ def initialize_open_positions(con, now):
         ORDER BY p.position_id
     """).fetchall()
     initialized, blocked = 0, []
-    for position_id, symbol, direction, entry_time, entry_price, quantity, notional, fee in rows:
+    for position_id, symbol, direction, entry_time, entry_price, quantity, margin_allocated, fee in rows:
         risk = con.execute("""
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
@@ -160,7 +160,7 @@ def initialize_open_positions(con, now):
             last_thesis_at
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
             position_id, VERSION, iso(now), entry_time, state.stop_distance_pct,
-            state.stop_price, state.best_price, quantity, quantity, notional, fee,
+            state.stop_price, state.best_price, quantity, quantity, margin_allocated, fee,
             entry_time, entry_time,
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
@@ -430,6 +430,9 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     gross = ((fill.price - float(entry_price)) * closed_qty
              if direction == "LONG" else (float(entry_price) - fill.price) * closed_qty)
     net = gross - entry_fee_part - exit_fee - funding_part
+    # remaining_cost_basis is allocated margin, not gross notional. PnL is
+    # calculated from full leveraged quantity, while only margin is returned
+    # to cash on close.
     recovery = max(0.0, cost_basis + gross - exit_fee - funding_part)
     new_qty = float(remaining_qty) - closed_qty
     final = new_qty <= max(1e-12, rules.quantity_step / 2)
