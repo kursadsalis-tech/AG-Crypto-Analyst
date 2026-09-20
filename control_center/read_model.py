@@ -136,6 +136,23 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                    FROM paper_agent_trade_learning_reviews
                    ORDER BY review_id DESC LIMIT 1"""
             ).fetchone()
+        reports = []
+        has_reports = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_daily_reports'"
+        ).fetchone()
+        if has_reports:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
+            if {"report_date", "created_at", "report_json"}.issubset(columns):
+                for report_date, created_at, report_json in con.execute(
+                    """SELECT report_date,created_at,report_json
+                       FROM paper_agent_daily_reports
+                       ORDER BY report_date DESC,created_at DESC LIMIT 30"""
+                ).fetchall():
+                    reports.append({
+                        "report_date": report_date,
+                        "created_at": created_at,
+                        "report": _safe_json_object(report_json),
+                    })
         closed_rows = con.execute(
             """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
                       exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
@@ -307,6 +324,20 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 "market_status": p["market_status"],
             } for p in positions],
         },
+        "incidents": ([{
+            "severity": "UYARI",
+            "kind": "WORKER_HEALTH",
+            "message": "Kanonik PAPER worker sağlıklı görünmüyor",
+            "status": worker_status,
+            "age_seconds": heartbeat_age,
+        }] if not worker_healthy else []) + ([{
+            "severity": "UYARI",
+            "kind": "STALE_MARKET_DATA",
+            "message": f"{len(positions) - fresh_count} açık pozisyonda piyasa verisi gecikmiş",
+            "status": "GECİKMİŞ",
+            "age_seconds": None,
+        }] if len(positions) - fresh_count else []),
+        "reports": reports,
         "closed_positions": [{
             "position_id": r[0], "symbol": r[1], "market_type": r[2],
             "direction": r[3], "entry_time": r[4], "entry_price": r[5],
