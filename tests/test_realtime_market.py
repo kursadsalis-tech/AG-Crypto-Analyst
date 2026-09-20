@@ -87,7 +87,11 @@ class RealtimeMarketTests(unittest.TestCase):
 
         with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
                 patch.object(realtime_market.time, "time", return_value=NOW / 1000):
-            asyncio.run(realtime_market._okx_stream(\n                lambda: [("LAUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "USD_M_PERPETUAL")],\n                on_state, stop, lambda state, error: health.append((state, error)),\n            ))\n        self.assertEqual(seen, ["BTCUSDT"])
+            asyncio.run(realtime_market._okx_stream(
+                lambda: [("LAUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "USD_M_PERPETUAL")],
+                on_state, stop, lambda state, error: health.append((state, error)),
+            ))
+        self.assertEqual(seen, ["BTCUSDT"])
         self.assertIn(("DEGRADED", "OKX_SUBSCRIPTION_ERROR_51001"), health)
 
     def test_binance_trade_does_not_refresh_quote_or_liquidity_timestamp(self):
