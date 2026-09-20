@@ -127,6 +127,11 @@ def operator_view(snapshot):
         "açık_pozisyon_tutarı": _money(portfolio.get("open_position_notional")),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
+        "aktivite": [{
+            "aşama": row.get("name"),
+            "son_aktivite": _age(row.get("age_seconds")),
+            "zaman": row.get("last_at") or "—",
+        } for row in snapshot.get("activity", {}).get("stages", [])],
         "açık_pozisyonlar": positions,
         "piyasa": [{
             "başlık": f'{row.get("symbol") or "—"} — {row.get("market_type") or "—"}',
