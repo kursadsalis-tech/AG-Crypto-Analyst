@@ -133,6 +133,24 @@ def execution_feedback(con, now=None):
           AND p.status='CLOSED' AND p.evidence_eligible=1
           AND p.net_pnl IS NOT NULL AND p.notional>0 AND p.exit_time<=?
           AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'
+          AND EXISTS (
+            SELECT 1 FROM paper_position_events ee
+            WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
+              AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
+              AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
+          )
+          AND EXISTS (
+            SELECT 1 FROM paper_position_events xe
+            WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
+              AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
+              AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
+          )
         ORDER BY p.position_id
     """, (iso(now),)).fetchall()
     grouped = defaultdict(list)
@@ -149,7 +167,7 @@ def execution_feedback(con, now=None):
             for sample in samples
         }
         evidence = {
-            "basis": "OWN_CLOSED_PAPER_TRADES_NET_AFTER_ALL_EXECUTION_COSTS",
+            "basis": "OWN_VALIDATED_EXECUTABLE_ROUND_TRIPS_FINAL_NET_AFTER_ALL_COSTS",
             "event_kind": key[0], "pattern_key": key[1], "direction": key[2],
             "closed_count": len(samples), "independent_days": len(days),
             "mean_net_return_pct": statistics.fmean(returns),
