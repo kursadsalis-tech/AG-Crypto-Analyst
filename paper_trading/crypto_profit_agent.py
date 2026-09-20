@@ -246,7 +246,11 @@ def ensure_tables(con):
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
-    con.execute("""UPDATE paper_agent_positions SET margin_allocated=notional
+    # Legacy rows may predate explicit margin accounting.  Backfill only
+    # missing values and respect the leverage recorded on that exact position;
+    # never rewrite already-accounted historical rows.
+    con.execute("""UPDATE paper_agent_positions
+        SET margin_allocated=notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END
         WHERE margin_allocated IS NULL""")
     portfolio_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_portfolio)")}
     for name, definition in (
