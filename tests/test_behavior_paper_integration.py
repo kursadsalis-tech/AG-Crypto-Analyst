@@ -263,6 +263,36 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 75.0, places=6)
 
+    def test_existing_pending_entry_reserves_cash_and_gross_exposure(self):
+        pending = self.candidate()
+        pending.update({
+            "decision_id": 31, "symbol": "PENDINGUSDT",
+            "risk_cap_pct": 10.0, "evidence_sha256": "9" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [pending], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        first_notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='PENDINGUSDT'"
+        ).fetchone()[0]
+
+        second = self.candidate()
+        second.update({
+            "decision_id": 32, "symbol": "SECONDUSDT",
+            "risk_cap_pct": 10.0, "evidence_sha256": "b" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [second], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        second_notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='SECONDUSDT'"
+        ).fetchone()[0]
+        self.assertGreater(first_notional, 0)
+        self.assertGreater(second_notional, 0)
+        self.assertLessEqual(first_notional + second_notional, 10000.0 * agent.MAX_TOTAL_EXPOSURE)
+
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
         too_small["risk_cap_pct"] = 0.05
