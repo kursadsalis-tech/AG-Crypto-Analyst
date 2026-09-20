@@ -75,10 +75,30 @@ async def run():
 
     def symbols():
         position_management.initialize_open_positions(con, now())
-        return [tuple(row) for row in con.execute(
+        active = {tuple(row) for row in con.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status='OPEN' ORDER BY symbol"""
-        ).fetchall()]
+        ).fetchall()}
+        # Keep observing the latest completed behavior universe even when the
+        # portfolio is empty; otherwise no live event could ever trigger the
+        # next decision/entry.
+        latest = con.execute(
+            "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
+        ).fetchone()[0]
+        monitored = set()
+        if latest is not None:
+            for (instrument,) in con.execute(
+                """SELECT DISTINCT instrument FROM market_behavior_minute_features
+                WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
+                (latest,),
+            ).fetchall():
+                symbol = str(instrument).replace("-USDT-SWAP", "USDT").replace("-", "")
+                market_type = (
+                    "USD_M_PERPETUAL"
+                    if str(instrument).endswith("-SWAP") else "SPOT"
+                )
+                monitored.add((symbol, market_type))
+        return sorted(active | monitored)
 
     def health(state, error):
         write_health(state, error=error, active_symbols=symbols())
