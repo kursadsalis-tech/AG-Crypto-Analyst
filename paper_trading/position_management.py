@@ -143,9 +143,14 @@ def initialize_open_positions(con, now):
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
         """, (symbol, entry_time)).fetchone()
-        thesis_row = con.execute("""
+        # Legacy positions may predate the immutable thesis table.  Missing
+        # memory must not prevent protective management of an existing trade.
+        thesis_exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_decision_theses'"
+        ).fetchone()
+        thesis_row = (con.execute("""
             SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=?
-        """, (position_id,)).fetchone()
+        """, (position_id,)).fetchone() if thesis_exists else None)
         thesis = {}
         if thesis_row:
             try:
