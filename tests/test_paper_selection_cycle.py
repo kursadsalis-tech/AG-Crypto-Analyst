@@ -8,36 +8,22 @@ from runtime import paper_selection_cycle as cycle
 
 
 class PaperSelectionCycleTests(unittest.TestCase):
-    def result(self):
-        return {
-            "selected": 1, "filled": 1, "closed": 0, "cancelled": 0,
-            "portfolio": {"open_positions": 1},
-            "trade_learning": {"status": "COLLECTING_EVIDENCE"},
-        }
-
-    def test_success_health_is_small_and_fail_closed(self):
+    def test_legacy_timer_delegates_without_mutating_positions(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "health.json"
             with patch.object(cycle, "HEALTH_PATH", path), patch.object(
-                cycle.crypto_profit_agent, "run_behavior_selection",
-                return_value=self.result(),
-            ):
-                cycle.main()
+                cycle.crypto_profit_agent, "run_behavior_selection"
+            ) as legacy:
+                result = cycle.main()
+            legacy.assert_not_called()
             payload = json.loads(path.read_text())
-            self.assertEqual(payload["status"], "SUCCESS")
-            self.assertEqual(payload["selected"], 1)
+            self.assertEqual(payload["status"], "DELEGATED_TO_REALTIME_WORKER")
+            self.assertEqual(payload["decision_status"], "LIVE_EVENT_STREAM_AUTHORITY")
+            self.assertEqual(result["selected"], 0)
             self.assertFalse(payload["real_order_allowed"])
             self.assertEqual(payload["execution_mode"], "PAPER_ONLY")
 
-    def test_failure_is_recorded_and_raised(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "health.json"
-            with patch.object(cycle, "HEALTH_PATH", path), patch.object(
-                cycle.crypto_profit_agent, "run_behavior_selection",
-                side_effect=RuntimeError("broken"),
-            ):
-                with self.assertRaisesRegex(RuntimeError, "broken"):
-                    cycle.main()
-            payload = json.loads(path.read_text())
-            self.assertEqual(payload["status"], "FAILED")
-            self.assertFalse(payload["real_order_allowed"])
+    def test_non_paper_mode_is_rejected(self):
+        with patch.dict("os.environ", {"AGCA_EXECUTION_MODE": "LIVE"}):
+            with self.assertRaisesRegex(SystemExit, "PAPER_ONLY"):
+                cycle.main()
