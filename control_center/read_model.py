@@ -365,6 +365,17 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "created_at": row.get("created_at"),
             "operator_price": row.get("operator_price"),
             "agent_price": row.get("agent_price"),
+            "price_difference": (
+                float(row["operator_price"]) - float(row["agent_price"])
+                if row.get("operator_price") is not None and row.get("agent_price") is not None
+                else None
+            ),
+            "price_difference_pct": (
+                ((float(row["operator_price"]) / float(row["agent_price"])) - 1.0) * 100.0
+                if row.get("operator_price") is not None
+                and row.get("agent_price") not in (None, 0, 0.0)
+                else None
+            ),
             "agent_quote_source": row.get("agent_quote_source"),
             "note": row.get("note"),
         } for row in feedback] + ([{
