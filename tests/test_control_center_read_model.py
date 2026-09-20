@@ -135,6 +135,35 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertAlmostEqual(position["unrealized_pnl"], 99.9)
             self.assertEqual(position["market_status"], "GECİKMİŞ")
 
+    def test_malformed_health_and_learning_evidence_fail_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "runtime.db"
+            state = Path(tmp) / "market.json"
+            health = Path(tmp) / "health.json"
+            self._make_db(db)
+            state.write_text(json.dumps({
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "live_market": [],
+            }))
+            health.write_text(json.dumps({
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "status": "CONNECTED", "at": "not-a-timestamp",
+            }))
+            con = sqlite3.connect(db)
+            con.execute("""CREATE TABLE paper_agent_trade_learning_reviews (
+                review_id INTEGER PRIMARY KEY, created_at TEXT, learning_version TEXT,
+                validation_cohort TEXT, closed_count INTEGER, independent_weeks INTEGER,
+                status TEXT, promotion_allowed INTEGER, evidence_json TEXT)""")
+            con.execute("""INSERT INTO paper_agent_trade_learning_reviews VALUES
+                (1,'2026-09-21T00:00:00+00:00','V1','TEST',1,1,
+                 'COLLECTING_EVIDENCE',0,'{broken')""")
+            con.commit()
+            con.close()
+            result = overview(db, state, health, now=datetime(2026, 9, 21, tzinfo=timezone.utc))
+            self.assertFalse(result["system"]["worker_healthy"])
+            self.assertIsNone(result["system"]["heartbeat_age_seconds"])
+            self.assertEqual(result["learning"]["evidence"], {})
+
 
 if __name__ == "__main__":
     unittest.main()
