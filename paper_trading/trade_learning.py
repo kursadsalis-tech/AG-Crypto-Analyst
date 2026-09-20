@@ -166,7 +166,18 @@ def discover_patterns(groups):
             "metrics": score,
             "claim_level": "STATISTICAL_ASSOCIATION_NOT_CAUSATION",
         })
-    return sorted(patterns, key=lambda item: (-item["metrics"]["trades"], item["pattern_key"]))
+    # Trade count is an evidence sufficiency gate, not an objective. Rank
+    # harmful challengers by economic damage first so the learner investigates
+    # what loses the most money after costs instead of rewarding high activity.
+    return sorted(
+        patterns,
+        key=lambda item: (
+            item["metrics"]["mean_net_return_pct"],
+            item["metrics"]["net_pnl_usdt"],
+            -item["metrics"]["trades"],
+            item["pattern_key"],
+        ),
+    )
 
 
 def run(con, validation_cohort, now=None):
