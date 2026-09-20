@@ -201,10 +201,25 @@ class RuntimeConnection(sqlite3.Connection):
 
 
 def connect(database, *args, **kwargs):
-    """Return the SQLite-compatible AGCA runtime connection."""
+    """Return the SQLite-compatible AGCA runtime connection.
+
+    AGCA runs several independent worker processes against the same local
+    database.  Keep SQLite in WAL mode and give writers an explicit busy
+    timeout so short writer overlap queues instead of failing immediately.
+    WAL still permits only one writer at a time, so callers must also keep
+    write transactions short.
+    """
 
     kwargs.setdefault("factory", RuntimeConnection)
-    return sqlite3.connect(database, *args, **kwargs)
+    kwargs.setdefault("timeout", float(os.getenv("AGCA_SQLITE_BUSY_TIMEOUT_SECONDS", "30")))
+    connection = sqlite3.connect(database, *args, **kwargs)
+    busy_ms = max(
+        1000,
+        int(float(os.getenv("AGCA_SQLITE_BUSY_TIMEOUT_SECONDS", "30")) * 1000),
+    )
+    connection.execute(f"PRAGMA busy_timeout={busy_ms}")
+    connection.execute("PRAGMA journal_mode=WAL")
+    return connection
 
 
 def _ensure_outbox(local: sqlite3.Connection) -> None:
