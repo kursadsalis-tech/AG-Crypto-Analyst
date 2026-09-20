@@ -1,6 +1,6 @@
 [Unit]
 Description=AGCA schedule-aware exact macro observer
-After=network-online.target agca-cloud-worker.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
