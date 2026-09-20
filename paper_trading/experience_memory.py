@@ -164,8 +164,17 @@ def review_closed_positions(con, now=None):
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
         LEFT JOIN paper_position_management m ON m.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
-        WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
+        WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL
           AND p.validation_cohort=t.validation_cohort
+          AND (
+              r.position_id IS NULL
+              OR (
+                  COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'
+                  AND json_valid(r.review_json)
+                  AND json_extract(r.review_json,'$.evidence_assessment.economics_final')=0
+                  AND json_extract(r.review_json,'$.evidence_assessment.limitations') LIKE '%FUNDING_PENDING%'
+              )
+          )
         ORDER BY p.exit_time,p.position_id
     """).fetchall()
     created = 0
@@ -291,6 +300,15 @@ def review_closed_positions(con, now=None):
                 net_pnl,net_return_pct,review_json,causal_claim,skill_proven,
                 policy_mutation_allowed
             ) VALUES(?,?,?,?,?,?,?,?,0,0,0)
+            ON CONFLICT(position_id) DO UPDATE SET
+                reviewed_at=excluded.reviewed_at,
+                memory_version=excluded.memory_version,
+                thesis_sha256=excluded.thesis_sha256,
+                outcome_class=excluded.outcome_class,
+                net_pnl=excluded.net_pnl,
+                net_return_pct=excluded.net_return_pct,
+                review_json=excluded.review_json,
+                causal_claim=0,skill_proven=0,policy_mutation_allowed=0
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
               indexed_return_pct, _canonical(review)))
         created += 1
