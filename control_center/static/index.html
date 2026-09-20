@@ -24,7 +24,7 @@ table{width:100%;border-collapse:collapse}.panel{overflow:auto}th,td{text-align:
 <div class="card"><div class="label">Gerçekleşmiş Sonuç</div><div class="value" id="realized">—</div></div>
 <div class="card"><div class="label">Açık Pozisyon Sonucu</div><div class="value" id="unrealized">—</div></div>
 </div>
-<div class="tabs"><button class="tab active" data-tab="openPanel">Açık Pozisyonlar</button><button class="tab" data-tab="flowPanel">Karar Akışı</button><button class="tab" data-tab="closedPanel">Kapanan İşlemler</button></div>
+<div class="tabs"><button class="tab active" data-tab="openPanel">Açık Pozisyonlar</button><button class="tab" data-tab="flowPanel">Karar Akışı</button><button class="tab" data-tab="riskPanel">Risk</button><button class="tab" data-tab="learningPanel">Öğrenme</button><button class="tab" data-tab="closedPanel">Kapanan İşlemler</button></div>
 <div class="panel" id="openPanel"><table><thead><tr><th>İşlem</th><th>Durum</th><th>Giriş</th><th>Ajanın Fiyatı</th><th>TP1</th><th>TP2</th><th>Güncel STOP</th><th>Anlık Sonuç</th><th>Fiyat Güncelliği</th></tr></thead><tbody id="openRows"></tbody></table><div class="empty hidden" id="openEmpty">Açık PAPER pozisyon yok.</div></div>
 <div class="panel hidden" id="closedPanel"><table><thead><tr><th>İşlem</th><th>Giriş</th><th>Kapanış</th><th>Net Sonuç</th><th>Ücretler</th><th>Kapanış Nedeni</th><th>Kapanış Zamanı</th></tr></thead><tbody id="closedRows"></tbody></table><div class="empty hidden" id="closedEmpty">Kapanan işlem yok.</div></div>
 </div>
