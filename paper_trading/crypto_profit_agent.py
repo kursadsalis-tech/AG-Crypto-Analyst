@@ -422,7 +422,18 @@ def latest_mark(con, symbol, now=None):
         return None
     now = now or datetime.now(timezone.utc)
     try:
-        mark_time = parse_time(row[1])
+        # Binance market_klines.close_time is Unix milliseconds, not ISO text.
+        raw_close_time = row[1]
+        if isinstance(raw_close_time, (int, float)) or (
+            isinstance(raw_close_time, str) and raw_close_time.isdecimal()
+        ):
+            timestamp = float(raw_close_time)
+            mark_time = datetime.fromtimestamp(
+                timestamp / 1000.0 if timestamp > 1e11 else timestamp,
+                timezone.utc,
+            )
+        else:
+            mark_time = parse_time(raw_close_time)
         age = (now - mark_time).total_seconds()
     except (TypeError, ValueError):
         return None
