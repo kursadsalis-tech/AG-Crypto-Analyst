@@ -35,6 +35,27 @@ class ControlCenterServerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=2)
 
+    def test_static_ui_exposes_all_read_only_operator_tabs(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=2)
+            conn.request("GET", "/")
+            response = conn.getresponse()
+            html = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            for panel in ("openPanel", "flowPanel", "riskPanel", "learningPanel", "closedPanel"):
+                self.assertIn(f'id="{panel}"', html)
+                self.assertIn(f'data-tab="{panel}"', html)
+            self.assertIn('fetch("/api/v1/overview"', html)
+            self.assertNotIn('method:"POST"', html)
+            self.assertNotIn("method:'POST'", html)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
     def test_v1_has_no_generic_write_surface(self):
         self.assertFalse(hasattr(server, "execute_sql"))
         self.assertFalse(hasattr(server, "mutate_database"))
