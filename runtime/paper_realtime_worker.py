@@ -5,11 +5,12 @@ import asyncio
 import json
 import os
 import signal
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from database.runtime_store import connect
-from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables
+from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables, run_behavior_selection
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
@@ -65,6 +66,9 @@ async def run():
     position_management.ensure_tables(con)
     stop_event = asyncio.Event()
     last_health_at = None
+    selection_task = None
+    last_selection_at = 0.0
+    selection_interval = max(1.0, float(os.getenv("AGCA_LIVE_SELECTION_MIN_INTERVAL_SECONDS", "5")))
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -79,8 +83,21 @@ async def run():
     def health(state, error):
         write_health(state, error=error, active_symbols=symbols())
 
+    async def selection_once():
+        try:
+            result = await asyncio.to_thread(run_behavior_selection)
+            write_health("CONNECTED", selection_trigger="LIVE_EVENT",
+                         decision_status=result.get("decision_status"),
+                         selected=result.get("selected", 0))
+        except Exception as exc:
+            write_health("DEGRADED", error=f"LIVE_SELECTION_{type(exc).__name__}")
+
     async def on_state(state, observed_ms):
-        nonlocal last_health_at
+        nonlocal last_health_at, selection_task, last_selection_at
+        elapsed = time.monotonic()
+        if (selection_task is None or selection_task.done()) and elapsed - last_selection_at >= selection_interval:
+            last_selection_at = elapsed
+            selection_task = asyncio.create_task(selection_once())
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
