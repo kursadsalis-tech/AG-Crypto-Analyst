@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
 
 
@@ -208,6 +209,21 @@ def review_closed_positions(con, now=None):
             else "MEDIUM" if execution_complete or economics_final else "LOW"
         )
         net_pnl, notional = float(net_pnl), float(notional)
+        margin = float(margin_allocated or 0)
+        # Retain anomalous economics as a learnable observation; do not crash
+        # the entire review batch or silently promote invalid denominators.
+        if not math.isfinite(notional) or notional <= 0:
+            limitations.append("INVALID_NOTIONAL")
+        if not math.isfinite(margin) or margin <= 0:
+            limitations.append("INVALID_MARGIN")
+        economics_valid = notional > 0 and margin > 0 and all(
+            math.isfinite(v) for v in (net_pnl, notional, margin)
+        )
+        if not economics_valid:
+            economics_final = False
+            evidence_confidence = "LOW"
+        net_return_pct = 100.0 * net_pnl / notional if notional > 0 and math.isfinite(notional) else None
+        margin_return_pct = 100.0 * net_pnl / margin if margin > 0 and math.isfinite(margin) else None
         outcome = "WIN" if net_pnl > 0 else "LOSS" if net_pnl < 0 else "BREAKEVEN"
         costs = {"fees": float(entry_fee or 0)+float(exit_fee or 0),
                  "spread": float(entry_spread or 0)+float(exit_spread or 0),
@@ -223,8 +239,8 @@ def review_closed_positions(con, now=None):
             },
             "economic_result": {
                 "class": outcome, "gross_pnl": float(gross_pnl or 0),
-                "net_pnl": net_pnl, "net_return_pct": 100.0*net_pnl/notional,
-                "return_on_margin_pct": 100.0*net_pnl/float(margin_allocated),
+                "net_pnl": net_pnl, "net_return_pct": net_return_pct,
+                "return_on_margin_pct": margin_return_pct,
                 "gross_exposure": notional, "margin_allocated": float(margin_allocated),
                 "leverage": float(leverage), "risk_tier": str(risk_tier),
                 "costs": costs, "liquidated": bool(liquidated),
@@ -237,7 +253,7 @@ def review_closed_positions(con, now=None):
                 "liquidation_price": liquidation_price,
                 "leverage": float(leverage),
                 "margin_allocated": float(margin_allocated),
-                "return_on_margin_pct": 100.0*net_pnl/float(margin_allocated),
+                "return_on_margin_pct": margin_return_pct,
                 "close_reason": close_reason,
                 "questions": [
                     "DID_STOP_GEOMETRY_MATCH_THE_TRADE_THESIS",
@@ -250,7 +266,7 @@ def review_closed_positions(con, now=None):
             "learning": {
                 "experience_retained": True,
                 "lesson_generation_allowed": True,
-                "validated_performance_eligible": bool(execution_complete and economics_final),
+                "validated_performance_eligible": bool(execution_complete and economics_final and economics_valid),
                 "policy_mutation_allowed": False,
                 "principle": "EVERY_EXPERIENCE_CAN_TEACH; AUTHORITY_MUST_BE_EARNED",
             },
@@ -265,7 +281,7 @@ def review_closed_positions(con, now=None):
                 policy_mutation_allowed
             ) VALUES(?,?,?,?,?,?,?,?,0,0,0)
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
-              100.0*net_pnl/notional, _canonical(review)))
+              net_return_pct, _canonical(review)))
         created += 1
     con.commit()
     return created
