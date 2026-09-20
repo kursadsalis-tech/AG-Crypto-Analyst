@@ -1,4 +1,8 @@
+import json
+import threading
 import unittest
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 from control_center import server
@@ -13,6 +17,23 @@ class ControlCenterServerTests(unittest.TestCase):
             self.assertEqual(server.snapshot(), rendered)
             read.assert_called_once_with()
             present.assert_called_once_with(raw)
+
+    def test_post_is_rejected_over_http(self):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=2)
+            conn.request("POST", "/api/v1/overview", body=b"{}",
+                         headers={"Content-Type": "application/json"})
+            response = conn.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, 405)
+            self.assertEqual(payload, {"error": "read_only"})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
 
     def test_v1_has_no_generic_write_surface(self):
         self.assertFalse(hasattr(server, "execute_sql"))
