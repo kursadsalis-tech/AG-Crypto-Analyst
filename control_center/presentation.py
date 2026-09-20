@@ -106,6 +106,9 @@ def operator_view(snapshot):
     risk = snapshot.get("risk", {})
     return {
         "durum": health,
+        "gerçek_çalışma_durumu": system.get("pipeline_state", "BİLİNMİYOR"),
+        "çalışma_açıklaması": system.get("pipeline_explanation", "—"),
+        "izlenen_piyasa": f'{system.get("fresh_market_symbols", 0)}/{system.get("observed_symbols", 0)} canlı',
         "işlem_modu": "PAPER — gerçek emir kapalı",
         "sistem_sağlığı": (
             "SAĞLIKLI" if system.get("worker_healthy") else "KONTROL GEREKİYOR"
