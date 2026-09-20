@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from control_center.presentation import operator_view
 from control_center.read_model import overview
+
+INDEX_PATH = Path(__file__).with_name("static") / "index.html"
 
 
 def snapshot():
@@ -23,6 +26,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path in {"/", "/index.html"}:
+            body = INDEX_PATH.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/api/v1/overview":
             self._json(snapshot())
             return
