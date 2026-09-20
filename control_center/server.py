@@ -6,6 +6,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from control_center.presentation import operator_view
+from control_center.operator_feedback import record_data_mismatch
 from control_center.read_model import overview
 
 INDEX_PATH = Path(__file__).with_name("static") / "index.html"
@@ -44,9 +45,24 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not_found"}, 404)
 
     def do_POST(self):
-        # v1 starts read-only. Safe controls get an explicit allow-list later;
-        # never expose a generic mutation endpoint.
-        self._json({"error": "read_only"}, 405)
+        if self.path != "/api/v1/feedback/market-data-mismatch":
+            self._json({"error": "read_only"}, 405)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 4096:
+                raise ValueError("invalid_payload_size")
+            payload = json.loads(self.rfile.read(length))
+            record = record_data_mismatch(payload)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._json({"error": str(exc)}, 400)
+            return
+        self._json({
+            "status": "recorded",
+            "feedback_id": record["feedback_id"],
+            "authority": "DIAGNOSTIC_ONLY",
+            "trading_mutation_allowed": False,
+        }, 201)
 
     def log_message(self, fmt, *args):
         return
