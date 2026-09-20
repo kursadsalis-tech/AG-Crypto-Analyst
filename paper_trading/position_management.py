@@ -115,7 +115,11 @@ def ensure_tables(con):
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
             position_columns.add(name)
     if position_columns:
-        con.execute("UPDATE paper_agent_positions SET margin_allocated=notional WHERE margin_allocated IS NULL")
+        # Same idempotent legacy backfill as the PAPER agent.  Leveraged gross
+        # notional is not cash margin.
+        con.execute("""UPDATE paper_agent_positions
+            SET margin_allocated=notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END
+            WHERE margin_allocated IS NULL""")
 
 
 def initialize_open_positions(con, now):
