@@ -12,7 +12,7 @@ from pathlib import Path
 from runtime.cloud_attestation import SQLITE_INTEGRITY_CACHE_VERSION
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 
 
 def _canonical(payload):
