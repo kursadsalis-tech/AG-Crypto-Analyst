@@ -194,9 +194,34 @@ class RuntimeStoreTests(unittest.TestCase):
                 con, cursor, "agca_runtime", "paper_agent_portfolio"
             )
         self.assertTrue(drained)
-        self.assertEqual(applied, ["[2]"])
+        self.assertEqual([(key, operation) for key, operation, _ in applied], [("[2]", "UPSERT")])
         sent_rows = cursor.executemany.call_args.args[1]
         self.assertEqual(sent_rows, [(2, 9000.0)])
+        con.close()
+
+    def test_remote_ack_does_not_discard_a_newer_outbox_revision(self):
+        con = runtime_store.connect(":memory:")
+        con.execute("CREATE TABLE paper_agent_portfolio (portfolio_id INTEGER PRIMARY KEY, cash REAL)")
+        con.execute("INSERT INTO paper_agent_portfolio VALUES(1,10000)")
+        sqlite3.Connection.commit(con)
+        original = sqlite3.Connection.execute(con, """
+            SELECT pk_json,operation,queued_at FROM remote_mirror_outbox
+            WHERE table_name='paper_agent_portfolio'
+        """).fetchone()
+        # A later local write must survive acknowledgement of the earlier
+        # remote transaction, even when the primary key has not changed.
+        sqlite3.Connection.execute(con, """
+            UPDATE remote_mirror_outbox SET operation='DELETE', queued_at='newer'
+            WHERE table_name='paper_agent_portfolio' AND pk_json='[1]'
+        """)
+        sqlite3.Connection.execute(con, """
+            DELETE FROM remote_mirror_outbox
+            WHERE table_name=? AND pk_json=? AND operation=? AND queued_at=?
+        """, ("paper_agent_portfolio", *original))
+        self.assertEqual(sqlite3.Connection.execute(con, """
+            SELECT operation,queued_at FROM remote_mirror_outbox
+            WHERE table_name='paper_agent_portfolio' AND pk_json='[1]'
+        """).fetchone(), ("DELETE", "newer"))
         con.close()
 
     def test_remote_table_contract_enables_rls_and_revokes_data_api_roles(self):
