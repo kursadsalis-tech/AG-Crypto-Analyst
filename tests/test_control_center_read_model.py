@@ -250,8 +250,9 @@ class ControlCenterReadModelTests(unittest.TestCase):
                 "status":"CONNECTED","at":now.isoformat(),"action":"HOLD"
             }))
             healthy_hold = overview(db, state, health, now=now)
-            self.assertEqual(healthy_hold["system"]["pipeline_state"], "ÇALIŞIYOR")
+            self.assertEqual(healthy_hold["system"]["pipeline_state"], "İŞ ÜRETMİYOR")
             self.assertTrue(healthy_hold["system"]["healthy_hold"])
+            self.assertFalse(healthy_hold["system"]["brain_scan_fresh"])
 
 
 if __name__ == "__main__":
