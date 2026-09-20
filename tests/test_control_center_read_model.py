@@ -52,13 +52,22 @@ class ControlCenterReadModelTests(unittest.TestCase):
                     "quote_timestamp_ms": stamp,
                 }],
             }))
-            result = overview(db, state, now=now)
+            health = Path(tmp) / "health.json"
+            health.write_text(json.dumps({
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "status": "CONNECTED", "at": now.isoformat(),
+                "action": "HOLD", "active_symbols": ["ETHUSDT"],
+            }))
+            result = overview(db, state, health, now=now)
             position = result["positions"][0]
             self.assertEqual(position["mark_price"], 2347.1)
             self.assertAlmostEqual(position["unrealized_pnl"], 94.2)
             self.assertEqual(position["market_status"], "CANLI")
             self.assertEqual(result["system"]["market_data_status"], "CANLI")
             self.assertFalse(result["system"]["real_order_allowed"])
+            self.assertTrue(result["system"]["worker_healthy"])
+            self.assertEqual(result["system"]["worker_status"], "CONNECTED")
+            self.assertEqual(result["system"]["last_action"], "HOLD")
             self.assertEqual(position["current_stop_price"], 2254)
             self.assertEqual(position["tp1_price"], 2346)
             self.assertEqual(position["tp2_price"], 2392)
@@ -105,7 +114,13 @@ class ControlCenterReadModelTests(unittest.TestCase):
                 }],
             }))
             now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
-            position = overview(db, state, now=now)["positions"][0]
+            health = Path(tmp) / "health.json"
+            health.write_text(json.dumps({
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "status": "CONNECTED", "at": now.isoformat(),
+                "action": "HOLD", "active_symbols": ["BTCUSDT"],
+            }))
+            position = overview(db, state, health, now=now)["positions"][0]
             self.assertEqual(position["mark_price"], 59001)
             self.assertAlmostEqual(position["unrealized_pnl"], 99.9)
             self.assertEqual(position["market_status"], "GECİKMİŞ")
