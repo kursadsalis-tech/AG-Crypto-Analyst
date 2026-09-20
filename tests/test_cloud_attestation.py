@@ -49,7 +49,9 @@ class CloudAttestationTests(unittest.TestCase):
         self.assertFalse(payload["may_send_real_orders"])
         self.assertEqual(payload["sqlite_quick_check"], "ok")
         self.assertEqual(payload["positions"]["open"], 1)
-        self.assertEqual(payload["attestation_version"], "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER")\n        self.assertNotIn("hourly_job_status", payload)\n        self.assertNotIn("product_cycle_status", payload)
+        self.assertEqual(payload["attestation_version"], "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER")
+        self.assertNotIn("hourly_job_status", payload)
+        self.assertNotIn("product_cycle_status", payload)
         self.assertEqual(hashlib.sha256(encoded.encode()).hexdigest(), digest)
         self.assertEqual(json.loads(encoded), payload)
 
