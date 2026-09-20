@@ -1,5 +1,5 @@
 [Unit]
-Description=AGCA independent low-priority SQLite full integrity check
+Description=AGCA independent low-priority SQLite quick integrity check
 After=network-online.target
 
 [Service]
@@ -8,6 +8,7 @@ User=kursadsalis
 Group=kursadsalis
 WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
 Environment=AGCA_SQLITE_INTEGRITY_CACHE_PATH=/var/lib/agca/sqlite-integrity-health.json
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.sqlite_integrity_check
 Nice=10
 IOSchedulingClass=best-effort
