@@ -66,9 +66,10 @@ def ensure_tables(con):
 
 
 def _execution_evidence_clause():
-    # A learnable trade must prove both executable entry and executable final
-    # exit. evidence_eligible describes the decision cohort; it is not itself
-    # proof that bid/ask execution evidence exists.
+    # This gate is deliberately for validated performance/promotion metrics,
+    # not for memory or discovery.  Every closed experience is retained by
+    # experience_memory; only economically final, executable round trips may
+    # claim calibrated performance authority.
     return """
       AND EXISTS (
         SELECT 1 FROM paper_position_events ee
