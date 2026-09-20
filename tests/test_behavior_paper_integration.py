@@ -42,7 +42,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "direction": "LONG", "confidence": .60, "expected_net_edge_pct": .30,
             "experiment_tier": "EXPLORATORY_LEARNING",
             "current_price": 100.0, "target_price": 100.3, "risk_cap_pct": 10.0,
-            "stop_reference_pct": 2.0,
+            "stop_reference_pct": 2.0, "risk_per_trade_pct": 0.75,
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
@@ -229,6 +229,39 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
             "TIGHTUSDT",
         )
+
+    def test_dynamic_stop_distance_changes_position_size_for_same_risk_budget(self):
+        tight = self.candidate()
+        tight.update({
+            "decision_id": 27, "symbol": "TIGHTSIZEUSDT",
+            "stop_reference_pct": 1.0, "risk_cap_pct": 10.0,
+            "evidence_sha256": "7" * 64,
+        })
+        wide = self.candidate()
+        wide.update({
+            "decision_id": 28, "symbol": "WIDESIZEUSDT",
+            "stop_reference_pct": 5.0, "risk_cap_pct": 10.0,
+            "evidence_sha256": "8" * 64,
+        })
+        # Remove the exploratory base-margin ceiling so this test isolates
+        # stop-distance risk sizing rather than conviction sizing.
+        fake_tier = SimpleNamespace(
+            margin_fraction=1.0, leverage=1.0, market_type="SPOT",
+            tier="TEST", independent_signal_count=1, signal_sources=("TEST",),
+        )
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [tight, wide], "review": {},
+        }), patch.object(agent.risk_tiering, "tier_for", return_value=fake_tier), \
+                patch.object(agent, "MAX_NEW_PER_CYCLE", 2):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 2)
+        notionals = dict(self.con.execute(
+            "SELECT symbol,notional FROM paper_agent_positions"
+        ).fetchall())
+        self.assertGreater(notionals["TIGHTSIZEUSDT"], notionals["WIDESIZEUSDT"])
+        tight_risk = notionals["TIGHTSIZEUSDT"] * (0.01 + 2 * agent.FEE_RATE)
+        wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
+        self.assertAlmostEqual(tight_risk, wide_risk, places=6)
+        self.assertAlmostEqual(tight_risk, 75.0, places=6)
 
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
