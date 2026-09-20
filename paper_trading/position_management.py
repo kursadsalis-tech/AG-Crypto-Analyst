@@ -353,7 +353,30 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         "manager_version": VERSION, "symbol": live.symbol,
         "book_imbalance": live.book_imbalance, "taker_imbalance": live.taker_imbalance,
         "market_timestamp_ms": live.market_timestamp_ms,
+        "position_decision": {
+            "action": decision.action, "reason": decision.reason,
+            "thesis_supported": thesis_signal,
+            "thesis_signal_applicable": flow_is_entire_thesis,
+            "opposing_events_before": int(opposing_events),
+            "opposing_events_after": int(decision.opposing_events),
+            "protective_stop": float(stop_price),
+            "proposed_stop": float(decision.stop_price),
+            "liquidation_threshold": liquidation_threshold,
+            "forced_liquidation": forced_liquidation,
+            "remaining_quantity": float(remaining_qty),
+            "market_price": float(live.last_price),
+        },
     }
+    # Preserve the decision even when executable liquidity is missing.  A
+    # rejected exit is NOT a successful close, but must remain auditable.
+    if decision.action == "CLOSE" and (
+        decision.reason == "THESIS_INVALIDATED"
+        or decision.reason == "PROTECTIVE_STOP"
+        or forced_liquidation
+    ):
+        _event(con, position_id, market_at, observed_at, "RISK_EXIT_DECIDED",
+               decision.reason, live.last_price, None, 0, 0, 0, 0,
+               stop_price, decision.stop_price, evidence)
     if decision.action in {"HOLD", "UPDATE_STOP"}:
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,best_price=?,
