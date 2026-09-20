@@ -75,12 +75,36 @@ def rebalance(con, now):
         WHERE status IN ('ACTIVE','EXPLORING') ORDER BY strategy_id
     """).fetchall()
     scores = []
+    has_execution_ledger = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_events'"
+    ).fetchone())
     for strategy_id, _ in strategies:
+        # No ledger means no performance-grade evidence. Keep exploration
+        # neutral rather than reallocating virtual capital from legacy PnL.
         count, pnl, notional = con.execute("""
             SELECT count(*),coalesce(sum(net_pnl),0),coalesce(sum(notional),0)
-            FROM paper_agent_positions
-            WHERE strategy_id=? AND status='CLOSED' AND evidence_eligible=1
-        """, (strategy_id,)).fetchone()
+            FROM paper_agent_positions p
+            WHERE p.strategy_id=? AND p.status='CLOSED' AND p.evidence_eligible=1
+              AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'
+              AND EXISTS (
+                SELECT 1 FROM paper_position_events ee
+                WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
+                  AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
+                  AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
+                  AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
+                  AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+                  AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
+              )
+              AND EXISTS (
+                SELECT 1 FROM paper_position_events xe
+                WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
+                  AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
+                  AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
+                  AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
+                  AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+                  AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
+              )
+        """, (strategy_id,)).fetchone() if has_execution_ledger else (0, 0.0, 0.0)
         return_pct = 100.0 * float(pnl) / float(notional) if notional else 0.0
         # Until a sleeve has enough closed trades, equal exploration beats noise.
         score = max(-3.0, min(3.0, return_pct / 2.0)) if count >= MIN_CLOSED_FOR_REALLOCATION else 0.0
@@ -90,7 +114,7 @@ def rebalance(con, now):
     if len(weights) > 1:
         weights = [max(MIN_WEIGHT, min(MAX_WEIGHT, value)) for value in weights]
         weights = [value / sum(weights) for value in weights]
-    evidence = {"basis": "CLOSED_EVIDENCE_ELIGIBLE_NET_AFTER_ALL_COSTS",
+    evidence = {"basis": "VALIDATED_EXECUTABLE_ROUND_TRIP_FINAL_NET_AFTER_ALL_COSTS",
                 "minimum_closed_before_reallocation": MIN_CLOSED_FOR_REALLOCATION,
                 "single_trade_reallocation": False, "real_orders": False}
     for (strategy_id, count, pnl, return_pct, _), weight in zip(scores, weights):
