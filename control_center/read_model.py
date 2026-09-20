@@ -335,8 +335,18 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         (age for age in activity_ages.values() if age is not None),
         default=None,
     )
+    # A healthy heartbeat is not enough: surface silent runtime stalls.
+    work_stalled = (
+        worker_healthy
+        and observed_symbols > 0
+        and market_fresh == observed_symbols
+        and latest_work_age is not None
+        and latest_work_age > 300.0
+    )
     pipeline_state = (
-        "ÇALIŞIYOR"
+        "İŞ ÜRETMİYOR"
+        if work_stalled
+        else "ÇALIŞIYOR"
         if worker_healthy and observed_symbols > 0 and market_fresh == observed_symbols
         else "VERİ GECİKİYOR"
         if worker_healthy and observed_symbols > 0
@@ -364,8 +374,10 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "fresh_market_symbols": market_fresh,
             "latest_work_age_seconds": latest_work_age,
             "pipeline_explanation": (
-                "Worker ve canlı piyasa akışı sağlıklı."
+                "Worker, canlı piyasa akışı ve gerçek AGCA aktivitesi sağlıklı."
                 if pipeline_state == "ÇALIŞIYOR"
+                else "Worker ve piyasa akışı canlı ancak AGCA 5 dakikadan uzun süredir gerçek iş üretmiyor."
+                if pipeline_state == "İŞ ÜRETMİYOR"
                 else "Worker çalışıyor ancak piyasa verisinin bir bölümü güncel değil."
                 if pipeline_state == "VERİ GECİKİYOR"
                 else "Worker çalışıyor fakat canlı piyasa akışı görünmüyor."
@@ -424,10 +436,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             } for p in positions],
         },
         "incidents": ([{
-            "severity": "KRİTİK" if pipeline_state in {"WORKER SORUNLU", "PİYASA AKIŞI YOK"} else "UYARI",
+            "severity": "KRİTİK" if pipeline_state in {"WORKER SORUNLU", "PİYASA AKIŞI YOK", "İŞ ÜRETMİYOR"} else "UYARI",
             "kind": "PIPELINE_VISIBILITY",
             "message": (
-                "Sistem çalışıyor görünse de canlı piyasa akışı yok"
+                "Worker ve piyasa canlı ancak AGCA gerçek iş üretmiyor"
+                if pipeline_state == "İŞ ÜRETMİYOR"
+                else "Sistem çalışıyor görünse de canlı piyasa akışı yok"
                 if pipeline_state == "PİYASA AKIŞI YOK"
                 else "Canlı piyasa verisinin bir bölümü gecikiyor"
                 if pipeline_state == "VERİ GECİKİYOR"
