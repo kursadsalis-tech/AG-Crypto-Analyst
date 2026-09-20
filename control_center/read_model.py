@@ -149,6 +149,24 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     finally:
         con.close()
 
+    market_rows = []
+    for state in market.get("live_market", []):
+        freshness = _freshness_seconds(state, now)
+        market_rows.append({
+            "symbol": state.get("symbol"),
+            "market_type": state.get("market_type"),
+            "last_price": state.get("last_price"),
+            "best_bid": state.get("best_bid"),
+            "best_ask": state.get("best_ask"),
+            "quote_source": state.get("quote_source"),
+            "freshness_seconds": freshness,
+            "market_status": "CANLI" if freshness is not None and freshness <= 5.0 else "GECİKMİŞ",
+            "book_imbalance": state.get("book_imbalance"),
+            "taker_imbalance": state.get("taker_imbalance"),
+            "visible_quote_volume": state.get("visible_quote_volume"),
+        })
+    market_rows.sort(key=lambda row: (row["symbol"] or "", row["market_type"] or ""))
+
     positions = []
     total_unrealized = 0.0
     for row in rows:
@@ -263,6 +281,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "unrealized_pnl": total_unrealized,
         },
         "positions": positions,
+        "market": market_rows,
         "learning": ({
             "created_at": learning_row[0],
             "learning_version": learning_row[1],
