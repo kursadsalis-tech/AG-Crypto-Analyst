@@ -100,13 +100,38 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(notional, 40.0)
         self.assertIn("execution_size_multiplier=0.800", reason)
 
-    def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
+    def test_signal_count_alone_cannot_manufacture_leverage(self):
         candidate = self.candidate()
         candidate["experiment_tier"] = "PROMOTION_READY"
         candidate["evidence"]["directional_signals"] = [
             {"source": source, "direction": "LONG"}
             for source in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES")
         ]
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        leverage = self.con.execute(
+            "SELECT leverage FROM paper_agent_positions"
+        ).fetchone()[0]
+        self.assertEqual(leverage, 1)
+
+    def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
+        candidate = self.candidate()
+        candidate["experiment_tier"] = "PROMOTION_READY"
+        candidate["confidence"] = .65
+        candidate["expected_net_edge_pct"] = .30
+        candidate["evidence"]["directional_signals"] = [
+            {"source": source, "direction": "LONG"}
+            for source in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES")
+        ]
+        candidate["evidence"]["execution_calibration"] = {"feedback": {
+            "closed_count": 60, "independent_days": 12,
+            "mean_net_return_pct": .30, "cost_after_win_rate": .65,
+        }}
+        candidate["evidence"]["learned_pattern"] = {
+            "calibrated_net_edge_pct": .30, "calibrated_win_rate": .65,
+        }
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
