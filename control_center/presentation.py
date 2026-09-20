@@ -118,6 +118,18 @@ def operator_view(snapshot):
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
         "açık_pozisyonlar": positions,
+        "piyasa": [{
+            "başlık": f'{row.get("symbol") or "—"} — {row.get("market_type") or "—"}',
+            "son_fiyat": _price(row.get("last_price")),
+            "bid": _price(row.get("best_bid")),
+            "ask": _price(row.get("best_ask")),
+            "kaynak": row.get("quote_source") or "kaynak bilinmiyor",
+            "güncellik": _age(row.get("freshness_seconds")),
+            "durum": row.get("market_status", "GECİKMİŞ"),
+            "book_imbalance": row.get("book_imbalance"),
+            "taker_imbalance": row.get("taker_imbalance"),
+            "görünür_likidite": row.get("visible_quote_volume"),
+        } for row in snapshot.get("market", [])],
         "risk": {
             "mod": "PAPER — gerçek emir kapalı",
             "açık_pozisyon": risk.get("open_positions", 0),
