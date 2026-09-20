@@ -775,7 +775,40 @@ def select_new_positions(con, now, exchange_metadata=None):
     available_exposure = max(0.0, max_exposure - open_gross_exposure)
     selected = 0
     planned_entry = immediate_paper_entry_time(now)
+
+    # Rank by expected portfolio contribution, not percentage edge alone.
+    # The executable size estimate uses the same risk/leverage/cash constraints
+    # as selection, so a tiny high-% setup cannot crowd out a larger opportunity
+    # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
+    ranked_candidates = []
     for row in behavior_result["candidates"]:
+        tier = risk_tiering.tier_for(row)
+        base_margin = (
+            snapshot["equity"] * tier.margin_fraction
+            * float(row.get("execution_size_multiplier", 1.0))
+        )
+        risk_room = snapshot["equity"] * row["risk_cap_pct"] / 100.0
+        sizing_cap = min(
+            base_margin * tier.leverage,
+            max_exposure,
+            risk_room,
+            snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
+        )
+        expected_profit_usdt = (
+            max(0.0, sizing_cap)
+            * max(0.0, float(row["expected_net_edge_pct"])) / 100.0
+        )
+        ranked_candidates.append((expected_profit_usdt, row))
+    ranked_candidates.sort(
+        key=lambda item: (
+            item[0],
+            float(item[1]["expected_net_edge_pct"]),
+            float(item[1]["confidence"]),
+        ),
+        reverse=True,
+    )
+
+    for _, row in ranked_candidates:
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
             continue
