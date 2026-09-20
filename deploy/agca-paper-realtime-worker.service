@@ -1,7 +1,7 @@
 [Unit]
 Description=AGCA real-time PAPER position manager
 Wants=network-online.target
-After=network-online.target agca-cloud-worker.service
+After=network-online.target
 
 [Service]
 Type=simple
