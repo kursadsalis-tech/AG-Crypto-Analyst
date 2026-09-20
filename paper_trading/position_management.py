@@ -171,7 +171,16 @@ def initialize_open_positions(con, now):
                ("STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
                 if stale_recovery else "ENTRY_RISK_SNAPSHOT"),
                float(entry_price), None, 0, 0, 0, 0,
-               None, state.stop_price, {"risk_stop_pct": state.stop_distance_pct})
+               None, state.stop_price, {
+                   "risk_stop_pct": state.stop_distance_pct,
+                   "raw_risk_stop_reference_pct": float(risk[0]) if risk else None,
+                   "entry_price": float(entry_price),
+                   "direction": direction,
+                   "margin_allocated": float(margin_allocated or 0),
+                   "risk_snapshot_available": bool(risk),
+                   "stop_policy_min_pct": 0.5,
+                   "stop_policy_max_pct": 5.0,
+               })
         initialized += 1
     con.commit()
     return {"initialized": initialized, "blocked": blocked}
