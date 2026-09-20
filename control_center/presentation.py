@@ -155,6 +155,15 @@ def operator_view(snapshot):
             "kaynak": row.get("decision_source") or "—",
             "durum": row.get("status") or "DEĞERLENDİRİLİYOR",
             "neden": row.get("reason") or "—",
+            "mevcut_pozisyona_göre": (
+                "DAHA GÜÇLÜ ADAY"
+                if row.get("beats_open_position_on_observed_return")
+                else "ROTASYON KANITI YOK"
+            ),
+            "açık_pozisyon_referansı": (
+                round(float(row["open_position_return_reference_pct"]), 3)
+                if row.get("open_position_return_reference_pct") is not None else None
+            ),
         } for row in brain.get("candidates", [])],
     }
     selection = snapshot.get("selection")
