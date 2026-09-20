@@ -66,6 +66,7 @@ async def run():
     stop_event = asyncio.Event()
     last_health_at = None
     selection_task = None
+    selection_pending = False
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -81,18 +82,22 @@ async def run():
         write_health(state, error=error, active_symbols=symbols())
 
     async def selection_once():
+        nonlocal selection_pending
         try:
-            result = await asyncio.to_thread(run_behavior_selection)
-            write_health("CONNECTED", selection_trigger="LIVE_EVENT",
-                         decision_status=result.get("decision_status"),
-                         selected=result.get("selected", 0))
-        except Exception as exc:
-            write_health("DEGRADED", error=f"LIVE_SELECTION_{type(exc).__name__}")
+            while selection_pending and not stop_event.is_set():
+                selection_pending = False
+                try:
+                    result = await asyncio.to_thread(run_behavior_selection)
+                    write_health("CONNECTED", selection_trigger="LIVE_EVENT",
+                                 decision_status=result.get("decision_status"),
+                                 selected=result.get("selected", 0))
+                except Exception as exc:
+                    write_health("DEGRADED", error=f"LIVE_SELECTION_{type(exc).__name__}")
+        finally:
+            selection_pending = False
 
     async def on_state(state, observed_ms):
-        nonlocal last_health_at, selection_task
-        if selection_task is None or selection_task.done():
-            selection_task = asyncio.create_task(selection_once())
+        nonlocal last_health_at, selection_task, selection_pending
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
@@ -105,6 +110,11 @@ async def run():
         result = position_management.process_market_state(
             con, state, observed_at, rule,
         )
+        # Exit management takes priority over entry selection on each event.
+        # Coalesce events arriving during a selection into one fresh rerun.
+        selection_pending = True
+        if selection_task is None or selection_task.done():
+            selection_task = asyncio.create_task(selection_once())
         if result.get("status") == "POSITION_CLOSED":
             reviews = experience_memory.review_closed_positions(con, observed_at)
             learning = trade_learning.run(con, FORWARD_COHORT, observed_at)
