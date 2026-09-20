@@ -336,12 +336,15 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         default=None,
     )
     # A healthy heartbeat is not enough: surface silent runtime stalls.
+    last_action = str(health.get("action") or "").upper()
+    healthy_hold = last_action in {"HOLD", "NO_ACTION", "NO_OPPORTUNITY"}
     work_stalled = (
         worker_healthy
         and observed_symbols > 0
         and market_fresh == observed_symbols
         and latest_work_age is not None
         and latest_work_age > 300.0
+        and not healthy_hold
     )
     pipeline_state = (
         "İŞ ÜRETMİYOR"
@@ -368,6 +371,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "worker_healthy": worker_healthy,
             "heartbeat_age_seconds": heartbeat_age,
             "last_action": health.get("action"),
+            "healthy_hold": healthy_hold,
             "active_symbols": health.get("active_symbols"),
             "pipeline_state": pipeline_state,
             "observed_symbols": observed_symbols,
