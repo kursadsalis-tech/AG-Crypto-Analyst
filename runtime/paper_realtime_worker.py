@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.runtime_store import connect
-from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables
+from paper_trading.crypto_profit_agent import (
+    DB_NAME, FORWARD_COHORT, ensure_tables, fill_pending_from_live_state,
+    select_new_positions,
+)
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
@@ -65,6 +68,7 @@ async def run():
     position_management.ensure_tables(con)
     stop_event = asyncio.Event()
     last_health_at = None
+    last_selection_attempt_at = None
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -80,8 +84,20 @@ async def run():
         write_health(state, error=error, active_symbols=symbols())
 
     async def on_state(state, observed_ms):
-        nonlocal last_health_at
+        nonlocal last_health_at, last_selection_attempt_at
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
+        # One authoritative live callback now drives decision -> PAPER entry ->
+        # open-position management. The decision core still consumes only
+        # completed causal minute evidence; the fill uses this exact live state.
+        if (last_selection_attempt_at is None or
+                (observed_at - last_selection_attempt_at).total_seconds() >= 1.0):
+            select_new_positions(con, observed_at, metadata)
+            last_selection_attempt_at = observed_at
+        live_filled, live_cancelled = fill_pending_from_live_state(
+            con, observed_at, state, metadata
+        )
+        if live_filled or live_cancelled:
+            position_management.initialize_open_positions(con, observed_at)
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
             write_health("DEGRADED", error="LIVE_SYMBOL_RULES_UNAVAILABLE",
