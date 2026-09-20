@@ -223,8 +223,10 @@ async def run():
         # completed causal minute evidence; the fill uses this exact live state.
         if (last_selection_attempt_at is None or
                 (observed_at - last_selection_attempt_at).total_seconds() >= 1.0):
-            selection_result = select_new_positions(con, observed_at, metadata)
-            selected = int(selection_result.get("selected_count", 0))
+            selection_result = {}
+            selected = select_new_positions(
+                con, observed_at, metadata, telemetry=selection_result
+            )
             latest_scan = con.execute(
                 """SELECT core_status,candidate_count,selected_count,
                           active_position_count,capacity,available_exposure,
