@@ -99,7 +99,16 @@ def pct_change(new_value, old_value):
 
 def requested_range(now=None):
     now = (now or utcnow()).astimezone(timezone.utc)
-    end = now.replace(minute=0, second=0, microsecond=0)
+    # Binance 1h kline close timestamps are HH:59:59.999.  The REST endpoint
+    # may not expose the just-closed candle at the exact HH:00 scheduler tick,
+    # so give ingestion a small bounded publication grace period instead of
+    # demanding a candle that may not be queryable yet.  Forecast freshness is
+    # still enforced independently by validate_forecast_freshness().
+    publication_grace = timedelta(
+        seconds=max(0.0, float(os.getenv("AGCA_CANDLE_PUBLICATION_GRACE_SECONDS", "5")))
+    )
+    effective_now = now - publication_grace
+    end = effective_now.replace(minute=0, second=0, microsecond=0)
     start = end - timedelta(days=LOOKBACK_DAYS)
     fetch_start = start - timedelta(hours=WARMUP_HOURS)
     return start, fetch_start, end
