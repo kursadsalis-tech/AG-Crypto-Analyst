@@ -51,7 +51,10 @@ class ControlCenterServerTests(unittest.TestCase):
                 self.assertIn(f'id="{panel}"', html)
                 self.assertIn(f'data-tab="{panel}"', html)
             self.assertIn('fetch("/api/v1/overview"', html)
-            self.assertIn("market-data-mismatch", html)
+            self.assertIn("Canlı Aktivite", html)
+            self.assertIn('id="activityPanel"', html)
+            self.assertIn('id="activityRows"', html)
+                        self.assertIn("market-data-mismatch", html)
             self.assertIn('method:"POST"', html)
         finally:
             httpd.shutdown()
