@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from paper_trading.crypto_profit_agent import DB_NAME
+from paper_trading.position_policy import TP1_R, TP2_R
 
 MARKET_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_MARKET_STATE",
@@ -87,10 +88,23 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
                FROM paper_agent_portfolio WHERE portfolio_id=1"""
         ).fetchone()
         rows = con.execute(
-            """SELECT position_id,symbol,market_type,direction,entry_time,
-                      entry_price,quantity,notional,leverage,selection_reason
-               FROM paper_agent_positions
-               WHERE status='OPEN' ORDER BY position_id"""
+            """SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
+                      p.entry_price,p.quantity,p.notional,p.leverage,p.selection_reason,
+                      m.stop_distance_pct,m.current_stop_price,m.tp1_done,m.tp2_done,
+                      m.remaining_quantity
+               FROM paper_agent_positions p
+               LEFT JOIN paper_position_management m USING(position_id)
+               WHERE p.status='OPEN' ORDER BY p.position_id"""
+        ).fetchall()
+        closed_rows = con.execute(
+            """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
+                      exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
+               FROM (
+                   SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
+                          exit_time,exit_price,quantity,net_pnl,close_reason,
+                          entry_fee + exit_fee AS total_fees
+                   FROM paper_agent_positions WHERE status='CLOSED'
+               ) ORDER BY exit_time DESC,position_id DESC LIMIT 100"""
         ).fetchall()
     finally:
         con.close()
@@ -99,7 +113,8 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
     total_unrealized = 0.0
     for row in rows:
         (position_id, symbol, market_type, direction, entry_time, entry_price,
-         quantity, notional, leverage, reason) = row
+         quantity, notional, leverage, reason, stop_distance_pct, current_stop_price,
+         tp1_done, tp2_done, remaining_quantity) = row
         state = states.get((symbol, market_type), {})
         mark = _mark_price(direction, state)
         pnl = _live_pnl(direction, entry_price, quantity, mark)
@@ -128,6 +143,23 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
                 else "GECİKMİŞ"
             ),
             "decision_reason": reason,
+            "current_stop_price": current_stop_price,
+            "stop_distance_pct": stop_distance_pct,
+            "tp1_price": (
+                float(entry_price) * (1 + float(stop_distance_pct) * TP1_R / 100)
+                if direction == "LONG" and entry_price is not None and stop_distance_pct is not None
+                else float(entry_price) * (1 - float(stop_distance_pct) * TP1_R / 100)
+                if entry_price is not None and stop_distance_pct is not None else None
+            ),
+            "tp2_price": (
+                float(entry_price) * (1 + float(stop_distance_pct) * TP2_R / 100)
+                if direction == "LONG" and entry_price is not None and stop_distance_pct is not None
+                else float(entry_price) * (1 - float(stop_distance_pct) * TP2_R / 100)
+                if entry_price is not None and stop_distance_pct is not None else None
+            ),
+            "tp1_done": bool(tp1_done),
+            "tp2_done": bool(tp2_done),
+            "remaining_quantity": remaining_quantity,
         })
 
     initial, cash, realized, fees = portfolio or (0.0, 0.0, 0.0, 0.0)
@@ -151,4 +183,10 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
             "unrealized_pnl": total_unrealized,
         },
         "positions": positions,
+        "closed_positions": [{
+            "position_id": r[0], "symbol": r[1], "market_type": r[2],
+            "direction": r[3], "entry_time": r[4], "entry_price": r[5],
+            "exit_time": r[6], "exit_price": r[7], "quantity": r[8],
+            "net_pnl": r[9], "close_reason": r[10], "total_fees": r[11],
+        } for r in closed_rows],
     }
