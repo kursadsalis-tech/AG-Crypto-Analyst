@@ -367,7 +367,14 @@ def learned_patterns(con, now=None):
     }
 
 
-def _latest_risk(con):
+def _latest_risk(con, now=None):
+    """Return only a fresh, internally time-valid risk snapshot.
+
+    Behavior PAPER selection previously trusted the newest risk row regardless
+    of age, while the product signal gate correctly enforced a 30-minute TTL.
+    Keep PAPER experimentation fail-closed to the same freshness boundary.
+    """
+    now = now or datetime.now(timezone.utc)
     latest = con.execute("SELECT MAX(id) FROM risk_policy_snapshots").fetchone()[0]
     if latest is None:
         return {}
@@ -376,13 +383,36 @@ def _latest_risk(con):
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
         return {}
-    return {row[0]: {"allowed": bool(row[1]), "cap_pct": float(row[2]),
-                     "price": float(row[3]), "risk_as_of": str(row[4]),
-                     "policy_created_at": str(policy[0])}
-            for row in con.execute("""
-                SELECT symbol,new_position_allowed,max_position_pct,price,as_of
-                FROM asset_risk_snapshots WHERE policy_snapshot_id=?
-            """, (latest,)).fetchall()}
+    try:
+        policy_time = datetime.fromisoformat(str(policy[0]).replace("Z", "+00:00"))
+        if policy_time.tzinfo is None:
+            policy_time = policy_time.replace(tzinfo=timezone.utc)
+        age_seconds = (now - policy_time.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+        return {}
+    if age_seconds < -60.0 or age_seconds > 30.0 * 60.0:
+        return {}
+
+    risks = {}
+    for row in con.execute("""
+        SELECT symbol,new_position_allowed,max_position_pct,price,as_of
+        FROM asset_risk_snapshots WHERE policy_snapshot_id=?
+    """, (latest,)).fetchall():
+        try:
+            asset_time = datetime.fromisoformat(str(row[4]).replace("Z", "+00:00"))
+            if asset_time.tzinfo is None:
+                asset_time = asset_time.replace(tzinfo=timezone.utc)
+            asset_age = (now - asset_time.astimezone(timezone.utc)).total_seconds()
+        except (TypeError, ValueError):
+            continue
+        if asset_age < -60.0 or asset_age > 30.0 * 60.0:
+            continue
+        risks[row[0]] = {
+            "allowed": bool(row[1]), "cap_pct": float(row[2]),
+            "price": float(row[3]), "risk_as_of": str(row[4]),
+            "policy_created_at": str(policy[0]),
+        }
+    return risks
 
 
 def evaluate(con, now=None):
@@ -445,7 +475,7 @@ def evaluate(con, now=None):
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
-    risks = _latest_risk(con)
+    risks = _latest_risk(con, now)
     events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
         FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
         ORDER BY kind,event_id""", (latest,)).fetchall()
