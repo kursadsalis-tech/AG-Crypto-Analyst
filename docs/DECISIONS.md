@@ -911,3 +911,36 @@ durdurması hedef sözleşmesini ihlal eder.
   sonra tek yeni oneshot başlatır. Küçük sağlık dosyası yazılır ve yalnız
   `PAPER_ONLY` kabul edilir. Unified Forecast baseline-only ve gerçek emir
   yetkisi kapalı kalır.
+
+
+---
+
+## Karar 027 - Sürekli Deneyim Öğrenmesi ve Kazanılmış Yetki
+
+AGCA hiçbir deneyimi çöpe atmaz. Her işlem ve işlem girişimi; karar bağlamı,
+kullanılan kanıtlar, risk planı, execution kalitesi, maliyetler, piyasa tepkisi
+ve ekonomik sonuç birlikte sorgulanarak deneyim hafızasına alınabilir.
+
+Kanıt eksikliği öğrenmeyi yasaklamaz. Bunun yerine deneyimin epistemik güvenini,
+sonuç kesinliğini ve hangi tür çıkarımlara dayanak olabileceğini sınırlar.
+Eksik veya zayıf kanıtın kendisi de öğrenilecek bir sistem olayıdır.
+
+Öğrenme ile davranış değiştirme yetkisi ayrıdır:
+
+- GÖZLEM/KEŞİF: Her deneyim ders veya hipotez üretebilir.
+- DOĞRULAMA: Kanıt kalitesi, bağımsız tekrarlar, forward sonuçlar ve
+  net-after-cost ekonomi hipotezin güvenini artırır veya azaltır.
+- YETKİ: Bir ders ancak kazanılmış güven ve mevcut risk/governance sınırları
+  yeterliyse sizing, leverage, seçim veya başka PAPER davranışını etkileyebilir.
+- Gerçek emir yetkisi bu karardan doğmaz; PAPER_ONLY / real_order_allowed=0
+  sınırı aynen korunur.
+
+Temel soru yalnızca "işlem gerçekleşti mi?" değildir:
+"Hangi bilgiyle karar verdik, hangi kanıta sahibiz, hangi riskle girdik,
+execution gerçekte nasıl oldu, hangi maliyetleri ödedik, piyasa nasıl tepki
+verdi, ne kazandık/kaybettik, bundan ne öğrendik ve bu dersin güven düzeyi
+nedir?"
+
+Bu karar, eksik kanıtlı deneyimleri hafızadan silmek yerine açık limitations ve
+güven sınıfıyla saklamayı; ancak doğrulanmış performans/promotion metriklerini
+kanıt kalitesi yetersiz deneyimlerle kirletmemeyi gerektirir.
