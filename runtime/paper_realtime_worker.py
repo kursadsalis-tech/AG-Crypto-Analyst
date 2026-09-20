@@ -1,4 +1,4 @@
-"""Single-process real-time manager for open PAPER positions."""
+"""Real-time PAPER position manager and live candidate subscription."""
 from __future__ import annotations
 
 import asyncio
@@ -73,10 +73,20 @@ async def run():
 
     def symbols():
         position_management.initialize_open_positions(con, now())
-        return [tuple(row) for row in con.execute(
+        open_positions = [tuple(row) for row in con.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status='OPEN' ORDER BY symbol"""
         ).fetchall()]
+        # Keep live subscriptions active without open positions. Candidate symbols
+        # are discovered from recent eligible market observations, not a fixed
+        # coin allowlist. Open positions are never displaced by the cap.
+        candidates = con.execute("""
+            SELECT DISTINCT symbol FROM market_behavior_minute_features
+            WHERE eligible_for_learning=1
+              AND minute_end_timestamp_ms >= ?
+            ORDER BY minute_end_timestamp_ms DESC LIMIT 100
+        """, (int(now().timestamp() * 1000) - 180000,)).fetchall()
+        return sorted(set(open_positions) | {(row[0], "SPOT") for row in candidates})
 
     def health(state, error):
         write_health(state, error=error, active_symbols=symbols())
