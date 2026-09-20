@@ -104,6 +104,36 @@ def operator_view(snapshot):
         "NO_STABLE_UNDERPERFORMANCE_PATTERN": "Kararlı düşük performans örüntüsü yok",
     }
     risk = snapshot.get("risk", {})
+    selection = snapshot.get("selection")
+    if selection:
+        reasons = selection.get("reason_counts") or {}
+        reason_text = ", ".join(
+            f"{key}: {value}" for key, value in sorted(
+                reasons.items(), key=lambda item: item[1], reverse=True
+            )[:4]
+        ) or "engel kaydı yok"
+        selection_view = {
+            "zaman": selection.get("created_at") or "—",
+            "durum": selection.get("core_status") or "—",
+            "aday": selection.get("candidate_count", 0),
+            "seçilen": selection.get("selected_count", 0),
+            "aktif_pozisyon": selection.get("active_position_count", 0),
+            "kapasite": selection.get("capacity", 0),
+            "kullanılabilir_maruz_kalma": _money(selection.get("available_exposure")),
+            "nedenler": reason_text,
+            "özet": (
+                f'{selection.get("candidate_count", 0)} aday incelendi, '
+                f'{selection.get("selected_count", 0)} işlem seçildi. '
+                f'Başlıca nedenler: {reason_text}.'
+            ),
+        }
+    else:
+        selection_view = {
+            "zaman": "—", "durum": "KAYIT YOK", "aday": 0, "seçilen": 0,
+            "aktif_pozisyon": 0, "kapasite": 0,
+            "kullanılabilir_maruz_kalma": "—", "nedenler": "—",
+            "özet": "Henüz kanonik fırsat taraması kaydı yok.",
+        }
     return {
         "durum": health,
         "gerçek_çalışma_durumu": system.get("pipeline_state", "BİLİNMİYOR"),
@@ -128,6 +158,7 @@ def operator_view(snapshot):
         "açık_pozisyon_tutarı": _money(portfolio.get("open_position_notional")),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
+        "son_fırsat_taraması": selection_view,
         "aktivite": [{
             "aşama": row.get("name"),
             "son_aktivite": _age(row.get("age_seconds")),
