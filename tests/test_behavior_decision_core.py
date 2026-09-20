@@ -37,20 +37,22 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 event_id TEXT,available_at TEXT,direction TEXT
             );
             CREATE TABLE risk_policy_snapshots(
-                id INTEGER PRIMARY KEY,created_at TEXT,new_positions_allowed INTEGER
+                id INTEGER PRIMARY KEY,created_at TEXT,new_positions_allowed INTEGER,
+                risk_per_trade_pct REAL
             );
             CREATE TABLE asset_risk_snapshots(
                 policy_snapshot_id INTEGER,symbol TEXT,new_position_allowed INTEGER,
-                max_position_pct REAL,price REAL,as_of TEXT
+                max_position_pct REAL,price REAL,as_of TEXT,
+                volatility_stop_reference_pct REAL
             );
             CREATE TABLE paper_agent_positions(
                 position_id INTEGER PRIMARY KEY,decision_reference_id INTEGER,
                 decision_source TEXT,status TEXT,evidence_eligible INTEGER,
                 net_pnl REAL,notional REAL,exit_time TEXT,direction TEXT
             );
-            INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1);
+            INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1,0.75);
             INSERT INTO asset_risk_snapshots VALUES(
-                1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00'
+                1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00',2.0
             );
         """)
 
