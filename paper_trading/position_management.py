@@ -140,9 +140,18 @@ def initialize_open_positions(con, now):
     initialized, blocked = 0, []
     for position_id, symbol, direction, entry_time, entry_price, quantity, margin_allocated, fee in rows:
         risk = con.execute("""
-            SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
+            SELECT volatility_stop_reference_pct,price FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
         """, (symbol, entry_time)).fetchone()
+        thesis_row = con.execute("""
+            SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=?
+        """, (position_id,)).fetchone()
+        thesis = {}
+        if thesis_row:
+            try:
+                thesis = json.loads(thesis_row[0] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                thesis = {}
         stale_recovery = not risk and now >= parse(con.execute(
             "SELECT due_time FROM paper_agent_positions WHERE position_id=?",
             (position_id,),
@@ -155,7 +164,24 @@ def initialize_open_positions(con, now):
         # is immaterial here because the first fresh tick is forced through the
         # maximum-hold exit; MAX_STOP_PCT is used only to create the accounting
         # state required for that audited close.
-        stop_reference = float(risk[0]) if risk else 5.0
+        volatility_stop = float(risk[0]) if risk else 5.0
+        # A setup-specific invalidation may tighten the volatility envelope when
+        # the frozen thesis actually provides a price level.  Never invent one.
+        invalidation_price = thesis.get("invalidation_price")
+        invalidation_stop = None
+        if invalidation_price is not None:
+            try:
+                invalidation_price = float(invalidation_price)
+                if direction == "LONG" and 0 < invalidation_price < float(entry_price):
+                    invalidation_stop = 100.0 * (float(entry_price)-invalidation_price) / float(entry_price)
+                elif direction == "SHORT" and invalidation_price > float(entry_price):
+                    invalidation_stop = 100.0 * (invalidation_price-float(entry_price)) / float(entry_price)
+            except (TypeError, ValueError):
+                invalidation_stop = None
+        stop_reference = (
+            min(volatility_stop, invalidation_stop)
+            if invalidation_stop is not None else volatility_stop
+        )
         state = initialize(direction, float(entry_price), stop_reference)
         con.execute("""INSERT INTO paper_position_management(
             position_id,manager_version,initialized_at,last_market_at,
@@ -174,6 +200,14 @@ def initialize_open_positions(con, now):
                None, state.stop_price, {
                    "risk_stop_pct": state.stop_distance_pct,
                    "raw_risk_stop_reference_pct": float(risk[0]) if risk else None,
+                   "thesis_invalidation_price": invalidation_price,
+                   "thesis_invalidation_stop_pct": invalidation_stop,
+                   "selected_stop_reference_pct": stop_reference,
+                   "stop_reference_basis": (
+                       "THESIS_INVALIDATION_WITHIN_VOLATILITY_ENVELOPE"
+                       if invalidation_stop is not None and invalidation_stop <= volatility_stop
+                       else "VOLATILITY_ENVELOPE"
+                   ),
                    "entry_price": float(entry_price),
                    "direction": direction,
                    "margin_allocated": float(margin_allocated or 0),
