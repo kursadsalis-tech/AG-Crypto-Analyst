@@ -1,0 +1,38 @@
+name: AGCA Core Validation
+
+on:
+  push:
+    branches: [main, agent/vm-checkpoint-20260919]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Compile critical runtime
+        run: |
+          python -m py_compile runtime/paper_realtime_worker.py
+          python -m py_compile runtime/paper_selection_cycle.py
+          python -m py_compile paper_trading/crypto_profit_agent.py
+          python -m py_compile paper_trading/execution_market_data.py
+          python -m py_compile paper_trading/position_management.py
+          python -m py_compile paper_trading/behavior_decision_core.py
+          python -m py_compile paper_trading/trade_learning.py
+          python -m py_compile paper_trading/continuous_improvement.py
+          python -m py_compile paper_trading/strategy_allocator.py
+      - name: Run focused PAPER tests
+        env:
+          AGCA_EXECUTION_MODE: PAPER_ONLY
+        run: |
+          python -m unittest discover -s tests -p 'test_paper_selection_cycle.py'
+          python -m unittest discover -s tests -p 'test_position_management.py'
+          python -m unittest discover -s tests -p 'test_behavior_decision_core.py'
