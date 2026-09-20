@@ -945,7 +945,7 @@ Bu karar, eksik kanıtlı deneyimleri hafızadan silmek yerine açık limitation
 güven sınıfıyla saklamayı; ancak doğrulanmış performans/promotion metriklerini
 kanıt kalitesi yetersiz deneyimlerle kirletmemeyi gerektirir.
 
-## Karar 027 - Mac-Bağımsız Bulut Runtime ve Tek Yazıcı Geçişi
+## Tarihsel Karar 027 (2026-08-18) - Mac-Bağımsız Bulut Runtime ve Tek Yazıcı Geçişi [GEÇİŞ PLANI; GÜNCEL YÜRÜTME YETKİSİ DEĞİL]
 
 Supabase/PostgreSQL uzak runtime deposu tek başına AGCA süreçlerini çalıştırmaz.
 Nihai operasyonel hedef, mevcut Python ürününü kalıcı Ubuntu VM üzerinde
@@ -970,3 +970,8 @@ Bağlayıcı geçiş kuralları:
 - Gerçek secret, SQLite dosyası veya API anahtarı GitHub'a yazılmaz.
 - Cloud taşınması model, eşik, SHADOW/PAPER_ONLY durumu, Risk Manager vetosu
   veya gerçek işlem yetkisini değiştirmez.
+
+
+## Birleştirme notu (2026-09-20) - karar yetkisi
+
+Yukarıdaki tarihsel Mac/cloud geçiş planı, daha sonra kabul edilmiş Karar 031–038'in yerine geçmez. Özellikle `analysis.forward_shadow_cycle` ve `decision_engine.hourly_forecast_job` zamanlayıcılarının varlığı, bunlara bağımsız PAPER karar veya ikinci pozisyon açma yetkisi vermez. Aktif davranış seçimi `paper_trading.behavior_decision_core` üzerinden ve tek PAPER muhasebe/risk sözleşmesiyle yürütülür. Eski geçiş takvimi ve 39/39 gibi dönemsel doğrulama sayıları güncel başarı veya deployment kanıtı değildir. Mevcut VM'nin çalıştırdığı birimler ve SQLite durumu doğrulanmadan eski Ubuntu installer, Docker worker veya Mac LaunchAgent'lerinden hiçbiri otomatik olarak devreye alınmaz.
