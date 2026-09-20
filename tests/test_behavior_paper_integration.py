@@ -422,7 +422,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
                 FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_UNAVAILABLE"),
+            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
         )
 
     def test_missing_okx_spot_management_route_cancels_before_open(self):
