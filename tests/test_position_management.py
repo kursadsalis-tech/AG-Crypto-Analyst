@@ -265,8 +265,8 @@ class PositionManagementTests(unittest.TestCase):
             selection_reason,leverage,margin_allocated
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
             999,-999,"test","test","LEVUSDT",1,"LONG","CANCELLED",
-            self.now.isoformat(),self.now.isoformat(),self.now.isoformat(),
-            self.now.isoformat(),1000.0,.6,.6,.4,101.0,"test","f"*64,
+            ENTRY.isoformat(),ENTRY.isoformat(),ENTRY.isoformat(),
+            ENTRY.isoformat(),1000.0,.6,.6,.4,101.0,"test","f"*64,
             "legacy",5.0,None,
         ))
         pm.ensure_tables(self.con)
