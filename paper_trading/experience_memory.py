@@ -222,8 +222,19 @@ def review_closed_positions(con, now=None):
         if not economics_valid:
             economics_final = False
             evidence_confidence = "LOW"
-        net_return_pct = 100.0 * net_pnl / notional if notional > 0 and math.isfinite(notional) else None
-        margin_return_pct = 100.0 * net_pnl / margin if margin > 0 and math.isfinite(margin) else None
+        net_return_pct = (
+            100.0 * net_pnl / notional
+            if notional > 0 and math.isfinite(notional) and math.isfinite(net_pnl)
+            else None
+        )
+        margin_return_pct = (
+            100.0 * net_pnl / margin
+            if margin > 0 and math.isfinite(margin) and math.isfinite(net_pnl)
+            else None
+        )
+        # The SQL review column is NOT NULL. Keep the exact unknown value in
+        # review_json; use a finite sentinel only for this legacy index column.
+        indexed_return_pct = net_return_pct if net_return_pct is not None else 0.0
         outcome = "WIN" if net_pnl > 0 else "LOSS" if net_pnl < 0 else "BREAKEVEN"
         costs = {"fees": float(entry_fee or 0)+float(exit_fee or 0),
                  "spread": float(entry_spread or 0)+float(exit_spread or 0),
@@ -281,7 +292,7 @@ def review_closed_positions(con, now=None):
                 policy_mutation_allowed
             ) VALUES(?,?,?,?,?,?,?,?,0,0,0)
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
-              net_return_pct, _canonical(review)))
+              indexed_return_pct, _canonical(review)))
         created += 1
     con.commit()
     return created
