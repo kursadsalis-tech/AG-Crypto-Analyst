@@ -22,6 +22,13 @@ class RiskTieringTests(unittest.TestCase):
             {"source": name, "direction": "LONG"}
             for name in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES", "WHALE")
         ]
+        candidate["evidence"]["execution_calibration"] = {"feedback": {
+            "closed_count": 60, "independent_days": 12,
+            "mean_net_return_pct": .30, "cost_after_win_rate": .65,
+        }}
+        candidate["evidence"]["learned_pattern"] = {
+            "calibrated_net_edge_pct": .30, "calibrated_win_rate": .65,
+        }
         tier = tier_for(candidate)
         self.assertEqual(tier.leverage, 5.0)
         self.assertEqual(tier.margin_fraction, .02)
@@ -36,7 +43,7 @@ class RiskTieringTests(unittest.TestCase):
         ]
         tier = tier_for(candidate)
         self.assertEqual(tier.independent_signal_count, 2)
-        self.assertEqual(tier.leverage, 2.0)
+        self.assertEqual(tier.leverage, 1.0)
 
     def test_single_source_short_stays_one_x_perpetual(self):
         candidate = self.candidate()
