@@ -906,12 +906,21 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     } for rank, (profit_per_risk, expected_profit, row)
        in enumerate(ranked_candidates[:12], start=1)]
 
+    candidate_outcomes = {
+        (row["symbol"], row["direction"], row["horizon"]): {
+            "status": "DEĞERLENDİRİLİYOR", "reason": None
+        } for _, _, row in ranked_candidates
+    }
+
     for _, _, row in ranked_candidates:
+        outcome_key = (row["symbol"], row["direction"], row["horizon"])
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "PER_CYCLE_NEW_POSITION_CAP_REACHED"}
             continue
         if row["symbol"] in active_symbols:
             reject("SYMBOL_ALREADY_ACTIVE")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "SYMBOL_ALREADY_ACTIVE"}
             continue
         tier = risk_tiering.tier_for(row)
         base_margin = (
@@ -940,6 +949,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"}
             continue
         if exchange_metadata is not None:
             metadata = exchange_metadata.get(tier.market_type)
@@ -948,7 +958,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             except ExchangeMetadataError:
                 rules = None
             if rules is None:
-                reject(f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE")
+                reason_code = f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE"
+                reject(reason_code)
+                candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
                 continue
             executable = estimate_order_rules(
                 reference_price=float(row["current_price"]),
@@ -958,7 +970,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 price_tick=rules.price_tick, min_notional=rules.min_notional,
             )
             if executable.status == "REJECTED":
-                reject(f"PRESELECTION_{executable.reason}")
+                reason_code = f"PRESELECTION_{executable.reason}"
+                reject(reason_code)
+                candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
                 continue
         reason = (
             f"BEHAVIOR {row['horizon']}h {row['direction']} | "
@@ -1018,6 +1032,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 strategy_weight=strategy_weight, selected_at=now,
                 planned_entry_time=planned_entry,
             )
+            candidate_outcomes[outcome_key] = {"status": "SEÇİLDİ", "reason": "PAPER_POSITION_SELECTED"}
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
@@ -1026,12 +1041,17 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             snapshot["cash"] -= reservation
         else:
             reject("DECISION_ALREADY_SELECTED")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "DECISION_ALREADY_SELECTED"}
     record_run(selected, available_exposure)
     con.commit()
     if telemetry is not None:
         telemetry.update({
             "selected_count": selected,
-            "candidates": candidate_xray,
+            "candidates": [
+                {**row, **candidate_outcomes.get(
+                    (row["symbol"], row["direction"], row["horizon"]), {}
+                )} for row in candidate_xray
+            ],
             "core_status": behavior_result["status"],
             "rejection_reasons": dict(reasons),
         })
