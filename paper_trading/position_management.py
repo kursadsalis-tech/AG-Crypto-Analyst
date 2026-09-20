@@ -119,7 +119,12 @@ def ensure_tables(con):
 
 
 def initialize_open_positions(con, now):
-    ensure_tables(con)
+    # Schema setup is a caller/startup responsibility.  This function is on the
+    # realtime hot path (symbols() is polled by both websocket loops and health
+    # callbacks), so running ensure_tables() here would repeatedly execute DDL
+    # and an UPDATE against paper_agent_positions.  With the selection service
+    # writing the same SQLite database that can create avoidable writer
+    # contention and block realtime startup.
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.entry_time,p.entry_price,
                p.quantity,p.margin_allocated,p.entry_fee
