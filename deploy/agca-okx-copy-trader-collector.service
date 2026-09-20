@@ -11,6 +11,7 @@ WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
 EnvironmentFile=-/etc/agca/agca.env
 Environment=PYTHONUNBUFFERED=1
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
 Environment=AGCA_REMOTE_MIRROR_INLINE=0
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m data.okx_copy_trader_collector
 TimeoutStartSec=600
