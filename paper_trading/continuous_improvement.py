@@ -16,6 +16,8 @@ MIN_RETROSPECTIVE_TRADERS = 10
 MIN_FORWARD_TRADES = 30
 MIN_FORWARD_TRADERS = 10
 MIN_CONSENSUS_TRADERS = 5
+MIN_POSITIVE_FORWARD_NET_PNL = 0.0
+MIN_FORWARD_WIN_RATE_PCT = 50.0
 
 
 def _iso(value):
@@ -173,10 +175,24 @@ def evaluate_forward(con, now):
         pnl = sum(float(row[2]) for row in rows)
         wins = 100.0 * sum(float(row[2]) > 0 for row in rows) / trades if trades else 0.0
         status = "FORWARD_COLLECTING"
-        if trades >= MIN_FORWARD_TRADES and traders >= MIN_FORWARD_TRADERS:
+        enough_forward = (
+            trades >= MIN_FORWARD_TRADES and traders >= MIN_FORWARD_TRADERS
+        )
+        economically_positive = (
+            pnl > MIN_POSITIVE_FORWARD_NET_PNL
+            and wins > MIN_FORWARD_WIN_RATE_PCT
+        )
+        if enough_forward and economically_positive:
             status = "READY_FOR_ORCHESTRATOR_REVIEW"
-        evidence = {"basis": "KNOWN_OPEN_BEFORE_CANDIDATE_THEN_CLOSED",
-                    "lookahead_allowed": False, "automatic_promotion": False}
+        elif enough_forward:
+            status = "REJECTED_FORWARD_ECONOMICS"
+        evidence = {
+            "basis": "KNOWN_OPEN_BEFORE_CANDIDATE_THEN_CLOSED",
+            "lookahead_allowed": False, "automatic_promotion": False,
+            "economic_gate": "POSITIVE_FORWARD_NET_PNL_AND_WIN_RATE_ABOVE_50",
+            "net_pnl_positive": pnl > MIN_POSITIVE_FORWARD_NET_PNL,
+            "win_rate_above_50": wins > MIN_FORWARD_WIN_RATE_PCT,
+        }
         con.execute("""
             INSERT OR IGNORE INTO paper_agent_forward_evaluations(
               created_at,candidate_id,forward_trade_count,forward_trader_count,
