@@ -130,6 +130,10 @@ async def run():
             position_management.initialize_open_positions(con, observed_at)
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
+            # Missing exchange rules must still reach the position manager so an
+            # open position records durable fail-closed exit evidence; a health
+            # message alone is not sufficient audit state.
+            position_management.process_market_state(con, state, observed_at, None)
             write_health("DEGRADED", error="LIVE_SYMBOL_RULES_UNAVAILABLE",
                          symbol=state.symbol)
             return
