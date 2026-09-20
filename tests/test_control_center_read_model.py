@@ -198,5 +198,53 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertEqual(result["learning"]["evidence"], {})
 
 
+    def test_detects_silent_work_stall_with_live_worker_and_market(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "runtime.db"
+            state = Path(tmp) / "market.json"
+            health = Path(tmp) / "health.json"
+            now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
+            con = sqlite3.connect(db)
+            con.executescript("""
+                CREATE TABLE paper_agent_portfolio(
+                    portfolio_id INTEGER PRIMARY KEY, initial_capital REAL,
+                    cash REAL, realized_pnl REAL, total_fees REAL);
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
+                    direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
+                    notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT, decision_reference_id INTEGER,
+                    selected_at TEXT, exit_time TEXT, exit_price REAL, net_pnl REAL,
+                    close_reason TEXT, entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0);
+                CREATE TABLE paper_position_management(
+                    position_id INTEGER PRIMARY KEY, stop_distance_pct REAL,
+                    current_stop_price REAL, tp1_done INTEGER, tp2_done INTEGER,
+                    remaining_quantity REAL);
+                CREATE TABLE paper_behavior_selection_runs(
+                    run_id INTEGER PRIMARY KEY, created_at TEXT);
+                INSERT INTO paper_agent_portfolio VALUES(1,10000,10000,0,0);
+                INSERT INTO paper_behavior_selection_runs VALUES(
+                    1,'2026-09-21T14:50:00+00:00');
+            """)
+            con.commit(); con.close()
+            stamp = int(now.timestamp() * 1000)
+            state.write_text(json.dumps({
+                "execution_mode":"PAPER_ONLY","real_order_allowed":False,
+                "live_market":[{"symbol":"BTCUSDT","market_type":"USD_M_PERPETUAL",
+                "last_price":60000,"best_bid":59999,"best_ask":60001,
+                "quote_timestamp_ms":stamp}]
+            }))
+            health.write_text(json.dumps({
+                "execution_mode":"PAPER_ONLY","real_order_allowed":False,
+                "status":"CONNECTED","at":now.isoformat(),"action":"HOLD"
+            }))
+            result = overview(db, state, health, now=now)
+            self.assertTrue(result["system"]["worker_healthy"])
+            self.assertEqual(result["system"]["pipeline_state"], "İŞ ÜRETMİYOR")
+            self.assertAlmostEqual(result["system"]["latest_work_age_seconds"], 600.0)
+            self.assertEqual(result["incidents"][0]["kind"], "PIPELINE_VISIBILITY")
+            self.assertEqual(result["incidents"][0]["severity"], "KRİTİK")
+
+
 if __name__ == "__main__":
     unittest.main()
