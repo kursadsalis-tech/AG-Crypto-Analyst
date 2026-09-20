@@ -495,7 +495,9 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
 
 def reconcile_pending_funding(con, funding_loader, now):
     """Apply previously unavailable funding without reopening trade outcomes."""
-    ensure_tables(con)
+    # Schema setup belongs to startup/migration.  This reconciliation runs from
+    # the realtime maintenance loop, so repeating DDL/backfill here creates an
+    # avoidable SQLite writer-lock path exactly where execution must stay live.
     rows = con.execute("""SELECT s.segment_id,s.position_id,s.start_at,s.end_at,
                s.direction,s.quantity
         FROM paper_funding_reconciliation_segments s
