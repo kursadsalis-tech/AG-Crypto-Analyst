@@ -18,6 +18,10 @@ MARKET_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_MARKET_STATE",
     "/var/lib/agca/paper-realtime-market-state.json",
 ))
+FEEDBACK_PATH = Path(os.getenv(
+    "AGCA_CONTROL_CENTER_FEEDBACK",
+    "/var/lib/agca/control-center-data-feedback.jsonl",
+))
 HEALTH_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_HEALTH",
     "/var/lib/agca/paper-realtime-health.json",
@@ -71,6 +75,22 @@ def _safe_json_object(value):
     return parsed if isinstance(parsed, dict) else {}
 
 
+def load_operator_feedback(path=FEEDBACK_PATH, limit=50):
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines[-limit:]:
+        try:
+            row = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if row.get("type") == "MARKET_DATA_MISMATCH":
+            rows.append(row)
+    return list(reversed(rows))
+
+
 def _state_index(payload):
     return {
         (row.get("symbol"), row.get("market_type")): row
@@ -108,6 +128,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     now = now or _utcnow()
     market = load_market_state(market_state_path)
     health = load_health(health_path)
+    feedback = load_operator_feedback()
     states = _state_index(market)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
@@ -332,7 +353,21 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 "market_status": p["market_status"],
             } for p in positions],
         },
-        "incidents": ([{
+        "incidents": [{
+            "severity": "OPERATÖR",
+            "kind": "MARKET_DATA_MISMATCH",
+            "message": (
+                f'{row.get("symbol", "—")} için piyasa verisi uyuşmazlığı bildirildi'
+            ),
+            "status": "TEŞHİS BEKLİYOR",
+            "age_seconds": None,
+            "feedback_id": row.get("feedback_id"),
+            "created_at": row.get("created_at"),
+            "operator_price": row.get("operator_price"),
+            "agent_price": row.get("agent_price"),
+            "agent_quote_source": row.get("agent_quote_source"),
+            "note": row.get("note"),
+        } for row in feedback] + ([{
             "severity": "UYARI",
             "kind": "WORKER_HEALTH",
             "message": "Kanonik PAPER worker sağlıklı görünmüyor",
