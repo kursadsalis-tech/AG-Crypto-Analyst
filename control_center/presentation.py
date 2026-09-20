@@ -135,6 +135,14 @@ def operator_view(snapshot):
             brain.get("decision"), brain.get("decision") or "HENÜZ KARAR YOK"
         ),
         "yeni_fırsat": brain.get("decision") == "NEW_POSITION_SELECTED",
+        "mevcut_pozisyonlar": [{
+            "işlem": f'{row.get("symbol") or "—"} {row.get("direction") or "—"}',
+            "giriş": _price(row.get("entry_price")),
+            "ajanın_fiyatı": _price(row.get("mark_price")),
+            "açık_sonuç": round(float(row.get("unrealized_pnl") or 0), 3),
+            "tutar": round(float(row.get("notional") or 0), 2),
+        } for row in brain.get("open_positions", [])],
+        "portföy_kapasitesi": brain.get("portfolio_capacity") or {},
         "fırsat_radarı": [{
             "sıra": row.get("rank"),
             "işlem": f'{row.get("symbol") or "—"} {row.get("direction") or "—"}',
