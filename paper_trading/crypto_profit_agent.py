@@ -427,8 +427,12 @@ def portfolio_snapshot(con):
     """).fetchall()
     reserved = 0.0
     unrealized = 0.0
-    for symbol, direction, entry, quantity, notional in open_rows:
-        reserved += float(notional)
+    for symbol, direction, entry, quantity, margin_basis in open_rows:
+        # Cash is debited by allocated margin at entry, not gross leveraged
+        # notional. Equity therefore adds back only the remaining margin basis.
+        # Treating margin as gross exposure would manufacture equity under
+        # leverage and distort all downstream sizing.
+        reserved += float(margin_basis)
         mark = latest_mark(con, symbol)
         if mark is not None:
             unrealized += directional_pnl(
@@ -758,7 +762,17 @@ def select_new_positions(con, now, exchange_metadata=None):
         return 0
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
-    available_exposure = max(0.0, max_exposure - snapshot["reserved"])
+    open_gross_exposure = float(con.execute("""
+        SELECT COALESCE(SUM(
+            CASE WHEN m.remaining_quantity IS NOT NULL AND p.entry_price IS NOT NULL
+                 THEN m.remaining_quantity * p.entry_price
+                 ELSE p.notional END
+        ),0)
+        FROM paper_agent_positions p
+        LEFT JOIN paper_position_management m USING(position_id)
+        WHERE p.status='OPEN'
+    """).fetchone()[0] or 0.0)
+    available_exposure = max(0.0, max_exposure - open_gross_exposure)
     selected = 0
     planned_entry = immediate_paper_entry_time(now)
     for row in behavior_result["candidates"]:
