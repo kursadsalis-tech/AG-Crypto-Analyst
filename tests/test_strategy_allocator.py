@@ -47,14 +47,14 @@ class StrategyAllocatorTests(unittest.TestCase):
         weights = allocator.rebalance(self.con, NOW)
         self.assertAlmostEqual(weights["CHALLENGER_EXTERNAL_DIRECTION_LONG"], 1 / 3)
 
-    def test_sustained_net_after_cost_success_earns_more_budget(self):
+    def test_legacy_pnl_without_execution_ledger_cannot_earn_more_budget(self):
         allocator.rebalance(self.con, NOW)
         for _ in range(10):
             self.con.execute("INSERT INTO paper_agent_positions VALUES(?,?,?,?,?)",
                              ("CHALLENGER_EXTERNAL_DIRECTION_LONG", "CLOSED", 1, 2, 100))
         weights = allocator.rebalance(self.con, NOW)
-        self.assertGreater(weights["CHALLENGER_EXTERNAL_DIRECTION_LONG"],
-                           weights["CHAMPION_BASELINE"])
+        self.assertAlmostEqual(weights["CHALLENGER_EXTERNAL_DIRECTION_LONG"],
+                               weights["CHAMPION_BASELINE"])
         self.assertAlmostEqual(sum(weights.values()), 1.0)
 
     def test_direction_filter_only_matches_compatible_challenger(self):
