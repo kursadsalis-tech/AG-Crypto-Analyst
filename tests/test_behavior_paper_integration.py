@@ -6,6 +6,14 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from paper_trading import crypto_profit_agent as agent
+from paper_trading.execution_contract import MarketSnapshot, ExecutionRules
+
+
+def quote(at, price=100, market_type="USD_M_PERPETUAL"):
+    ms = int(at.timestamp() * 1000)
+    return MarketSnapshot(price, 1_000_000, observed_at=at.isoformat(),
+                          best_bid=price, best_ask=price, quote_timestamp_ms=ms,
+                          liquidity_timestamp_ms=ms, source="TEST_BOOK", market_type=market_type)
 
 
 NOW = datetime(2026, 9, 4, 12, 2, tzinfo=timezone.utc)
@@ -15,6 +23,17 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         agent.ensure_tables(self.con)
+        # Portfolio valuation fixtures require the closed-candle market table.
+        self.con.execute("""CREATE TABLE IF NOT EXISTS market_klines(
+            symbol TEXT, interval TEXT, open_time INTEGER, open REAL,
+            high REAL, low REAL, close REAL, volume REAL,
+            close_time INTEGER, quote_volume REAL
+        )""")
+        self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
+        rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
+        rules_patch.start()
+        self.addCleanup(rules_patch.stop)
+        self.addCleanup(self.con.close)
 
     def candidate(self):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
@@ -29,6 +48,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "direction": "LONG", "confidence": .60, "expected_net_edge_pct": .30,
             "experiment_tier": "EXPLORATORY_LEARNING",
             "current_price": 100.0, "target_price": 100.3, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 2.0, "risk_per_trade_pct": 0.75,
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
@@ -87,13 +107,38 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(notional, 40.0)
         self.assertIn("execution_size_multiplier=0.800", reason)
 
-    def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
+    def test_signal_count_alone_cannot_manufacture_leverage(self):
         candidate = self.candidate()
         candidate["experiment_tier"] = "PROMOTION_READY"
         candidate["evidence"]["directional_signals"] = [
             {"source": source, "direction": "LONG"}
             for source in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES")
         ]
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        leverage = self.con.execute(
+            "SELECT leverage FROM paper_agent_positions"
+        ).fetchone()[0]
+        self.assertEqual(leverage, 1)
+
+    def test_five_independent_signals_allocate_margin_not_gross_exposure(self):
+        candidate = self.candidate()
+        candidate["experiment_tier"] = "PROMOTION_READY"
+        candidate["confidence"] = .65
+        candidate["expected_net_edge_pct"] = .30
+        candidate["evidence"]["directional_signals"] = [
+            {"source": source, "direction": "LONG"}
+            for source in ("TECHNICAL", "NEWS", "ONCHAIN", "DERIVATIVES")
+        ]
+        candidate["evidence"]["execution_calibration"] = {"feedback": {
+            "closed_count": 60, "independent_days": 12,
+            "mean_net_return_pct": .30, "cost_after_win_rate": .65,
+        }}
+        candidate["evidence"]["learned_pattern"] = {
+            "calibrated_net_edge_pct": .30, "calibrated_win_rate": .65,
+        }
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
@@ -106,8 +151,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(gross, 1000)
         planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=(planned, 100.0, 1_000_000.0)):
-            self.assertEqual(agent.fill_pending(self.con, planned), (1, 0))
+                          return_value=quote(planned)):
+            self.assertEqual(agent.fill_pending(self.con, planned, self.metadata), (1, 0))
         cash = self.con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0]
@@ -118,6 +163,203 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertGreater(position[3], 79)
         self.assertLess(position[3], 81)
         self.assertAlmostEqual(cash, 10_000 - position[1] - position[2] * .0005)
+
+    def test_candidate_ranking_prefers_executable_profit_per_risk_over_edge_pct(self):
+        tiny_high_edge = self.candidate()
+        tiny_high_edge.update({
+            "decision_id": 21, "symbol": "TINYUSDT",
+            "expected_net_edge_pct": 1.00, "risk_cap_pct": 0.25,
+            "stop_reference_pct": 5.0,
+            "evidence_sha256": "1" * 64,
+        })
+        larger_lower_edge = self.candidate()
+        larger_lower_edge.update({
+            "decision_id": 22, "symbol": "LARGEUSDT",
+            "expected_net_edge_pct": 0.30, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 0.5,
+            "evidence_sha256": "2" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE",
+            "candidates": [tiny_high_edge, larger_lower_edge],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        selected = self.con.execute(
+            "SELECT symbol,notional FROM paper_agent_positions"
+        ).fetchone()
+        self.assertEqual(selected[0], "LARGEUSDT")
+        self.assertAlmostEqual(selected[1], 50.0)
+
+    def test_candidate_ranking_prefers_profit_per_risk_over_raw_profit(self):
+        inefficient = self.candidate()
+        inefficient.update({
+            "decision_id": 23, "symbol": "RISKYUSDT",
+            "expected_net_edge_pct": 0.40, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 5.0,
+            "evidence_sha256": "3" * 64,
+        })
+        efficient = self.candidate()
+        efficient.update({
+            "decision_id": 24, "symbol": "EFFICIENTUSDT",
+            "expected_net_edge_pct": 0.35, "risk_cap_pct": 0.25,
+            "stop_reference_pct": 0.5,
+            "evidence_sha256": "4" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE",
+            "candidates": [inefficient, efficient],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.assertEqual(
+            self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
+            "EFFICIENTUSDT",
+        )
+
+    def test_candidate_ranking_uses_each_trade_dynamic_stop_distance(self):
+        wide_stop = self.candidate()
+        wide_stop.update({
+            "decision_id": 25, "symbol": "WIDEUSDT",
+            "expected_net_edge_pct": 0.45, "stop_reference_pct": 5.0,
+            "evidence_sha256": "5" * 64,
+        })
+        tight_stop = self.candidate()
+        tight_stop.update({
+            "decision_id": 26, "symbol": "TIGHTUSDT",
+            "expected_net_edge_pct": 0.30, "stop_reference_pct": 1.0,
+            "evidence_sha256": "6" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [wide_stop, tight_stop],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.assertEqual(
+            self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
+            "TIGHTUSDT",
+        )
+
+    def test_dynamic_stop_distance_changes_position_size_for_same_risk_budget(self):
+        tight = self.candidate()
+        tight.update({
+            "decision_id": 27, "symbol": "TIGHTSIZEUSDT",
+            "stop_reference_pct": 1.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
+            "evidence_sha256": "7" * 64,
+        })
+        wide = self.candidate()
+        wide.update({
+            "decision_id": 28, "symbol": "WIDESIZEUSDT",
+            "stop_reference_pct": 5.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
+            "evidence_sha256": "8" * 64,
+        })
+        # Remove the exploratory base-margin ceiling so this test isolates
+        # stop-distance risk sizing rather than conviction sizing.
+        fake_tier = SimpleNamespace(
+            margin_fraction=1.0, leverage=1.0, market_type="SPOT",
+            tier="TEST", independent_signal_count=1, signal_sources=("TEST",),
+        )
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [tight, wide], "review": {},
+        }), patch.object(agent.risk_tiering, "tier_for", return_value=fake_tier), \
+                patch.object(agent, "MAX_NEW_PER_CYCLE", 2):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 2)
+        notionals = dict(self.con.execute(
+            "SELECT symbol,notional FROM paper_agent_positions"
+        ).fetchall())
+        self.assertGreater(notionals["TIGHTSIZEUSDT"], notionals["WIDESIZEUSDT"])
+        tight_risk = notionals["TIGHTSIZEUSDT"] * (0.01 + 2 * agent.FEE_RATE)
+        wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
+        self.assertAlmostEqual(tight_risk, wide_risk, places=6)
+        self.assertAlmostEqual(tight_risk, 50.0, places=6)
+
+    def test_existing_pending_entry_reserves_cash_and_gross_exposure(self):
+        pending = self.candidate()
+        pending.update({
+            "decision_id": 31, "symbol": "PENDINGUSDT",
+            "risk_cap_pct": 10.0, "evidence_sha256": "9" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [pending], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        first_notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='PENDINGUSDT'"
+        ).fetchone()[0]
+
+        second = self.candidate()
+        second.update({
+            "decision_id": 32, "symbol": "SECONDUSDT",
+            "risk_cap_pct": 10.0, "evidence_sha256": "b" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [second], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        second_notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='SECONDUSDT'"
+        ).fetchone()[0]
+        self.assertGreater(first_notional, 0)
+        self.assertGreater(second_notional, 0)
+        self.assertLessEqual(first_notional + second_notional, 10000.0 * agent.MAX_TOTAL_EXPOSURE)
+
+    def test_stale_open_position_mark_blocks_new_risk(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,entry_time,entry_price,quantity,
+            entry_fee
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -90, "test", "test", "STALEUSDT", 1, "LONG", "OPEN",
+            NOW.isoformat(), NOW.isoformat(), NOW.isoformat(),
+            (NOW + timedelta(hours=1)).isoformat(), 100.0, .6, .6, .4, 101.0,
+            "test", "c"*64, "test", "SPOT", agent.FORWARD_COHORT, 1,
+            "test", "MARKET_BEHAVIOR_CORE", 90, 1.0, 100.0, "TEST", 1, "[]",
+            NOW.isoformat(), 100.0, 1.0, 0.1,
+        ))
+        stale_close = int((NOW - timedelta(hours=2)).timestamp() * 1000)
+        self.con.execute("""INSERT INTO market_klines(
+            symbol,interval,open_time,open,high,low,close,volume,close_time,quote_volume
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""", (
+            "STALEUSDT","1h",stale_close-3599999,100,100,100,100,1,stale_close,100,
+        ))
+        candidate = self.candidate()
+        candidate.update({"decision_id": 91, "symbol": "FRESHUSDT", "evidence_sha256": "d"*64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 0)
+
+    def test_portfolio_uses_fresh_mark_for_equity_and_gross_exposure(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,entry_time,entry_price,quantity,
+            entry_fee
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -92, "test", "test", "MARKUSDT", 1, "LONG", "OPEN",
+            NOW.isoformat(), NOW.isoformat(), NOW.isoformat(),
+            (NOW + timedelta(hours=1)).isoformat(), 100.0, .6, .6, .4, 101.0,
+            "test", "e"*64, "test", "SPOT", agent.FORWARD_COHORT, 1,
+            "test", "MARKET_BEHAVIOR_CORE", 92, 1.0, 100.0, "TEST", 1, "[]",
+            NOW.isoformat(), 100.0, 1.0, 0.1,
+        ))
+        close_time = int((NOW - timedelta(minutes=5)).timestamp() * 1000)
+        self.con.execute("""INSERT INTO market_klines(
+            symbol,interval,open_time,open,high,low,close,volume,close_time,quote_volume
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""", (
+            "MARKUSDT","1h",close_time-3599999,100,121,99,120,1,close_time,120,
+        ))
+        snapshot = agent.portfolio_snapshot(self.con, NOW)
+        self.assertTrue(snapshot["valuation_complete"])
+        self.assertAlmostEqual(snapshot["gross_exposure"], 120.0)
+        self.assertAlmostEqual(snapshot["unrealized_pnl"], 20.0)
 
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
@@ -154,9 +396,9 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
         planned = agent.immediate_paper_entry_time(NOW)
         with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=(planned, 0.5, 1_000_000.0)) as capture:
+                          return_value=quote(planned + timedelta(minutes=2), .5, "SPOT")) as capture:
             filled, cancelled = agent.fill_pending(
-                self.con, planned + timedelta(minutes=2)
+                self.con, planned + timedelta(minutes=2), self.metadata
             )
         self.assertEqual((filled, cancelled), (1, 0))
         self.assertEqual(capture.call_args.kwargs["symbol"], "CRVUSDT")
@@ -178,13 +420,13 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         with patch.object(agent.execution_market_data, "capture_reference",
                           return_value=None):
             filled, cancelled = agent.fill_pending(
-                self.con, planned + timedelta(minutes=11)
+                self.con, planned + timedelta(minutes=11), self.metadata
             )
         self.assertEqual((filled, cancelled), (0, 1))
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
                 FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_UNAVAILABLE"),
+            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
         )
 
     def test_missing_okx_spot_management_route_cancels_before_open(self):
@@ -202,7 +444,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
                 "LAUSDT: OKX Spot management instrument unavailable"
             ),
         ):
-            filled, cancelled = agent.fill_pending(self.con, planned)
+            filled, cancelled = agent.fill_pending(self.con, planned, self.metadata)
         self.assertEqual((filled, cancelled), (0, 1))
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
@@ -211,7 +453,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         )
 
     def test_minute_cycle_skips_heavy_learning_without_new_close(self):
-        with patch.object(agent, "load_execution_metadata", return_value=None), \
+        with patch.object(agent, "connect", return_value=sqlite3.connect(":memory:")), \
+                patch.object(agent, "load_execution_metadata", return_value=None), \
                 patch.object(agent, "fill_pending", return_value=(0, 0)), \
                 patch.object(agent, "settle_open", return_value=0), \
                 patch.object(agent, "select_new_positions", return_value=0), \
@@ -223,12 +466,12 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(result["trade_learning"]["status"], "NO_NEW_CLOSED_TRADE")
 
     def test_infeasible_exchange_rules_reject_before_position_is_written(self):
-        rejected = SimpleNamespace(fill=None, reason="EXCHANGE_FILTER_REJECTION")
+        rejected = SimpleNamespace(status="REJECTED", reason="EXCHANGE_FILTER_REJECTION")
         rules = SimpleNamespace(quantity_step=1000.0, price_tick=0.1, min_notional=5.0)
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [self.candidate()], "review": {},
         }), patch.object(agent, "rules_for", return_value=rules), patch.object(
-            agent, "simulated_decision", return_value=rejected,
+            agent, "estimate_order_rules", return_value=rejected,
         ):
             selected = agent.select_new_positions(
                 self.con, NOW, exchange_metadata={"SPOT": object()},
