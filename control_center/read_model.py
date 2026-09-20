@@ -297,6 +297,22 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     worker_healthy = worker_status == "CONNECTED" and (
         heartbeat_age is not None and heartbeat_age <= 30.0
     )
+    market_states = list(market.get("states") or [])
+    market_fresh = sum(
+        1 for state in market_states
+        if _freshness_seconds(state, now) is not None
+        and _freshness_seconds(state, now) <= 5.0
+    )
+    observed_symbols = len(market_states)
+    pipeline_state = (
+        "ÇALIŞIYOR"
+        if worker_healthy and observed_symbols > 0 and market_fresh == observed_symbols
+        else "VERİ GECİKİYOR"
+        if worker_healthy and observed_symbols > 0
+        else "PİYASA AKIŞI YOK"
+        if worker_healthy
+        else "WORKER SORUNLU"
+    )
     return {
         "system": {
             "execution_mode": "PAPER_ONLY",
@@ -312,6 +328,18 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "heartbeat_age_seconds": heartbeat_age,
             "last_action": health.get("action"),
             "active_symbols": health.get("active_symbols"),
+            "pipeline_state": pipeline_state,
+            "observed_symbols": observed_symbols,
+            "fresh_market_symbols": market_fresh,
+            "pipeline_explanation": (
+                "Worker ve canlı piyasa akışı sağlıklı."
+                if pipeline_state == "ÇALIŞIYOR"
+                else "Worker çalışıyor ancak piyasa verisinin bir bölümü güncel değil."
+                if pipeline_state == "VERİ GECİKİYOR"
+                else "Worker çalışıyor fakat canlı piyasa akışı görünmüyor."
+                if pipeline_state == "PİYASA AKIŞI YOK"
+                else "Kanonik worker heartbeat sağlıklı değil."
+            ),
         },
         "portfolio": {
             "initial_capital": initial,
@@ -353,7 +381,19 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 "market_status": p["market_status"],
             } for p in positions],
         },
-        "incidents": [{
+        "incidents": ([{
+            "severity": "KRİTİK" if pipeline_state in {"WORKER SORUNLU", "PİYASA AKIŞI YOK"} else "UYARI",
+            "kind": "PIPELINE_VISIBILITY",
+            "message": (
+                "Sistem çalışıyor görünse de canlı piyasa akışı yok"
+                if pipeline_state == "PİYASA AKIŞI YOK"
+                else "Canlı piyasa verisinin bir bölümü gecikiyor"
+                if pipeline_state == "VERİ GECİKİYOR"
+                else "Kanonik PAPER worker sağlıklı değil"
+            ),
+            "status": pipeline_state,
+            "age_seconds": heartbeat_age,
+        }] if pipeline_state != "ÇALIŞIYOR" else []) + [{
             "severity": "OPERATÖR",
             "kind": "MARKET_DATA_MISMATCH",
             "message": (
