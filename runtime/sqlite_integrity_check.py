@@ -48,28 +48,10 @@ def run(database=DB_NAME):
     return result
 
 
-def seed_from_attestation(database=DB_NAME):
-    """Bootstrap only from a hash-valid prior full quick-check attestation."""
-    con = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=30)
-    try:
-        row = con.execute("""
-            SELECT created_at,payload_json,payload_sha256,sqlite_quick_check
-            FROM cloud_runtime_attestations ORDER BY attestation_id DESC LIMIT 1
-        """).fetchone()
-    finally:
-        con.close()
-    if not row or row[3] != "ok" or hashlib.sha256(row[1].encode()).hexdigest() != row[2]:
-        raise RuntimeError("NO_HASH_VALID_QUICK_CHECK_ATTESTATION")
-    checked_at = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
-    write_health("ok", checked_at=checked_at)
-    return "ok"
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed-from-attestation", action="store_true")
-    args = parser.parse_args()
-    result = seed_from_attestation() if args.seed_from_attestation else run()
+    parser.parse_args()
+    result = run()
     print(result)
 
 
