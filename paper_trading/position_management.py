@@ -547,11 +547,16 @@ def reconcile_pending_funding(con, funding_loader, now):
             (total_cost, position_id))
         con.execute("""UPDATE paper_agent_portfolio SET cash=cash-?,
             realized_pnl=realized_pnl-? WHERE portfolio_id=1""", (total_cost, total_cost))
-        con.execute("""UPDATE paper_position_management SET
-            funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
-        con.execute("""UPDATE paper_agent_positions SET
-            funding_source='BINANCE_USD_M_FUNDING_HISTORY'
-            WHERE position_id=?""", (position_id,))
+        remaining_pending = con.execute("""
+            SELECT COUNT(*) FROM paper_funding_reconciliation_segments
+            WHERE position_id=? AND status='PENDING'
+        """, (position_id,)).fetchone()[0]
+        if int(remaining_pending) == 0:
+            con.execute("""UPDATE paper_position_management SET
+                funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
+            con.execute("""UPDATE paper_agent_positions SET
+                funding_source='BINANCE_USD_M_FUNDING_HISTORY'
+                WHERE position_id=?""", (position_id,))
         resolved += len(segments)
     con.commit()
     return {"resolved": resolved, "blocked": blocked}
