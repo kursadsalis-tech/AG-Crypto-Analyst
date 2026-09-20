@@ -772,7 +772,21 @@ def select_new_positions(con, now, exchange_metadata=None):
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN'
     """).fetchone()[0] or 0.0)
-    available_exposure = max(0.0, max_exposure - open_gross_exposure)
+    pending = con.execute("""
+        SELECT COALESCE(SUM(notional),0),
+               COALESCE(SUM(notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END),0)
+        FROM paper_agent_positions
+        WHERE status='PENDING_ENTRY'
+    """).fetchone()
+    pending_gross_exposure = float(pending[0] or 0.0)
+    pending_margin = float(pending[1] or 0.0)
+    pending_entry_fees = pending_gross_exposure * FEE_RATE
+    available_cash = max(
+        0.0, snapshot["cash"] - pending_margin - pending_entry_fees
+    )
+    available_exposure = max(
+        0.0, max_exposure - open_gross_exposure - pending_gross_exposure
+    )
     selected = 0
     planned_entry = immediate_paper_entry_time(now)
 
@@ -802,7 +816,7 @@ def select_new_positions(con, now, exchange_metadata=None):
             max_exposure,
             position_cap,
             risk_sized_notional,
-            snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
+            available_cash * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
         )
         expected_profit_usdt = (
             max(0.0, sizing_cap)
@@ -863,7 +877,7 @@ def select_new_positions(con, now, exchange_metadata=None):
             available_exposure,
             position_cap,
             risk_sized_notional,
-            snapshot["cash"] * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
+            available_cash * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
@@ -941,7 +955,9 @@ def select_new_positions(con, now, exchange_metadata=None):
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
-            snapshot["cash"] -= notional / tier.leverage + notional * FEE_RATE
+            reservation = notional / tier.leverage + notional * FEE_RATE
+            available_cash = max(0.0, available_cash - reservation)
+            snapshot["cash"] -= reservation
         else:
             reject("DECISION_ALREADY_SELECTED")
     record_run(selected, available_exposure)
