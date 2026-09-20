@@ -23,20 +23,43 @@ from paper_trading import strategy_allocator
 HEALTH_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_HEALTH", "/var/lib/agca/paper-realtime-health.json"
 ))
+MARKET_STATE_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_MARKET_STATE",
+    "/var/lib/agca/paper-realtime-market-state.json",
+))
 
 
 def now():
     return datetime.now(timezone.utc)
 
 
+def _atomic_json_write(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
 def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
-    HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = HEALTH_PATH.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, HEALTH_PATH)
+    _atomic_json_write(HEALTH_PATH, payload)
+
+
+def write_market_state(states):
+    """Best-effort read-only telemetry; never an execution dependency."""
+    payload = {
+        "at": now().isoformat(),
+        "execution_mode": "PAPER_ONLY",
+        "real_order_allowed": False,
+        "live_market": states,
+    }
+    try:
+        _atomic_json_write(MARKET_STATE_PATH, payload)
+    except Exception:
+        # Observability must never stop or degrade canonical PAPER execution.
+        pass
 
 
 async def run():
@@ -95,12 +118,7 @@ async def run():
         )
         # This is deliberately the same state the canonical worker consumes:
         # no second feed, price authority, database, or trading lifecycle.
-        write_health(
-            "CONNECTED",
-            active_symbols=symbols(),
-            live_market=live_state_snapshot(),
-            heartbeat=False,
-        )
+        write_market_state(live_state_snapshot())
 
     last_selection_attempt_at = None
     last_learning_at = None
@@ -138,7 +156,6 @@ async def run():
     def health(state, error):
         write_health(
             state, error=error, active_symbols=symbols(),
-            live_market=live_state_snapshot(),
         )
 
     async def on_state(state, observed_ms):
@@ -224,8 +241,7 @@ async def run():
         # reconnecting stream can otherwise make a healthy worker look stale.
         while not stop_event.is_set():
             write_health(
-                "CONNECTED", active_symbols=symbols(),
-                live_market=live_state_snapshot(), heartbeat=True,
+                "CONNECTED", active_symbols=symbols(), heartbeat=True,
             )
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=10)
@@ -234,7 +250,6 @@ async def run():
 
     write_health(
         "STARTING", active_symbols=symbols(),
-        live_market=live_state_snapshot(),
     )
     try:
         await asyncio.gather(
