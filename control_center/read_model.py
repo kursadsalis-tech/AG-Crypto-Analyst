@@ -108,6 +108,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         rows = con.execute(
             """SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
                       p.entry_price,p.quantity,p.notional,p.leverage,p.selection_reason,
+                      p.decision_source,p.decision_reference_id,
                       m.stop_distance_pct,m.current_stop_price,m.tp1_done,m.tp2_done,
                       m.remaining_quantity
                FROM paper_agent_positions p
@@ -131,8 +132,9 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     total_unrealized = 0.0
     for row in rows:
         (position_id, symbol, market_type, direction, entry_time, entry_price,
-         quantity, notional, leverage, reason, stop_distance_pct, current_stop_price,
-         tp1_done, tp2_done, remaining_quantity) = row
+         quantity, notional, leverage, reason, decision_source, decision_reference_id,
+         stop_distance_pct, current_stop_price, tp1_done, tp2_done,
+         remaining_quantity) = row
         state = states.get((symbol, market_type), {})
         mark = _mark_price(direction, state)
         pnl = _live_pnl(direction, entry_price, quantity, mark)
@@ -161,6 +163,29 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 else "GECİKMİŞ"
             ),
             "decision_reason": reason,
+            "decision_source": decision_source,
+            "decision_reference_id": decision_reference_id,
+            "decision_flow": {
+                "observation": {
+                    "status": "CANLI" if freshness is not None and freshness <= 5.0 else "GECİKMİŞ",
+                    "source": state.get("quote_source"),
+                    "last_price": state.get("last_price"),
+                    "book_imbalance": state.get("book_imbalance"),
+                    "taker_imbalance": state.get("taker_imbalance"),
+                },
+                "opportunity": {"reason": reason},
+                "decision": {
+                    "direction": direction,
+                    "source": decision_source,
+                    "reference_id": decision_reference_id,
+                },
+                "execution": {
+                    "status": "AÇIK",
+                    "entry_price": entry_price,
+                    "mark_price": mark,
+                    "unrealized_pnl": pnl,
+                },
+            },
             "current_stop_price": current_stop_price,
             "stop_distance_pct": stop_distance_pct,
             "tp1_price": (
