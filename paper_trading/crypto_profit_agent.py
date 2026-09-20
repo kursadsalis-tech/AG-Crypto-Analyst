@@ -773,7 +773,7 @@ def latest_candidates(con, now=None):
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
-def select_new_positions(con, now, exchange_metadata=None):
+def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con, now)
     active = con.execute("""
@@ -801,11 +801,11 @@ def select_new_positions(con, now, exchange_metadata=None):
         reject("PORTFOLIO_VALUATION_STALE_OR_MISSING")
         record_run(0, 0.0)
         con.commit()
-        return {
-            "selected_count": 0, "candidates": [],
-            "core_status": behavior_result["status"],
-            "rejection_reasons": dict(reasons),
-        }
+        if telemetry is not None:
+            telemetry.update({"selected_count": 0, "candidates": [],
+                              "core_status": behavior_result["status"],
+                              "rejection_reasons": dict(reasons)})
+        return 0
     if capacity <= 0:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
         record_run(0, 0.0)
@@ -1028,12 +1028,14 @@ def select_new_positions(con, now, exchange_metadata=None):
             reject("DECISION_ALREADY_SELECTED")
     record_run(selected, available_exposure)
     con.commit()
-    return {
-        "selected_count": selected,
-        "candidates": candidate_xray,
-        "core_status": behavior_result["status"],
-        "rejection_reasons": dict(reasons),
-    }
+    if telemetry is not None:
+        telemetry.update({
+            "selected_count": selected,
+            "candidates": candidate_xray,
+            "core_status": behavior_result["status"],
+            "rejection_reasons": dict(reasons),
+        })
+    return selected
 
 
 def report_window(now):
