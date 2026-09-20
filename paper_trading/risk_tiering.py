@@ -40,14 +40,15 @@ def tier_for(candidate) -> RiskTier:
     sources = _directional_sources(candidate)
     count = len(sources)
     promoted = candidate.get("experiment_tier") == "PROMOTION_READY"
-    conviction_steps = count + int(promoted)
-    leverage = float(min(int(MAX_PAPER_LEVERAGE), max(1, conviction_steps)))
+    # Evidence breadth is not leverage evidence. Correlated signals can raise
+    # confidence in direction without proving that a larger liquidation-sensitive
+    # position has positive net expectancy. Keep exploratory hypotheses at 1x;
+    # only independently promoted execution evidence may unlock one bounded step.
+    conviction_steps = 2 if promoted and count >= 2 else 1
+    leverage = float(min(int(MAX_PAPER_LEVERAGE), conviction_steps))
     margin_fraction = {
         1: 0.005,
         2: 0.010,
-        3: 0.015,
-        4: 0.020,
-        5: 0.020,
     }[int(leverage)]
     return RiskTier(
         leverage=leverage,
