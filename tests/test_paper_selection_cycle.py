@@ -1,3 +1,4 @@
+import ast
 import json
 import tempfile
 import unittest
@@ -57,3 +58,26 @@ class PaperSelectionCycleTests(unittest.TestCase):
             payload = json.loads(path.read_text())
             self.assertEqual(payload["status"], "FAILED")
             self.assertFalse(payload["real_order_allowed"])
+
+
+class HourlyPaperAuthorityTests(unittest.TestCase):
+    def test_hourly_forecast_has_no_paper_execution_entrypoint(self):
+        """Hourly maintenance must not independently open or close PAPER positions."""
+        from decision_engine import hourly_forecast_job
+
+        source = Path(hourly_forecast_job.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        forbidden = {"crypto_profit_agent", "paper_selection_cycle", "paper_realtime_worker"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertFalse(any(part in forbidden for part in alias.name.split(".")))
+            elif isinstance(node, ast.ImportFrom):
+                self.assertFalse(any(part in forbidden for part in (node.module or "").split(".")))
+                for alias in node.names:
+                    self.assertNotIn(alias.name, forbidden)
+        self.assertFalse(any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"run_behavior_selection", "select_new_positions", "fill_pending", "settle_open"}
+            for node in ast.walk(tree)
+        ))
