@@ -798,17 +798,19 @@ def select_new_positions(con, now, exchange_metadata=None):
             max(0.0, sizing_cap)
             * max(0.0, float(row["expected_net_edge_pct"])) / 100.0
         )
-        # risk_cap_pct is already the portfolio risk budget produced by the
-        # fresh risk snapshot.  Compare expected dollars with dollars at risk;
-        # this prevents a larger but inefficient bet from automatically beating
-        # a smaller opportunity with materially better capital efficiency.
-        risk_budget_usdt = min(
-            max(0.0, risk_room),
-            max(0.0, sizing_cap) / max(float(tier.leverage), 1.0),
+        # Rank against this trade's own stop geometry, not a fixed risk
+        # percentage.  The stop reference is produced from the fresh asset-risk
+        # snapshot and Position Manager clamps the same value to 0.5%-5.0%.
+        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
+        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
+        stop_loss_usdt = max(0.0, sizing_cap) * effective_stop_pct / 100.0
+        estimated_round_trip_cost_usdt = max(0.0, sizing_cap) * (
+            2.0 * FEE_RATE
         )
+        expected_loss_budget_usdt = stop_loss_usdt + estimated_round_trip_cost_usdt
         expected_profit_per_risk = (
-            expected_profit_usdt / risk_budget_usdt
-            if risk_budget_usdt > 0.0 else 0.0
+            expected_profit_usdt / expected_loss_budget_usdt
+            if expected_loss_budget_usdt > 0.0 else 0.0
         )
         ranked_candidates.append(
             (expected_profit_per_risk, expected_profit_usdt, row)
