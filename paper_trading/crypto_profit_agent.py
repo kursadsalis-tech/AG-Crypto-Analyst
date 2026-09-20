@@ -773,7 +773,7 @@ def latest_candidates(con, now=None):
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
-def select_new_positions(con, now, exchange_metadata=None):
+def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con, now)
     active = con.execute("""
@@ -801,12 +801,14 @@ def select_new_positions(con, now, exchange_metadata=None):
         reject("PORTFOLIO_VALUATION_STALE_OR_MISSING")
         record_run(0, 0.0)
         con.commit()
+        if telemetry is not None:
+            telemetry.update({"selected_count": 0, "candidates": [],
+                              "core_status": behavior_result["status"],
+                              "rejection_reasons": dict(reasons)})
         return 0
-    if capacity <= 0:
+    portfolio_full = capacity <= 0
+    if portfolio_full:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
-        record_run(0, 0.0)
-        con.commit()
-        return 0
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
     # Fresh marked exposure comes from the same valuation used for equity.
@@ -886,13 +888,88 @@ def select_new_positions(con, now, exchange_metadata=None):
         ),
         reverse=True,
     )
+    open_position_xray = []
+    for position_id, symbol, direction, entry_price, quantity, notional, selection_reason in con.execute(
+        """SELECT position_id,symbol,direction,entry_price,quantity,notional,
+                  selection_reason
+           FROM paper_agent_positions WHERE status='OPEN'
+           ORDER BY position_id"""
+    ).fetchall():
+        mark_state = latest_mark(con, symbol, now)
+        mark = mark_state[0] if mark_state else None
+        unrealized = (
+            directional_pnl(direction, float(entry_price), float(mark), float(quantity))
+            if mark is not None and entry_price is not None and quantity is not None
+            else None
+        )
+        open_position_xray.append({
+            "position_id": position_id, "symbol": symbol, "direction": direction,
+            "entry_price": entry_price, "mark_price": mark, "notional": notional,
+            "unrealized_pnl": unrealized, "selection_reason": selection_reason,
+        })
+
+    strongest_open = None
+    for pos in open_position_xray:
+        basis = float(pos.get("notional") or 0.0)
+        pnl = pos.get("unrealized_pnl")
+        pnl_pct = (100.0 * float(pnl) / basis) if pnl is not None and basis > 0 else None
+        pos["unrealized_pnl_pct"] = pnl_pct
+        if strongest_open is None or (
+            pnl_pct is not None and
+            (strongest_open.get("unrealized_pnl_pct") is None or
+             pnl_pct > strongest_open["unrealized_pnl_pct"])
+        ):
+            strongest_open = pos
+
+    candidate_xray = [{
+        "rank": rank,
+        "symbol": row["symbol"],
+        "direction": row["direction"],
+        "horizon_hours": row["horizon"],
+        "confidence": row["confidence"],
+        "expected_net_edge_pct": row["expected_net_edge_pct"],
+        "expected_profit_per_risk": profit_per_risk,
+        "expected_profit_usdt": expected_profit,
+        "current_price": row.get("current_price"),
+        "decision_source": row.get("decision_source"),
+        "experiment_tier": row.get("experiment_tier"),
+        "risk_cap_pct": row.get("risk_cap_pct"),
+        "beats_open_position_on_observed_return": (
+            strongest_open is not None
+            and strongest_open.get("unrealized_pnl_pct") is not None
+            and float(row["expected_net_edge_pct"]) > float(strongest_open["unrealized_pnl_pct"])
+        ),
+        "open_position_return_reference_pct": (
+            strongest_open.get("unrealized_pnl_pct") if strongest_open else None
+        ),
+    } for rank, (profit_per_risk, expected_profit, row)
+       in enumerate(ranked_candidates[:12], start=1)]
+
+    if portfolio_full:
+        for row in candidate_xray:
+            row["portfolio_comparison"] = "PORTFOLIO_FULL_CANDIDATE_VISIBLE"
+
+    candidate_outcomes = {
+        (row["symbol"], row["direction"], row["horizon"]): {
+            "status": "DEĞERLENDİRİLİYOR", "reason": None
+        } for _, _, row in ranked_candidates
+    }
 
     for _, _, row in ranked_candidates:
+        outcome_key = (row["symbol"], row["direction"], row["horizon"])
+        if portfolio_full:
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ",
+                "reason": "PORTFOLIO_POSITION_CAPACITY_FULL",
+            }
+            continue
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "PER_CYCLE_NEW_POSITION_CAP_REACHED"}
             continue
         if row["symbol"] in active_symbols:
             reject("SYMBOL_ALREADY_ACTIVE")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "SYMBOL_ALREADY_ACTIVE"}
             continue
         tier = risk_tiering.tier_for(row)
         base_margin = (
@@ -921,6 +998,7 @@ def select_new_positions(con, now, exchange_metadata=None):
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"}
             continue
         if exchange_metadata is not None:
             metadata = exchange_metadata.get(tier.market_type)
@@ -929,7 +1007,9 @@ def select_new_positions(con, now, exchange_metadata=None):
             except ExchangeMetadataError:
                 rules = None
             if rules is None:
-                reject(f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE")
+                reason_code = f"LIVE_{tier.market_type}_SYMBOL_RULES_UNAVAILABLE"
+                reject(reason_code)
+                candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
                 continue
             executable = estimate_order_rules(
                 reference_price=float(row["current_price"]),
@@ -939,7 +1019,9 @@ def select_new_positions(con, now, exchange_metadata=None):
                 price_tick=rules.price_tick, min_notional=rules.min_notional,
             )
             if executable.status == "REJECTED":
-                reject(f"PRESELECTION_{executable.reason}")
+                reason_code = f"PRESELECTION_{executable.reason}"
+                reject(reason_code)
+                candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
                 continue
         reason = (
             f"BEHAVIOR {row['horizon']}h {row['direction']} | "
@@ -999,6 +1081,7 @@ def select_new_positions(con, now, exchange_metadata=None):
                 strategy_weight=strategy_weight, selected_at=now,
                 planned_entry_time=planned_entry,
             )
+            candidate_outcomes[outcome_key] = {"status": "SEÇİLDİ", "reason": "PAPER_POSITION_SELECTED"}
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
@@ -1007,8 +1090,25 @@ def select_new_positions(con, now, exchange_metadata=None):
             snapshot["cash"] -= reservation
         else:
             reject("DECISION_ALREADY_SELECTED")
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "DECISION_ALREADY_SELECTED"}
     record_run(selected, available_exposure)
     con.commit()
+    if telemetry is not None:
+        telemetry.update({
+            "selected_count": selected,
+            "candidates": [
+                {**row, **candidate_outcomes.get(
+                    (row["symbol"], row["direction"], row["horizon_hours"]), {}
+                )} for row in candidate_xray
+            ],
+            "core_status": behavior_result["status"],
+            "rejection_reasons": dict(reasons),
+            "open_positions": open_position_xray,
+            "portfolio_capacity": {
+                "active": len(active), "capacity": capacity,
+                "available_exposure": available_exposure,
+            },
+        })
     return selected
 
 

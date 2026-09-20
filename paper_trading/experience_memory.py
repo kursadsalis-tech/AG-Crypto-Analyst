@@ -90,6 +90,12 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
             "planned_entry_time": iso(planned_entry_time),
             "symbol": str(row["symbol"]), "horizon_hours": int(row["horizon"]),
             "direction": str(row["direction"]),
+            "selection_economics": {
+                "expected_net_edge_pct": float(row.get("expected_net_edge_pct") or 0.0),
+                "confidence": float(row.get("confidence") or 0.0),
+                "expected_profit_per_risk": float(row.get("expected_profit_per_risk") or 0.0),
+                "expected_profit_usdt": float(row.get("expected_profit_usdt") or 0.0),
+            },
             "strategy": {"id": strategy_id, "virtual_weight": float(strategy_weight)},
             "execution_risk": row.get("execution_risk", {
                 "risk_tier": "PAPER_RISK_TIER_1", "leverage": 1.0,

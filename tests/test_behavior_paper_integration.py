@@ -273,6 +273,43 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 50.0, places=6)
 
+    def test_full_portfolio_still_exports_ranked_opportunity_telemetry(self):
+        for index in range(agent.MAX_OPEN_POSITIONS):
+            candidate = self.candidate()
+            candidate.update({
+                "decision_id": 100 + index,
+                "symbol": f"OPEN{index}USDT",
+                "evidence_sha256": f"{index + 1:x}" * 64,
+            })
+            with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+                "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+            }):
+                self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+            self.con.execute(
+                "UPDATE paper_agent_positions SET status='OPEN', entry_price=100, quantity=0.5 "
+                "WHERE symbol=?", (candidate["symbol"],),
+            )
+            self.con.execute(
+                "INSERT INTO market_klines VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (candidate["symbol"], "1h", 0, 100, 100, 100, 100, 1,
+                 int(NOW.timestamp() * 1000), 100),
+            )
+            self.con.commit()
+        telemetry = {}
+        fresh = self.candidate()
+        fresh.update({"decision_id": 999, "symbol": "FRESHUSDT",
+                      "evidence_sha256": "f" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [fresh], "review": {},
+        }):
+            selected = agent.select_new_positions(self.con, NOW, telemetry=telemetry)
+        self.assertEqual(selected, 0)
+        self.assertTrue(telemetry["candidates"])
+        self.assertEqual(
+            telemetry["candidates"][0]["reason"],
+            "PORTFOLIO_POSITION_CAPACITY_FULL",
+        )
+
     def test_existing_pending_entry_reserves_cash_and_gross_exposure(self):
         pending = self.candidate()
         pending.update({

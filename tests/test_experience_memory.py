@@ -58,6 +58,31 @@ class ExperienceMemoryTests(unittest.TestCase):
         self.assertFalse(thesis["claims"]["outcome_used"])
         self.assertIn("MARKET_BEHAVIOR_OBSERVER", thesis["capabilities_observed_but_not_decision_inputs"])
 
+    def test_behavior_thesis_freezes_selection_economics(self):
+        self.add_pending()
+        row = self.row()
+        row.update({
+            "decision_source": "MARKET_BEHAVIOR_CORE",
+            "evidence": {
+                "evidence_minute_end_ms": int(NOW.timestamp() * 1000),
+                "capabilities_used": ["ORDER_BOOK", "RISK_GATE"],
+            },
+            "expected_net_edge_pct": 1.25,
+            "expected_profit_per_risk": 2.5,
+            "expected_profit_usdt": 12.5,
+        })
+        memory.capture_decision_thesis(
+            self.con, position_id=1, row=row, agent_version="agent",
+            policy_version="policy", validation_cohort="cohort", strategy_id="base",
+            strategy_weight=1.0, selected_at=NOW, planned_entry_time=NOW,
+        )
+        thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=1"
+        ).fetchone()[0])
+        self.assertEqual(thesis["selection_economics"]["expected_net_edge_pct"], 1.25)
+        self.assertEqual(thesis["selection_economics"]["expected_profit_per_risk"], 2.5)
+        self.assertEqual(thesis["selection_economics"]["expected_profit_usdt"], 12.5)
+
     def test_closed_trade_cannot_receive_retrofitted_thesis(self):
         self.add_pending()
         self.con.execute("UPDATE paper_agent_positions SET status='CLOSED' WHERE position_id=1")
