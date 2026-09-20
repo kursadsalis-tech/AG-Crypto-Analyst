@@ -17,6 +17,7 @@ from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import experience_memory, position_management, realtime_market, trade_learning
+from paper_trading import strategy_allocator
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -69,6 +70,7 @@ async def run():
     stop_event = asyncio.Event()
     last_health_at = None
     last_selection_attempt_at = None
+    last_learning_at = None
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -104,7 +106,7 @@ async def run():
         write_health(state, error=error, active_symbols=symbols())
 
     async def on_state(state, observed_ms):
-        nonlocal last_health_at, last_selection_attempt_at
+        nonlocal last_health_at, last_selection_attempt_at, last_learning_at
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
         # One authoritative live callback now drives decision -> PAPER entry ->
         # open-position management. The decision core still consumes only
@@ -113,6 +115,14 @@ async def run():
                 (observed_at - last_selection_attempt_at).total_seconds() >= 1.0):
             select_new_positions(con, observed_at, metadata)
             last_selection_attempt_at = observed_at
+        # Learning is part of the live lifecycle, not a separate research job.
+        # It remains PAPER-only and evidence-gated; challengers get no real-order
+        # authority and cannot silently mutate the active policy.
+        if (last_learning_at is None or
+                (observed_at - last_learning_at).total_seconds() >= 60.0):
+            learning = trade_learning.run(con, FORWARD_COHORT, observed_at)
+            strategy_allocator.rebalance(con, observed_at)
+            last_learning_at = observed_at
         live_filled, live_cancelled = fill_pending_from_live_state(
             con, observed_at, state, metadata
         )
