@@ -42,6 +42,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "direction": "LONG", "confidence": .60, "expected_net_edge_pct": .30,
             "experiment_tier": "EXPLORATORY_LEARNING",
             "current_price": 100.0, "target_price": 100.3, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 2.0,
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
@@ -204,6 +205,29 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
             "EFFICIENTUSDT",
+        )
+
+    def test_candidate_ranking_uses_each_trade_dynamic_stop_distance(self):
+        wide_stop = self.candidate()
+        wide_stop.update({
+            "decision_id": 25, "symbol": "WIDEUSDT",
+            "expected_net_edge_pct": 0.45, "stop_reference_pct": 5.0,
+            "evidence_sha256": "5" * 64,
+        })
+        tight_stop = self.candidate()
+        tight_stop.update({
+            "decision_id": 26, "symbol": "TIGHTUSDT",
+            "expected_net_edge_pct": 0.30, "stop_reference_pct": 1.0,
+            "evidence_sha256": "6" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [wide_stop, tight_stop],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.assertEqual(
+            self.con.execute("SELECT symbol FROM paper_agent_positions").fetchone()[0],
+            "TIGHTUSDT",
         )
 
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
