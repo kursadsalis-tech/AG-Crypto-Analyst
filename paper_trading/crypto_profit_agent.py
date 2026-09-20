@@ -297,6 +297,28 @@ def ensure_tables(con):
                 realized_pnl=0,total_fees=0,validation_cohort=?,evidence_start_at=?
             WHERE portfolio_id=1
         """, (reset_at, INITIAL_CAPITAL, INITIAL_CAPITAL, FORWARD_COHORT, reset_at))
+    # Cohort reset is normally one-time, but legacy active rows can survive or
+    # be restored after the portfolio has already moved to FORWARD_COHORT.
+    # They must never remain actionable PAPER positions.  Quarantine them
+    # idempotently without manufacturing an execution/PnL event.
+    legacy_active = con.execute("""
+        SELECT 1 FROM paper_agent_positions
+        WHERE status IN ('PENDING_ENTRY','OPEN')
+          AND (validation_cohort IS NULL OR validation_cohort<>?
+               OR COALESCE(evidence_eligible,0)<>1)
+        LIMIT 1
+    """, (FORWARD_COHORT,)).fetchone()
+    if legacy_active:
+        con.execute("""
+            UPDATE paper_agent_positions SET
+                evidence_eligible=0,
+                validation_cohort=COALESCE(validation_cohort,'LEGACY_LOOKAHEAD_EXCLUDED'),
+                status='CANCELLED',
+                cancel_reason=COALESCE(cancel_reason,'LOOKAHEAD_COHORT_QUARANTINED')
+            WHERE status IN ('PENDING_ENTRY','OPEN')
+              AND (validation_cohort IS NULL OR validation_cohort<>?
+                   OR COALESCE(evidence_eligible,0)<>1)
+        """, (FORWARD_COHORT,))
     experience_memory.ensure_tables(con)
     experience_memory.record_legacy_summary(con)
     behavior_decision_core.ensure_tables(con)
