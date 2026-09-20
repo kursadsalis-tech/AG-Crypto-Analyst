@@ -114,7 +114,14 @@ def operator_view(snapshot):
         "son_heartbeat": _age(system.get("heartbeat_age_seconds")),
         "son_aksiyon": system.get("last_action") or "Henüz aksiyon yok",
         "açık_pozisyon": open_count,
+        "toplam_kasa": _money(portfolio.get("total_equity")),
+        "başlangıç_kasası": _money(portfolio.get("initial_capital")),
+        "toplam_getiri": (
+            "—" if portfolio.get("total_return_pct") is None
+            else f'{portfolio["total_return_pct"]:+.2f}%'
+        ),
         "serbest_nakit": _money(portfolio["cash"]),
+        "açık_pozisyon_tutarı": _money(portfolio.get("open_position_notional")),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
         "açık_pozisyonlar": positions,
