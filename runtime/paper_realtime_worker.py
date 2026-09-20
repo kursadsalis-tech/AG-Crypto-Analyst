@@ -94,6 +94,7 @@ async def run():
     last_health_at = None
     last_selection_attempt_at = None
     live_states = {}
+    last_market_state_publish_at = 0.0
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -106,6 +107,12 @@ async def run():
             "quote_source": state.quote_source,
             "market_timestamp_ms": state.market_timestamp_ms,
             "quote_timestamp_ms": state.quote_timestamp_ms,
+            "liquidity_timestamp_ms": state.liquidity_timestamp_ms,
+            "visible_quote_volume": state.visible_quote_volume,
+            "bid_quote_volume": state.bid_quote_volume,
+            "ask_quote_volume": state.ask_quote_volume,
+            "book_imbalance": state.book_imbalance,
+            "taker_imbalance": state.taker_imbalance,
             "observed_timestamp_ms": observed_ms,
         }
 
@@ -113,9 +120,16 @@ async def run():
         return [live_states[key] for key in sorted(live_states)]
 
     def publish_live_state(state, observed_ms):
+        nonlocal last_market_state_publish_at
         live_states[(state.symbol, state.market_type)] = live_state_payload(
             state, observed_ms
         )
+        # Keep every in-memory state current, but cap disk telemetry at 2 Hz.
+        # Observability is never allowed to become a trading-path dependency.
+        current = loop.time()
+        if current - last_market_state_publish_at < 0.5:
+            return
+        last_market_state_publish_at = current
         # This is deliberately the same state the canonical worker consumes:
         # no second feed, price authority, database, or trading lifecycle.
         write_market_state(live_state_snapshot())
