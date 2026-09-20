@@ -15,7 +15,7 @@ from paper_trading.crypto_profit_agent import FORWARD_COHORT
 from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_authority
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 ATTESTATION_VERSION = "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER"
 MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
