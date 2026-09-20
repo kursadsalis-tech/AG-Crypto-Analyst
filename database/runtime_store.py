@@ -36,7 +36,7 @@ REMOTE_RUNTIME_TABLES = frozenset(
     {
         "agent_run_state",
         "asset_risk_snapshots",
-        "cloud_runtime_attestations",
+        "runtime_attestations",
         "crypto_news",
         "crypto_news_analysis",
         "decision_engine_snapshots",
