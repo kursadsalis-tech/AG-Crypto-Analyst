@@ -256,6 +256,54 @@ def fetch_spot_snapshot(symbol: str, observed_at: datetime):
     return market_time, price, quote_volume_24h / (24.0 * 60.0), digest
 
 
+
+def capture_live_reference(con, *, position_id: int, symbol: str, purpose: str,
+                           live, observed_at: datetime):
+    """Persist the exact live event used by the PAPER lifecycle as execution evidence."""
+    ensure_table(con)
+    row = con.execute("""
+        SELECT market_time,reference_price,quote_volume
+        FROM paper_execution_market_observations
+        WHERE position_id=? AND purpose=?
+    """, (position_id, purpose)).fetchone()
+    if row:
+        market_time = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+        return market_time, float(row[1]), float(row[2])
+    if live.symbol != symbol or live.last_price is None or live.market_timestamp_ms is None:
+        return None
+    market_time = datetime.fromtimestamp(
+        int(live.market_timestamp_ms) / 1000, tz=timezone.utc
+    )
+    if abs((observed_at - market_time).total_seconds()) > 2:
+        return None
+    quote_volume = live.visible_quote_volume
+    if quote_volume is None or float(quote_volume) <= 0:
+        return None
+    price = float(live.last_price)
+    evidence = {
+        "symbol": symbol, "market_type": live.market_type,
+        "market_timestamp_ms": int(live.market_timestamp_ms),
+        "last_price": price, "best_bid": live.best_bid, "best_ask": live.best_ask,
+        "book_imbalance": live.book_imbalance, "taker_imbalance": live.taker_imbalance,
+        "visible_quote_volume": float(quote_volume),
+    }
+    digest = hashlib.sha256(json.dumps(
+        evidence, separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+    con.execute("""
+        INSERT INTO paper_execution_market_observations(
+            position_id,purpose,symbol,expected_time,market_time,observed_at,
+            reference_price,quote_volume,source,payload_sha256,real_order_allowed
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,0)
+        ON CONFLICT(position_id,purpose) DO NOTHING
+    """, (
+        position_id, purpose, symbol, _iso(market_time), _iso(market_time),
+        _iso(observed_at), price, float(quote_volume),
+        "AUTHORITATIVE_LIVE_EVENT_STREAM", digest,
+    ))
+    return market_time, price, float(quote_volume)
+
+
 def capture_reference(con, *, position_id: int, symbol: str, expected: datetime,
                       purpose: str, observed_at: datetime,
                       market_type: str = "USD_M_PERPETUAL"):
