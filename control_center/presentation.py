@@ -167,6 +167,11 @@ def operator_view(snapshot):
             "mesaj": row.get("message") or "Ayrıntı yok",
             "durum": row.get("status") or "—",
             "yaş": _age(row.get("age_seconds")) if row.get("age_seconds") is not None else "—",
+            "zaman": row.get("created_at") or "—",
+            "ajan_fiyatı": _price(row.get("agent_price")),
+            "kontrol_fiyatı": _price(row.get("operator_price")),
+            "kaynak": row.get("agent_quote_source") or "—",
+            "not": row.get("note") or "—",
         } for row in snapshot.get("incidents", [])],
         "raporlar": [{
             "tarih": row.get("report_date") or "—",
