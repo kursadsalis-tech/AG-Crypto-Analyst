@@ -55,7 +55,7 @@ class RealtimeMarketTests(unittest.TestCase):
                 self.messages = iter((
                     json.dumps({"event": "error", "code": "51001"}),
                     json.dumps({
-                        "arg": {"channel": "tickers", "instId": "BTC-USDT"},
+                        "arg": {"channel": "tickers", "instId": "BTC-USDT-SWAP"},
                         "data": [{"ts": str(NOW), "last": "100", "bidPx": "99.9",
                                   "askPx": "100.1"}],
                     }),
@@ -88,11 +88,55 @@ class RealtimeMarketTests(unittest.TestCase):
         with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
                 patch.object(realtime_market.time, "time", return_value=NOW / 1000):
             asyncio.run(realtime_market.stream(
-                lambda: [("LAUSDT", "SPOT"), ("BTCUSDT", "SPOT")],
+                lambda: [("LAUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "USD_M_PERPETUAL")],
                 on_state, stop, lambda state, error: health.append((state, error)),
             ))
         self.assertEqual(seen, ["BTCUSDT"])
         self.assertIn(("DEGRADED", "OKX_SUBSCRIPTION_ERROR_51001"), health)
+
+    def test_binance_trade_does_not_refresh_quote_or_liquidity_timestamp(self):
+        states = {}
+        message = {"e": "24hrTicker", "s": "DYNAMICUSDT", "E": NOW,
+                   "c": "777", "b": "99", "a": "101", "B": "2", "A": "3"}
+        state = realtime_market.apply_binance_message(states, message, NOW)[0]
+        self.assertEqual((state.bid_quote_volume, state.ask_quote_volume), (198, 303))
+        realtime_market.apply_binance_message(states, {
+            "e": "aggTrade", "s": "DYNAMICUSDT", "E": NOW+1000,
+            "p": "778", "q": "1", "m": False,
+        }, NOW+1000)
+        self.assertEqual(state.quote_timestamp_ms, NOW)
+        self.assertEqual(state.liquidity_timestamp_ms, NOW)
+        self.assertEqual(state.market_timestamp_ms, NOW+1000)
+
+    def test_incremental_depth_cannot_be_mistaken_for_best_book(self):
+        states = {"DYNAMICUSDT": LiveState("DYNAMICUSDT", "SPOT", best_bid=99, best_ask=101,
+                                        quote_timestamp_ms=NOW-3000)}
+        self.assertEqual(realtime_market.apply_binance_message(states, {
+            "e": "depthUpdate", "s": "DYNAMICUSDT", "E": NOW,
+            "b": [["90", "2"]], "a": [["110", "3"]],
+        }, NOW), [])
+        self.assertEqual(states["DYNAMICUSDT"].quote_timestamp_ms, NOW-3000)
+
+    def test_older_ticker_cannot_overwrite_newer_quote(self):
+        states = {}
+        message = {"e": "24hrTicker", "s": "DYNAMICUSDT", "E": NOW,
+                   "c": "777", "b": "99", "a": "101", "B": "2", "A": "3"}
+        realtime_market.apply_binance_message(states, message, NOW)
+        self.assertEqual(realtime_market.apply_binance_message(
+            states, {**message, "E": NOW-1, "a": "90"}, NOW), [])
+        self.assertEqual(states["DYNAMICUSDT"].best_ask, 101)
+
+    def test_missing_binance_side_clears_previous_side_instead_of_reusing_it(self):
+        states = {}
+        message = {"e": "24hrTicker", "s": "DYNAMICUSDT", "E": NOW,
+                   "c": "777", "b": "99", "a": "101", "B": "2", "A": "3"}
+        realtime_market.apply_binance_message(states, message, NOW)
+        message.pop("a")
+        message["E"] += 1
+        state = realtime_market.apply_binance_message(states, message, NOW+1)[0]
+        self.assertIsNone(state.best_ask)
+        self.assertIsNone(state.ask_quote_volume)
+        self.assertIsNone(state.visible_quote_volume)
 
 
 if __name__ == "__main__":
