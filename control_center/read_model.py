@@ -262,6 +262,8 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         })
 
     initial, cash, realized, fees = portfolio or (0.0, 0.0, 0.0, 0.0)
+    open_notional = sum(float(p["notional"] or 0.0) for p in positions)
+    total_equity = float(cash or 0.0) + open_notional + total_unrealized
     fresh_count = sum(p["market_status"] == "CANLI" for p in positions)
     try:
         health_at = _parse_iso(health.get("at"))
@@ -296,6 +298,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "realized_pnl": realized,
             "total_fees": fees,
             "unrealized_pnl": total_unrealized,
+            "open_position_notional": open_notional,
+            "total_equity": total_equity,
+            "total_return_pct": (
+                ((total_equity / float(initial)) - 1.0) * 100.0
+                if initial else None
+            ),
         },
         "positions": positions,
         "market": market_rows,
