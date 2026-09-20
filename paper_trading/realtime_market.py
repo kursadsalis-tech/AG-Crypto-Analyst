@@ -14,6 +14,7 @@ import websockets
 
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
+BINANCE_USDM_WS_URL = "wss://fstream.binance.com/ws"
 MAX_EVENT_AGE_MS = 2_000
 
 
@@ -138,7 +139,7 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
     return updates
 
 
-def apply_binance_message(states: dict[str, LiveState], message: dict, received_ms: int):
+def apply_binance_message(states: dict[str, LiveState], message: dict, received_ms: int, market_type="SPOT"):
     """Normalize Binance Spot ticker, depth and aggregate-trade events."""
     event = message.get("e")
     symbol = str(message.get("s") or "").upper()
@@ -147,7 +148,7 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
     timestamp = int(message.get("E", 0))
     if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
         return []
-    state = states.setdefault(symbol, LiveState(symbol, "SPOT"))
+    state = states.setdefault(symbol, LiveState(symbol, market_type))
     if event == "24hrTicker":
         if state.quote_timestamp_ms is not None and timestamp < state.quote_timestamp_ms:
             return []
@@ -192,15 +193,17 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
     return [state]
 
 
-def binance_subscription_params(symbols):
+def binance_subscription_params(symbols, market_type="SPOT"):
+    """Timestamped Binance ticker/trade streams for executable PAPER markets."""
+    market_type_filter = market_type
     normalized = {
         (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
         for item in symbols
     }
     return [
         f"{symbol.lower()}@{channel}"
-        for symbol, market_type in sorted(normalized)
-        if market_type == "SPOT"
+        for symbol, item_market_type in sorted(normalized)
+        if item_market_type == market_type_filter
         for channel in ("ticker", "aggTrade")
     ]
 
@@ -273,18 +276,19 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
             backoff = min(backoff * 2, 30)
 
 
-async def _binance_spot_stream(symbols, on_state, stop_event, health_callback=None):
+async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *, market_type="SPOT"):
+    """Stream timestamped Binance executable bid/ask and side liquidity."""
     context = ssl.create_default_context(cafile=certifi.where())
     states, backoff = {}, 1
     while not stop_event.is_set():
-        desired = binance_subscription_params(symbols())
+        desired = binance_subscription_params(symbols(), market_type)
         if not desired:
             await asyncio.sleep(1)
             continue
         try:
             states.clear()
             async with websockets.connect(
-                BINANCE_SPOT_WS_URL, ssl=context, open_timeout=10,
+                BINANCE_SPOT_WS_URL if market_type == "SPOT" else BINANCE_USDM_WS_URL, ssl=context, open_timeout=10,
                 ping_interval=20, ping_timeout=10, max_queue=1024,
             ) as socket:
                 active = desired
@@ -293,7 +297,7 @@ async def _binance_spot_stream(symbols, on_state, stop_event, health_callback=No
                 if health_callback:
                     health_callback("CONNECTED", None)
                 while not stop_event.is_set():
-                    desired = binance_subscription_params(symbols())
+                    desired = binance_subscription_params(symbols(), market_type)
                     removed, added = sorted(set(active) - set(desired)), sorted(set(desired) - set(active))
                     if removed:
                         await socket.send(json.dumps({"method": "UNSUBSCRIBE", "params": removed, "id": 2}))
@@ -310,7 +314,7 @@ async def _binance_spot_stream(symbols, on_state, stop_event, health_callback=No
                         if health_callback:
                             health_callback("DEGRADED", f"BINANCE_SUBSCRIPTION_ERROR_{message['code']}")
                         continue
-                    for state in apply_binance_message(states, message, received_ms):
+                    for state in apply_binance_message(states, message, received_ms, market_type=market_type):
                         await on_state(state, received_ms)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
@@ -337,7 +341,7 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
             await asyncio.sleep(1)
 
     await asyncio.gather(
-        _binance_spot_stream(spot_symbols, on_state, stop_event, health_callback),
-        _okx_stream(swap_symbols, on_state, stop_event, health_callback),
+        _binance_stream(spot_symbols, on_state, stop_event, health_callback, market_type="SPOT"),
+        _binance_stream(swap_symbols, on_state, stop_event, health_callback, market_type="USD_M_PERPETUAL"),
         idle_health(),
     )
