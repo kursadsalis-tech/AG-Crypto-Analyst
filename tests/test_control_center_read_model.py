@@ -236,7 +236,7 @@ class ControlCenterReadModelTests(unittest.TestCase):
             }))
             health.write_text(json.dumps({
                 "execution_mode":"PAPER_ONLY","real_order_allowed":False,
-                "status":"CONNECTED","at":now.isoformat(),"action":"HOLD"
+                "status":"CONNECTED","at":now.isoformat(),"action":"SELECT"
             }))
             result = overview(db, state, health, now=now)
             self.assertTrue(result["system"]["worker_healthy"])
