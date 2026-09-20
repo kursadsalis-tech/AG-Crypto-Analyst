@@ -31,6 +31,10 @@ BRAIN_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_STATE",
     "/var/lib/agca/paper-realtime-brain-state.json",
 ))
+BRAIN_TIMELINE_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
+    "/var/lib/agca/paper-realtime-brain-timeline.json",
+))
 
 
 def now():
@@ -54,10 +58,33 @@ def write_health(status, **details):
 def write_brain_state(payload):
     """Best-effort X-ray of the canonical worker; never a decision dependency."""
     try:
-        _atomic_json_write(BRAIN_STATE_PATH, {
+        event = {
             "at": now().isoformat(), "execution_mode": "PAPER_ONLY",
             "real_order_allowed": False, **payload,
-        })
+        }
+        _atomic_json_write(BRAIN_STATE_PATH, event)
+        try:
+            previous = json.loads(BRAIN_TIMELINE_PATH.read_text(encoding="utf-8"))
+            timeline = previous if isinstance(previous, list) else []
+        except (OSError, ValueError, TypeError):
+            timeline = []
+        signature = (
+            event.get("phase"), event.get("observed_symbol"),
+            event.get("decision"), (event.get("scan") or {}).get("candidate_count"),
+            (event.get("scan") or {}).get("selected_count"),
+        )
+        if not timeline or tuple(timeline[-1].get("signature", [])) != signature:
+            timeline.append({
+                "at": event["at"], "phase": event.get("phase"),
+                "message": event.get("message"),
+                "symbol": event.get("observed_symbol"),
+                "market_type": event.get("observed_market_type"),
+                "price": event.get("observed_price"),
+                "decision": event.get("decision"),
+                "scan": event.get("scan"),
+                "signature": list(signature),
+            })
+            _atomic_json_write(BRAIN_TIMELINE_PATH, timeline[-100:])
     except Exception:
         pass
 
