@@ -121,7 +121,7 @@ def execution_feedback(con, now=None):
     tables = {row[0] for row in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
-    required = {"paper_agent_positions", "paper_behavior_decisions"}
+    required = {"paper_agent_positions", "paper_behavior_decisions", "paper_position_events"}
     if not required.issubset(tables):
         return {}
     rows = con.execute("""
