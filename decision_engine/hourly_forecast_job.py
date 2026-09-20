@@ -61,12 +61,22 @@ def main():
     print("AG Crypto Analyst - Hourly Forecast Job")
     print(f"Başlangıç: {now.isoformat()}")
 
-    risk_result = risk_cycle.main(force=True)
-    if forecast_succeeded_this_hour(now):
-        print("Unified Forecast: bu UTC saatinde 39 tahmin zaten açıldı; tekrar üretilmedi.")
-        forecast_result = {"status": "SKIPPED", "reason": "ALREADY_OPENED_THIS_HOUR"}
-    else:
-        forecast_result = forecast_cycle.main(force=True)
+    # PAPER lifecycle must not depend on the forecast/risk refresh succeeding
+    # in the same process. Existing open positions still need management and
+    # expired pending entries still need fail-closed cleanup.
+    try:
+        risk_result = risk_cycle.main(force=True)
+    except Exception as exc:
+        risk_result = {"status": "ERROR", "message": str(exc)[:300]}
+
+    try:
+        if forecast_succeeded_this_hour(now):
+            print("Unified Forecast: bu UTC saatinde 39 tahmin zaten açıldı; tekrar üretilmedi.")
+            forecast_result = {"status": "SKIPPED", "reason": "ALREADY_OPENED_THIS_HOUR"}
+        else:
+            forecast_result = forecast_cycle.main(force=True)
+    except Exception as exc:
+        forecast_result = {"status": "ERROR", "message": str(exc)[:300]}
 
     metadata_result = None
     if os.getenv("AGCA_REQUIRE_LIVE_EXCHANGE_RULES", "1") == "1":
@@ -81,8 +91,14 @@ def main():
             "source_url": metadata.source_url,
             "transport": metadata_transport,
         }
-    paper_result = crypto_profit_agent.main()
-    learning_result = forecast_learning_cycle.main()
+    try:
+        paper_result = crypto_profit_agent.main()
+    except Exception as exc:
+        paper_result = {"status": "ERROR", "message": str(exc)[:300]}
+    try:
+        learning_result = forecast_learning_cycle.main()
+    except Exception as exc:
+        learning_result = {"status": "ERROR", "message": str(exc)[:300]}
     blocking = [
         name for name, result in (
             ("risk", risk_result),
