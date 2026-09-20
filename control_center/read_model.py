@@ -389,6 +389,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 else "Kanonik worker heartbeat sağlıklı değil."
             ),
         },
+        "selection": selection,
         "activity": {
             "stages": [{
                 "name": name,
