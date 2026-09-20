@@ -324,6 +324,17 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         and _freshness_seconds(state, now) <= 5.0
     )
     observed_symbols = len(market_states)
+    activity_ages = {}
+    for name, stamp in activity.items():
+        try:
+            parsed = _parse_iso(stamp)
+        except (TypeError, ValueError):
+            parsed = None
+        activity_ages[name] = max(0.0, (now - parsed).total_seconds()) if parsed else None
+    latest_work_age = min(
+        (age for age in activity_ages.values() if age is not None),
+        default=None,
+    )
     pipeline_state = (
         "ÇALIŞIYOR"
         if worker_healthy and observed_symbols > 0 and market_fresh == observed_symbols
@@ -351,6 +362,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "pipeline_state": pipeline_state,
             "observed_symbols": observed_symbols,
             "fresh_market_symbols": market_fresh,
+            "latest_work_age_seconds": latest_work_age,
             "pipeline_explanation": (
                 "Worker ve canlı piyasa akışı sağlıklı."
                 if pipeline_state == "ÇALIŞIYOR"
