@@ -18,6 +18,10 @@ MARKET_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_MARKET_STATE",
     "/var/lib/agca/paper-realtime-market-state.json",
 ))
+HEALTH_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_HEALTH",
+    "/var/lib/agca/paper-realtime-health.json",
+))
 
 
 def _utcnow():
@@ -42,6 +46,18 @@ def load_market_state(path=MARKET_STATE_PATH):
         return {"at": payload.get("at"), "live_market": []}
     if payload.get("real_order_allowed") is not False:
         return {"at": payload.get("at"), "live_market": []}
+    return payload
+
+
+def load_health(path=HEALTH_PATH):
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {"status": "UNKNOWN", "at": None}
+    if payload.get("execution_mode") != "PAPER_ONLY":
+        return {"status": "UNKNOWN", "at": payload.get("at")}
+    if payload.get("real_order_allowed") is not False:
+        return {"status": "UNKNOWN", "at": payload.get("at")}
     return payload
 
 
@@ -76,10 +92,12 @@ def _live_pnl(direction, entry_price, quantity, mark):
     return sign * (float(mark) - float(entry_price)) * float(quantity)
 
 
-def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
+def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
+             health_path=HEALTH_PATH, now=None):
     """Return a read-only, human-facing snapshot of canonical PAPER state."""
     now = now or _utcnow()
     market = load_market_state(market_state_path)
+    health = load_health(health_path)
     states = _state_index(market)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
@@ -164,6 +182,14 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
 
     initial, cash, realized, fees = portfolio or (0.0, 0.0, 0.0, 0.0)
     fresh_count = sum(p["market_status"] == "CANLI" for p in positions)
+    health_at = _parse_iso(health.get("at"))
+    heartbeat_age = (
+        max(0.0, (now - health_at).total_seconds()) if health_at else None
+    )
+    worker_status = health.get("status") or "UNKNOWN"
+    worker_healthy = worker_status == "CONNECTED" and (
+        heartbeat_age is not None and heartbeat_age <= 30.0
+    )
     return {
         "system": {
             "execution_mode": "PAPER_ONLY",
@@ -174,6 +200,11 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH, now=None):
                 "CANLI" if positions and fresh_count == len(positions)
                 else "GECİKMİŞ" if positions else "POZİSYON_YOK"
             ),
+            "worker_status": worker_status,
+            "worker_healthy": worker_healthy,
+            "heartbeat_age_seconds": heartbeat_age,
+            "last_action": health.get("action"),
+            "active_symbols": health.get("active_symbols"),
         },
         "portfolio": {
             "initial_capital": initial,
