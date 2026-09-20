@@ -154,5 +154,17 @@ def operator_view(snapshot):
             "kalıcı_politika_terfisi": "HENÜZ DOĞRULANMADI",
             "sürüm": "—",
         }),
+        "olaylar": [{
+            "önem": row.get("severity", "BİLGİ"),
+            "tür": row.get("kind", "SYSTEM"),
+            "mesaj": row.get("message") or "Ayrıntı yok",
+            "durum": row.get("status") or "—",
+            "yaş": _age(row.get("age_seconds")) if row.get("age_seconds") is not None else "—",
+        } for row in snapshot.get("incidents", [])],
+        "raporlar": [{
+            "tarih": row.get("report_date") or "—",
+            "oluşturulma": row.get("created_at") or "—",
+            "özet": row.get("report") or {},
+        } for row in snapshot.get("reports", [])],
         "kapanan_işlemler": closed,
     }
