@@ -27,6 +27,10 @@ MARKET_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_MARKET_STATE",
     "/var/lib/agca/paper-realtime-market-state.json",
 ))
+BRAIN_STATE_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_BRAIN_STATE",
+    "/var/lib/agca/paper-realtime-brain-state.json",
+))
 
 
 def now():
@@ -45,6 +49,17 @@ def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
     _atomic_json_write(HEALTH_PATH, payload)
+
+
+def write_brain_state(payload):
+    """Best-effort X-ray of the canonical worker; never a decision dependency."""
+    try:
+        _atomic_json_write(BRAIN_STATE_PATH, {
+            "at": now().isoformat(), "execution_mode": "PAPER_ONLY",
+            "real_order_allowed": False, **payload,
+        })
+    except Exception:
+        pass
 
 
 def write_market_state(states):
@@ -181,7 +196,34 @@ async def run():
         # completed causal minute evidence; the fill uses this exact live state.
         if (last_selection_attempt_at is None or
                 (observed_at - last_selection_attempt_at).total_seconds() >= 1.0):
-            select_new_positions(con, observed_at, metadata)
+            selected = select_new_positions(con, observed_at, metadata)
+            latest_scan = con.execute(
+                """SELECT core_status,candidate_count,selected_count,
+                          active_position_count,capacity,available_exposure,
+                          reason_counts_json
+                   FROM paper_behavior_selection_runs
+                   ORDER BY run_id DESC LIMIT 1"""
+            ).fetchone()
+            write_brain_state({
+                "phase": "OPPORTUNITY_SCAN",
+                "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
+                "observed_symbol": state.symbol,
+                "observed_market_type": state.market_type,
+                "observed_price": state.last_price,
+                "monitored_symbols": len(symbols()),
+                "scan": ({
+                    "core_status": latest_scan[0],
+                    "candidate_count": latest_scan[1],
+                    "selected_count": latest_scan[2],
+                    "active_position_count": latest_scan[3],
+                    "capacity": latest_scan[4],
+                    "available_exposure": latest_scan[5],
+                    "reason_counts": json.loads(latest_scan[6] or "{}"),
+                } if latest_scan else None),
+                "decision": (
+                    "NEW_POSITION_SELECTED" if selected else "CONTINUE_SCANNING"
+                ),
+            })
             last_selection_attempt_at = observed_at
         # Learning is part of the live lifecycle, not a separate research job.
         # It remains PAPER-only and evidence-gated; challengers get no real-order
