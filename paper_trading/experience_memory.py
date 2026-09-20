@@ -149,50 +149,20 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
 
 
 def review_closed_positions(con, now=None):
+    """Review every closed forward experience; evidence quality controls authority."""
     now = now or datetime.now(timezone.utc)
-    position_columns = {row[1] for row in con.execute(
-        "PRAGMA table_info(paper_agent_positions)"
-    )}
-    funding_clause = (
-        "AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'"
-        if "funding_source" in position_columns else ""
-    )
-    margin_expr = ("COALESCE(p.margin_allocated,p.notional)"
-                   if "margin_allocated" in position_columns else "p.notional")
-    leverage_expr = "COALESCE(p.leverage,1)" if "leverage" in position_columns else "1"
-    tier_expr = ("COALESCE(p.risk_tier,'PAPER_RISK_TIER_1')"
-                 if "risk_tier" in position_columns else "'PAPER_RISK_TIER_1'")
-    rows = con.execute(f"""
+    rows = con.execute("""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
-               t.thesis_json,t.thesis_sha256,{margin_expr},
-               {leverage_expr},{tier_expr}
+               t.thesis_json,t.thesis_sha256,COALESCE(p.margin_allocated,p.notional),
+               COALESCE(p.leverage,1),COALESCE(p.risk_tier,'PAPER_RISK_TIER_1'),
+               COALESCE(p.funding_source,'')
         FROM paper_agent_positions p
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
-          AND p.evidence_eligible=1
           AND p.validation_cohort=t.validation_cohort
-          AND EXISTS (
-            SELECT 1 FROM paper_position_events ee
-            WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
-              AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
-              AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
-              AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
-              AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
-              AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
-          )
-          AND EXISTS (
-            SELECT 1 FROM paper_position_events xe
-            WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
-              AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
-              AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
-              AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
-              AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
-              AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
-          )
-          {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """).fetchall()
     created = 0
@@ -200,39 +170,73 @@ def review_closed_positions(con, now=None):
         (position_id, net_pnl, notional, gross_pnl, entry_fee, exit_fee,
          entry_spread, entry_slippage, exit_spread, exit_slippage, funding,
          liquidated, close_reason, thesis_json, thesis_sha, margin_allocated,
-         leverage, risk_tier) = row
+         leverage, risk_tier, funding_source) = row
+        events = con.execute("""
+            SELECT event_type,evidence_json,fill_price,fill_quantity
+            FROM paper_position_events
+            WHERE position_id=? AND event_type IN ('ENTRY_FILLED','POSITION_CLOSED')
+        """, (position_id,)).fetchall()
+        event_map = {event[0]: event for event in events}
+        limitations = []
+        for event_type in ("ENTRY_FILLED", "POSITION_CLOSED"):
+            event = event_map.get(event_type)
+            if not event:
+                limitations.append("MISSING_" + event_type)
+                continue
+            try:
+                evidence = json.loads(event[1] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence = {}
+            missing = [key for key in (
+                "best_bid","best_ask","quote_timestamp_ms","executable_reference_price"
+            ) if evidence.get(key) is None]
+            if event[2] is None or float(event[3] or 0) <= 0:
+                missing.append("FILL")
+            if missing:
+                limitations.append(event_type + "_INCOMPLETE:" + ",".join(sorted(set(missing))))
+        if funding_source == "PENDING_RECONCILIATION":
+            limitations.append("FUNDING_PENDING")
+        execution_complete = not any(
+            item.startswith("MISSING_") or "_INCOMPLETE:" in item for item in limitations
+        )
+        economics_final = funding_source != "PENDING_RECONCILIATION"
+        evidence_confidence = (
+            "HIGH" if execution_complete and economics_final
+            else "MEDIUM" if execution_complete or economics_final else "LOW"
+        )
         net_pnl, notional = float(net_pnl), float(notional)
         outcome = "WIN" if net_pnl > 0 else "LOSS" if net_pnl < 0 else "BREAKEVEN"
-        costs = {
-            "fees": float(entry_fee or 0) + float(exit_fee or 0),
-            "spread": float(entry_spread or 0) + float(exit_spread or 0),
-            "slippage": float(entry_slippage or 0) + float(exit_slippage or 0),
-            "funding": float(funding or 0),
-        }
+        costs = {"fees": float(entry_fee or 0)+float(exit_fee or 0),
+                 "spread": float(entry_spread or 0)+float(exit_spread or 0),
+                 "slippage": float(entry_slippage or 0)+float(exit_slippage or 0),
+                 "funding": float(funding or 0)}
         review = {
             "frozen_thesis": json.loads(thesis_json),
+            "evidence_assessment": {
+                "execution_complete": execution_complete,
+                "economics_final": economics_final,
+                "confidence": evidence_confidence,
+                "limitations": limitations,
+            },
             "economic_result": {
                 "class": outcome, "gross_pnl": float(gross_pnl or 0),
-                "net_pnl": net_pnl, "net_return_pct": 100.0 * net_pnl / notional,
-                "return_on_margin_pct": 100.0 * net_pnl / float(margin_allocated),
+                "net_pnl": net_pnl, "net_return_pct": 100.0*net_pnl/notional,
+                "return_on_margin_pct": 100.0*net_pnl/float(margin_allocated),
                 "gross_exposure": notional, "margin_allocated": float(margin_allocated),
                 "leverage": float(leverage), "risk_tier": str(risk_tier),
                 "costs": costs, "liquidated": bool(liquidated),
                 "close_reason": close_reason,
             },
-            "capability_assessment": {
-                "FORECAST_DIRECTION": "SUPPORTED_THIS_EPISODE" if net_pnl > 0 else "NOT_SUPPORTED_THIS_EPISODE",
-                "COST_AFTER_EXECUTION": "POSITIVE_AFTER_COSTS" if net_pnl > 0 else "NOT_POSITIVE_AFTER_COSTS",
-                "RISK_GATE": "NO_LIQUIDATION" if not liquidated else "FAILED_LIQUIDATION_TEST",
+            "learning": {
+                "experience_retained": True,
+                "lesson_generation_allowed": True,
+                "validated_performance_eligible": bool(execution_complete and economics_final),
+                "policy_mutation_allowed": False,
+                "principle": "EVERY_EXPERIENCE_CAN_TEACH; AUTHORITY_MUST_BE_EARNED",
             },
-            "attribution": {
-                "skill": "UNRESOLVED_SINGLE_EPISODE",
-                "regime": "REQUIRES_COHORT_EVIDENCE",
-                "luck": "CANNOT_BE_SEPARATED_FROM_SKILL_BY_ONE_TRADE",
-                "causal_claim": False,
-            },
-            "lesson": "EXPERIENCE_RECORDED_NOT_A_SKILL_OR_POLICY_PROMOTION",
-            "next_test": "REPEAT_OUT_OF_SAMPLE_ACROSS_INDEPENDENT_MARKET_REGIMES",
+            "attribution": {"skill": "UNRESOLVED_SINGLE_EPISODE",
+                            "causal_claim": False},
+            "next_test": "RETEST_DISCOVERED_LESSON_OUT_OF_SAMPLE_WITH_STRONGER_EVIDENCE",
         }
         con.execute("""
             INSERT INTO paper_agent_experience_reviews(
@@ -241,7 +245,7 @@ def review_closed_positions(con, now=None):
                 policy_mutation_allowed
             ) VALUES(?,?,?,?,?,?,?,?,0,0,0)
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
-              100.0 * net_pnl / notional, _canonical(review)))
+              100.0*net_pnl/notional, _canonical(review)))
         created += 1
     con.commit()
     return created
