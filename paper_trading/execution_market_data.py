@@ -351,17 +351,21 @@ def capture_live_reference(con, *, position_id: int, symbol: str, purpose: str,
     if row:
         market_time = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
         return market_time, float(row[1]), float(row[2])
-    if live.symbol != symbol or live.last_price is None or live.market_timestamp_ms is None:
+    if live.symbol != symbol or live.market_timestamp_ms is None:
         return None
     market_time = datetime.fromtimestamp(
         int(live.market_timestamp_ms) / 1000, tz=timezone.utc
     )
     if abs((observed_at - market_time).total_seconds()) > 2:
         return None
+    # Persist an analysis reference for audit only. Execution authorization is
+    # side-specific and happens later from fresh bid/ask + side liquidity.
+    price = float(live.last_price) if live.last_price is not None else None
+    if price is None or not math.isfinite(price) or price <= 0:
+        return None
     quote_volume = live.visible_quote_volume
     if quote_volume is None or float(quote_volume) <= 0:
         return None
-    price = float(live.last_price)
     evidence = {
         "symbol": symbol, "market_type": live.market_type,
         "market_timestamp_ms": int(live.market_timestamp_ms),
