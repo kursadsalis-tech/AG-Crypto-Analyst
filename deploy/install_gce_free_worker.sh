@@ -40,10 +40,19 @@ sudo install -m 644 deploy/agca-exchange-metadata-refresh.service /etc/systemd/s
 sudo install -m 644 deploy/agca-exchange-metadata-refresh.timer /etc/systemd/system/agca-exchange-metadata-refresh.timer
 sudo install -m 644 deploy/agca-paper-selection.service /etc/systemd/system/agca-paper-selection.service
 sudo install -m 644 deploy/agca-paper-selection.timer /etc/systemd/system/agca-paper-selection.timer
+sudo install -m 644 deploy/agca-cloud-attestation.service /etc/systemd/system/agca-cloud-attestation.service
+sudo install -m 644 deploy/agca-cloud-attestation.timer /etc/systemd/system/agca-cloud-attestation.timer
+sudo install -m 644 deploy/agca-remote-mirror-drain.service /etc/systemd/system/agca-remote-mirror-drain.service
+sudo install -m 644 deploy/agca-remote-mirror-drain.timer /etc/systemd/system/agca-remote-mirror-drain.timer
+sudo install -m 644 deploy/agca-sqlite-integrity-check.service /etc/systemd/system/agca-sqlite-integrity-check.service
+sudo install -m 644 deploy/agca-sqlite-integrity-check.timer /etc/systemd/system/agca-sqlite-integrity-check.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now agca-cloud-worker.service
 sudo systemctl enable --now agca-paper-realtime-worker.service
 sudo systemctl enable --now agca-paper-realtime-health-monitor.timer
 sudo systemctl enable --now agca-exchange-metadata-refresh.timer
 sudo systemctl enable --now agca-paper-selection.timer
+sudo systemctl enable --now agca-cloud-attestation.timer
+sudo systemctl enable --now agca-remote-mirror-drain.timer
+sudo systemctl enable --now agca-sqlite-integrity-check.timer
 echo "BACKUP=$backup"
