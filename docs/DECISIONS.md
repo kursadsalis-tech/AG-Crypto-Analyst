@@ -944,3 +944,29 @@ nedir?"
 Bu karar, eksik kanıtlı deneyimleri hafızadan silmek yerine açık limitations ve
 güven sınıfıyla saklamayı; ancak doğrulanmış performans/promotion metriklerini
 kanıt kalitesi yetersiz deneyimlerle kirletmemeyi gerektirir.
+
+## Karar 027 - Mac-Bağımsız Bulut Runtime ve Tek Yazıcı Geçişi
+
+Supabase/PostgreSQL uzak runtime deposu tek başına AGCA süreçlerini çalıştırmaz.
+Nihai operasyonel hedef, mevcut Python ürününü kalıcı Ubuntu VM üzerinde
+systemd ile çalıştırmak; Supabase'i operasyonel/audit aynası, GitHub'ı kod
+kaynağı ve SQLite'ı VM üzerindeki authoritative runtime state olarak
+kullanmaktır.
+
+Bağlayıcı geçiş kuralları:
+
+- İlk hedef ücretsiz-kota içindeki kalıcı Ubuntu VM'dir; sağlayıcı değişse de
+  çalışma sözleşmesi değişmez.
+- Beş dakikalık canlı ürün cycle'ı ve saatlik forecast/paper-agent retry cycle'ı
+  ortak kilitle seri çalışır.
+- Sunucu kesintisi sonrası geçmiş saate tahmin üreten catch-up yapılmaz.
+- Mac ve cloud 24 saat parity aşamasında aynı Supabase şemasına birlikte
+  yazmaz; cloud remote mirror kapalı ve Telegram sessiz tutulur.
+- Parite geçişi 39/39 forecast, exact settlement, paper muhasebe, duplicate
+  yokluğu ve 03:00/11:00 rapor sürekliliğini birlikte gerektirir.
+- Nihai cutover kısa bir freeze ve son authoritative SQLite kopyasıyla yapılır.
+  Supabase cloud tarafında bootstrap edildikten sonra yalnız cloud writer açık,
+  Mac LaunchAgent'leri kapalı kalır.
+- Gerçek secret, SQLite dosyası veya API anahtarı GitHub'a yazılmaz.
+- Cloud taşınması model, eşik, SHADOW/PAPER_ONLY durumu, Risk Manager vetosu
+  veya gerçek işlem yetkisini değiştirmez.
