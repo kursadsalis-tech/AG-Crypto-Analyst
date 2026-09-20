@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import math
 from datetime import datetime, timezone
 
-from paper_trading.execution_model import simulated_decision
-from paper_trading.execution_contract import ExecutionFill
+from paper_trading.execution_model import execute_paper, quote_evidence, validate_quote
+from paper_trading.execution_contract import ExecutionFill, ExecutionDecision, MarketSnapshot, OrderIntent
 from paper_trading.futures_costs import (
     FuturesCostError, directional_funding_payment, liquidation_breached,
 )
@@ -85,6 +86,9 @@ def ensure_tables(con):
             UNIQUE(position_id,start_at,end_at,quantity)
         );
     """)
+    event_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_position_events)")}
+    if "evidence_json" not in event_columns:
+        con.execute("ALTER TABLE paper_position_events ADD COLUMN evidence_json TEXT")
     columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_position_management)"
     )}
@@ -111,11 +115,20 @@ def ensure_tables(con):
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
             position_columns.add(name)
     if position_columns:
-        con.execute("UPDATE paper_agent_positions SET margin_allocated=notional WHERE margin_allocated IS NULL")
+        # Same idempotent legacy backfill as the PAPER agent.  Leveraged gross
+        # notional is not cash margin.
+        con.execute("""UPDATE paper_agent_positions
+            SET margin_allocated=notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END
+            WHERE margin_allocated IS NULL""")
 
 
 def initialize_open_positions(con, now):
-    ensure_tables(con)
+    # Schema setup is a caller/startup responsibility.  This function is on the
+    # realtime hot path (symbols() is polled by both websocket loops and health
+    # callbacks), so running ensure_tables() here would repeatedly execute DDL
+    # and an UPDATE against paper_agent_positions.  With the selection service
+    # writing the same SQLite database that can create avoidable writer
+    # contention and block realtime startup.
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.entry_time,p.entry_price,
                p.quantity,p.margin_allocated,p.entry_fee
@@ -125,11 +138,25 @@ def initialize_open_positions(con, now):
         ORDER BY p.position_id
     """).fetchall()
     initialized, blocked = 0, []
-    for position_id, symbol, direction, entry_time, entry_price, quantity, notional, fee in rows:
+    for position_id, symbol, direction, entry_time, entry_price, quantity, margin_allocated, fee in rows:
         risk = con.execute("""
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
         """, (symbol, entry_time)).fetchone()
+        # Legacy positions may predate the immutable thesis table.  Missing
+        # memory must not prevent protective management of an existing trade.
+        thesis_exists = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_decision_theses'"
+        ).fetchone()
+        thesis_row = (con.execute("""
+            SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=?
+        """, (position_id,)).fetchone() if thesis_exists else None)
+        thesis = {}
+        if thesis_row:
+            try:
+                thesis = json.loads(thesis_row[0] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                thesis = {}
         stale_recovery = not risk and now >= parse(con.execute(
             "SELECT due_time FROM paper_agent_positions WHERE position_id=?",
             (position_id,),
@@ -142,7 +169,36 @@ def initialize_open_positions(con, now):
         # is immaterial here because the first fresh tick is forced through the
         # maximum-hold exit; MAX_STOP_PCT is used only to create the accounting
         # state required for that audited close.
-        stop_reference = float(risk[0]) if risk else 5.0
+        volatility_stop = float(risk[0]) if risk else 5.0
+        # A setup-specific invalidation may tighten the volatility envelope when
+        # the frozen thesis actually provides a price level.  Never invent one.
+        invalidation_price = thesis.get("invalidation_price")
+        invalidation_stop = None
+        if invalidation_price is not None:
+            try:
+                invalidation_price = float(invalidation_price)
+                if direction == "LONG" and 0 < invalidation_price < float(entry_price):
+                    invalidation_stop = 100.0 * (float(entry_price)-invalidation_price) / float(entry_price)
+                elif direction == "SHORT" and invalidation_price > float(entry_price):
+                    invalidation_stop = 100.0 * (invalidation_price-float(entry_price)) / float(entry_price)
+            except (TypeError, ValueError):
+                invalidation_stop = None
+        frozen_risk = thesis.get("execution_risk") or {}
+        frozen_stop = frozen_risk.get("planned_stop_distance_pct")
+        if frozen_stop is not None:
+            try:
+                frozen_stop = float(frozen_stop)
+            except (TypeError, ValueError):
+                frozen_stop = None
+        if frozen_stop is not None and (
+            not math.isfinite(frozen_stop) or not 0.5 <= frozen_stop <= 5.0
+        ):
+            blocked.append((int(position_id), "INVALID_FROZEN_STOP_PLAN"))
+            continue
+        # The risk budget and stop must refer to the SAME frozen selection
+        # plan.  An unvalidated invalidation price must not silently tighten
+        # the stop after sizing; legacy positions retain the volatility plan.
+        stop_reference = frozen_stop if frozen_stop is not None else volatility_stop
         state = initialize(direction, float(entry_price), stop_reference)
         con.execute("""INSERT INTO paper_position_management(
             position_id,manager_version,initialized_at,last_market_at,
@@ -151,14 +207,33 @@ def initialize_open_positions(con, now):
             last_thesis_at
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
             position_id, VERSION, iso(now), entry_time, state.stop_distance_pct,
-            state.stop_price, state.best_price, quantity, quantity, notional, fee,
+            state.stop_price, state.best_price, quantity, quantity, margin_allocated, fee,
             entry_time, entry_time,
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
                ("STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
                 if stale_recovery else "ENTRY_RISK_SNAPSHOT"),
                float(entry_price), None, 0, 0, 0, 0,
-               None, state.stop_price, {"risk_stop_pct": state.stop_distance_pct})
+               None, state.stop_price, {
+                   "risk_stop_pct": state.stop_distance_pct,
+                   "raw_risk_stop_reference_pct": float(risk[0]) if risk else None,
+                   "thesis_invalidation_price": invalidation_price,
+                   "thesis_invalidation_stop_pct": invalidation_stop,
+                   "selected_stop_reference_pct": stop_reference,
+                   "stop_reference_basis": (
+                       "FROZEN_SELECTION_RISK_PLAN" if frozen_stop is not None
+                       else "LEGACY_VOLATILITY_ENVELOPE"
+                   ),
+                   "planned_stop_and_fee_risk_usdt": frozen_risk.get(
+                       "planned_stop_and_fee_risk_usdt"
+                   ),
+                   "entry_price": float(entry_price),
+                   "direction": direction,
+                   "margin_allocated": float(margin_allocated or 0),
+                   "risk_snapshot_available": bool(risk),
+                   "stop_policy_min_pct": 0.5,
+                   "stop_policy_max_pct": 5.0,
+               })
         initialized += 1
     con.commit()
     return {"initialized": initialized, "blocked": blocked}
@@ -167,18 +242,50 @@ def initialize_open_positions(con, now):
 def _event(con, position_id, market_at, observed_at, event_type, reason,
            reference_price, fill_price, fill_quantity, fee, spread, slippage,
            stop_before, stop_after, evidence):
-    digest = hashlib.sha256(json.dumps(
-        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-    ).encode()).hexdigest()
+    def safe(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {key: safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [safe(item) for item in value]
+        return value
+    evidence_json = json.dumps(safe(evidence), sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True)
+    digest = hashlib.sha256(evidence_json.encode()).hexdigest()
     con.execute("""INSERT OR IGNORE INTO paper_position_events(
         position_id,market_at,observed_at,event_type,reason,reference_price,
         fill_price,fill_quantity,fee,spread_cost,slippage_cost,stop_before,
-        stop_after,evidence_sha256,real_order_allowed
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
+        stop_after,evidence_sha256,evidence_json,real_order_allowed
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""", (
         position_id, iso(market_at), iso(observed_at), event_type, reason,
         reference_price, fill_price, fill_quantity, fee, spread, slippage,
-        stop_before, stop_after, digest,
+        stop_before, stop_after, digest, evidence_json,
     ))
+
+
+def record_execution(con, position_id, observed_at, purpose, symbol, side,
+                     market_type, decision, market=None):
+    evidence = {
+        "observed_at": iso(observed_at), "quote_timestamp_ms": None,
+        "best_bid": None, "best_ask": None,
+        "selected_executable_side": "ASK" if side == "BUY" else "BID",
+        "executable_reference_price": None, "final_simulated_fill_price": None,
+        "quote_age_ms": None, "fee": 0, "slippage": 0, "quantity": 0,
+        "notional": 0, "partial": False,
+        **decision.evidence,
+    }
+    evidence.update({"symbol": symbol, "side": side, "market_type": market_type,
+                     "decision_at": iso(observed_at), "real_order_allowed": 0})
+    evidence.setdefault("status", decision.status)
+    evidence.setdefault("rejection_reason", decision.reason if not decision.fill else None)
+    fill = decision.fill
+    reference = evidence.get("executable_reference_price") or 0.0
+    _event(con, position_id, observed_at, observed_at,
+           purpose + ("_FILLED" if fill else "_REJECTED"), decision.reason,
+           reference, fill.price if fill else None, fill.quantity if fill else 0,
+           fill.fee if fill else 0, fill.spread_cost if fill else 0,
+           fill.slippage_cost if fill else 0, None, None, evidence)
 
 
 def process_market_state(con, live, observed_at, rules, funding_loader=None):
@@ -251,7 +358,30 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         "manager_version": VERSION, "symbol": live.symbol,
         "book_imbalance": live.book_imbalance, "taker_imbalance": live.taker_imbalance,
         "market_timestamp_ms": live.market_timestamp_ms,
+        "position_decision": {
+            "action": decision.action, "reason": decision.reason,
+            "thesis_supported": thesis_signal,
+            "thesis_signal_applicable": flow_is_entire_thesis,
+            "opposing_events_before": int(opposing_events),
+            "opposing_events_after": int(decision.opposing_events),
+            "protective_stop": float(stop_price),
+            "proposed_stop": float(decision.stop_price),
+            "liquidation_threshold": liquidation_threshold,
+            "forced_liquidation": forced_liquidation,
+            "remaining_quantity": float(remaining_qty),
+            "market_price": float(live.last_price),
+        },
     }
+    # Preserve the decision even when executable liquidity is missing.  A
+    # rejected exit is NOT a successful close, but must remain auditable.
+    if decision.action == "CLOSE" and (
+        decision.reason == "THESIS_INVALIDATED"
+        or decision.reason == "PROTECTIVE_STOP"
+        or forced_liquidation
+    ):
+        _event(con, position_id, market_at, observed_at, "RISK_EXIT_DECIDED",
+               decision.reason, live.last_price, None, 0, 0, 0, 0,
+               stop_price, decision.stop_price, evidence)
     if decision.action in {"HOLD", "UPDATE_STOP"}:
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,best_price=?,
@@ -266,8 +396,6 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         con.commit()
         return {"status": decision.action, "reason": decision.reason}
 
-    if live.visible_quote_volume is None and not forced_liquidation:
-        return {"status": "BLOCKED", "reason": "MISSING_VISIBLE_LIQUIDITY"}
     retry_seconds = max(0.1, float(os.getenv("AGCA_PAPER_EXIT_RETRY_SECONDS", "1")))
     if (last_exit_attempt_at is not None and
             (market_at - parse(last_exit_attempt_at)).total_seconds() < retry_seconds):
@@ -275,8 +403,49 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                     (iso(market_at), position_id))
         con.commit()
         return {"status": "EXIT_RETRY_THROTTLED", "reason": decision.reason}
+    exit_side = "SELL" if direction == "LONG" else "BUY"
+    market = MarketSnapshot(
+        reference_price=live.last_price,
+        available_quote_volume=(live.ask_quote_volume if exit_side == "BUY" else live.bid_quote_volume),
+        observed_at=iso(observed_at), best_bid=live.best_bid, best_ask=live.best_ask,
+        quote_timestamp_ms=live.quote_timestamp_ms,
+        liquidity_timestamp_ms=live.liquidity_timestamp_ms,
+        market_type=market_type, source=live.quote_source,
+    )
+    reference, quote_reason = validate_quote(market, exit_side)
+    evidence.update(quote_evidence(market, exit_side))
+    if quote_reason or rules is None:
+        reason = quote_reason or "EXCHANGE_RULES_UNAVAILABLE"
+        record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                         exit_side, market_type,
+                         ExecutionDecision("REJECTED", reason, evidence=evidence))
+        con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "BLOCKED", "reason": reason}
+    if market_type == "USD_M_PERPETUAL" and (live.quote_source or "").startswith("OKX_"):
+        from paper_trading.execution_market_data import fetch_executable_quote
+        try:
+            market = fetch_executable_quote(live.symbol, market_type, exit_side)
+        except ValueError:
+            record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                             exit_side, market_type,
+                             ExecutionDecision("REJECTED", "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"))
+            con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                        (iso(market_at), position_id))
+            con.commit()
+            return {"status": "BLOCKED", "reason": "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"}
+    reference, quote_reason = validate_quote(market, exit_side)
+    if quote_reason:
+        record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                         exit_side, market_type, ExecutionDecision(
+                             "REJECTED", quote_reason, evidence=quote_evidence(market, exit_side)))
+        con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "BLOCKED", "reason": quote_reason}
     target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
-    if decision.action == "REDUCE" and target_qty * float(live.last_price) < rules.min_notional:
+    if decision.action == "REDUCE" and target_qty * reference < rules.min_notional:
         deferred_reason = f"{decision.reason}_BELOW_MIN_NOTIONAL"
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,current_stop_price=?,best_price=?,opposing_events=?,
@@ -296,30 +465,20 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     # otherwise one exact quantity step can round to zero. The accounted fill
     # is still capped to target_qty below, so this can never reverse exposure.
     exit_notional_buffer = 1.02 if direction == "SHORT" else 1.0
-    if forced_liquidation:
-        liquidation_notional = target_qty * float(liquidation_threshold)
-        fill = ExecutionFill(
-            price=float(liquidation_threshold), quantity=target_qty,
-            fee=liquidation_notional * float(rules.liquidation_fee_rate),
-            spread_cost=0.0, slippage_cost=0.0, partial=False,
-        )
-        execution = None
-    else:
-        execution = simulated_decision(
-            reference_price=float(live.last_price),
-            requested_notional=target_qty * float(live.last_price) * exit_notional_buffer,
-            side="SELL" if direction == "LONG" else "BUY",
-            available_quote_volume=float(live.visible_quote_volume),
-            require_liquidity=True, symbol=live.symbol,
-            quantity_step=rules.quantity_step, price_tick=rules.price_tick,
-            min_notional=rules.min_notional,
-            reduce_only=True,
-        )
-        fill = execution.fill
+    execution = execute_paper(
+        OrderIntent(live.symbol, exit_side, target_qty * reference * exit_notional_buffer,
+                    reduce_only=True), market, rules,
+    )
+    fill = execution.fill
+    evidence.update(execution.evidence)
+    # Keep the normal execution/taker fee on the fill.  Liquidation is an
+    # additional exchange charge and is accounted separately below; replacing
+    # fill.fee here would silently discard the taker fee and then double-count
+    # the liquidation fee.
     if fill is None:
         rejection_reason = execution.reason
         _event(con, position_id, market_at, observed_at, "EXIT_REJECTED",
-               rejection_reason, live.last_price, None, 0, 0, 0, 0,
+               rejection_reason, reference, None, 0, 0, 0, 0,
                stop_price, stop_price, evidence)
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,last_exit_attempt_at=? WHERE position_id=?""",
@@ -327,6 +486,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         con.commit()
         return {"status": "BLOCKED", "reason": rejection_reason}
 
+    # Funding/exposure stops at the executable observation, not an older
+    # trigger trade timestamp (quote acquisition may have taken time).
+    observed_at = parse(market.observed_at)
+    market_at = observed_at
     closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
     # Funding lookup stays outside the latency-critical path. A segment exists
     # only after a real fill; rejected/retried exits cannot pollute the ledger.
@@ -352,8 +515,23 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     funding_part = funding_pool * fraction
     gross = ((fill.price - float(entry_price)) * closed_qty
              if direction == "LONG" else (float(entry_price) - fill.price) * closed_qty)
-    net = gross - entry_fee_part - exit_fee - funding_part
-    recovery = max(0.0, cost_basis + gross - exit_fee - funding_part)
+    liquidation_fee = (
+        closed_qty * fill.price * float(rules.liquidation_fee_rate)
+        if forced_liquidation else 0.0
+    )
+    # The execution model's normal taker fee and the exchange liquidation fee
+    # are distinct costs.  A forced liquidation must pay both; previously the
+    # liquidation fee was only reported in a column and never deducted from
+    # cash/net PnL.
+    # remaining_cost_basis is allocated isolated margin, not gross notional.
+    # The account cannot recover less than zero from that isolated margin.
+    # Derive realized net PnL from the actual cash movement so a gap through
+    # liquidation cannot create a paper loss larger than the margin that was
+    # actually at risk (entry fee was already paid separately at entry).
+    recovery = max(
+        0.0, cost_basis + gross - exit_fee - liquidation_fee - funding_part
+    )
+    net = recovery - cost_basis - entry_fee_part
     new_qty = float(remaining_qty) - closed_qty
     final = new_qty <= max(1e-12, rules.quantity_step / 2)
     con.execute("""UPDATE paper_position_management SET
@@ -373,7 +551,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     ))
     con.execute("""UPDATE paper_agent_portfolio SET cash=cash+?,
         realized_pnl=realized_pnl+?,total_fees=total_fees+? WHERE portfolio_id=1""",
-        (recovery, net, exit_fee))
+        (recovery, net, exit_fee + liquidation_fee))
     con.execute("""UPDATE paper_agent_positions SET exit_fee=exit_fee+?,
         exit_spread_cost=exit_spread_cost+?,exit_slippage_cost=exit_slippage_cost+?,
         funding_cost=funding_cost+?,gross_pnl=?,net_pnl=?,
@@ -381,11 +559,16 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         WHERE position_id=?""", (
         exit_fee, spread_cost, slippage_cost, funding_part,
         float(realized_gross) + gross, float(realized_net) + net,
-        exit_fee if forced_liquidation else 0.0, int(forced_liquidation), position_id,
+        liquidation_fee, int(forced_liquidation), position_id,
     ))
+    evidence.update({"decision_at": iso(observed_at), "quantity": closed_qty,
+                     "fee": exit_fee, "slippage": slippage_cost,
+                     "notional": closed_qty * fill.price,
+                     "status": "FILLED" if final else "PARTIAL",
+                     "partial": not final})
     event_type = "POSITION_CLOSED" if final else "POSITION_REDUCED"
     _event(con, position_id, market_at, observed_at, event_type, decision.reason,
-           live.last_price, fill.price, closed_qty, exit_fee, spread_cost,
+           reference, fill.price, closed_qty, exit_fee, spread_cost,
            slippage_cost, stop_price, decision.stop_price, evidence)
     if final:
         con.execute("""UPDATE paper_agent_positions SET status='CLOSED',exit_time=?,
@@ -401,7 +584,9 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
 
 def reconcile_pending_funding(con, funding_loader, now):
     """Apply previously unavailable funding without reopening trade outcomes."""
-    ensure_tables(con)
+    # Schema setup belongs to startup/migration.  This reconciliation runs from
+    # the realtime maintenance loop, so repeating DDL/backfill here creates an
+    # avoidable SQLite writer-lock path exactly where execution must stay live.
     rows = con.execute("""SELECT s.segment_id,s.position_id,s.start_at,s.end_at,
                s.direction,s.quantity
         FROM paper_funding_reconciliation_segments s
@@ -447,11 +632,16 @@ def reconcile_pending_funding(con, funding_loader, now):
             (total_cost, position_id))
         con.execute("""UPDATE paper_agent_portfolio SET cash=cash-?,
             realized_pnl=realized_pnl-? WHERE portfolio_id=1""", (total_cost, total_cost))
-        con.execute("""UPDATE paper_position_management SET
-            funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
-        con.execute("""UPDATE paper_agent_positions SET
-            funding_source='BINANCE_USD_M_FUNDING_HISTORY'
-            WHERE position_id=?""", (position_id,))
+        remaining_pending = con.execute("""
+            SELECT COUNT(*) FROM paper_funding_reconciliation_segments
+            WHERE position_id=? AND status='PENDING'
+        """, (position_id,)).fetchone()[0]
+        if int(remaining_pending) == 0:
+            con.execute("""UPDATE paper_position_management SET
+                funding_reconciliation_required=0 WHERE position_id=?""", (position_id,))
+            con.execute("""UPDATE paper_agent_positions SET
+                funding_source='BINANCE_USD_M_FUNDING_HISTORY'
+                WHERE position_id=?""", (position_id,))
         resolved += len(segments)
     con.commit()
     return {"resolved": resolved, "blocked": blocked}
