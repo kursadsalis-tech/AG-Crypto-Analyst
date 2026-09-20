@@ -9,7 +9,6 @@ from pathlib import Path
 
 from analysis import forecast_learning_cycle
 from decision_engine import forecast_cycle
-from paper_trading import crypto_profit_agent
 from paper_trading.exchange_metadata import (
     ExchangeMetadataError,
     load_cache,
@@ -61,9 +60,9 @@ def main():
     print("AG Crypto Analyst - Hourly Forecast Job")
     print(f"Başlangıç: {now.isoformat()}")
 
-    # PAPER lifecycle must not depend on the forecast/risk refresh succeeding
-    # in the same process. Existing open positions still need management and
-    # expired pending entries still need fail-closed cleanup.
+    # Forecast/risk maintenance is not a PAPER execution authority.
+    # The independent minute selection service and realtime position manager
+    # own PAPER entry/exit; never replay their lifecycle on the hourly clock.
     try:
         risk_result = risk_cycle.main(force=True)
     except Exception as exc:
@@ -95,10 +94,6 @@ def main():
         except Exception as exc:
             metadata_result = {"status": "ERROR", "message": str(exc)[:300]}
     try:
-        paper_result = crypto_profit_agent.main()
-    except Exception as exc:
-        paper_result = {"status": "ERROR", "message": str(exc)[:300]}
-    try:
         learning_result = forecast_learning_cycle.main()
     except Exception as exc:
         learning_result = {"status": "ERROR", "message": str(exc)[:300]}
@@ -107,7 +102,6 @@ def main():
             ("risk", risk_result),
             ("forecast", forecast_result),
             ("exchange_metadata", metadata_result),
-            ("paper_agent", paper_result),
             ("learning", learning_result),
         )
         if isinstance(result, dict)
@@ -121,7 +115,6 @@ def main():
         "status": status,
         "risk": risk_result,
         "forecast": forecast_result,
-        "paper_agent": paper_result,
         "exchange_metadata": metadata_result,
         "learning": learning_result,
     }
