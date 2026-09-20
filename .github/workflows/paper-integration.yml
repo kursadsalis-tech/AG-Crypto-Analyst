@@ -45,4 +45,5 @@ jobs:
           git fetch --no-tags origin main
           git merge-tree --write-tree origin/main HEAD
       - name: Run broad offline regression suite
+        if: success() || failure()
         run: python -m unittest discover -s tests -p 'test_*.py' -v
