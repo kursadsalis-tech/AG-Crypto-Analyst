@@ -396,7 +396,8 @@ def _latest_risk(con, now=None):
 
     risks = {}
     for row in con.execute("""
-        SELECT symbol,new_position_allowed,max_position_pct,price,as_of
+        SELECT symbol,new_position_allowed,max_position_pct,price,as_of,
+               volatility_stop_reference_pct
         FROM asset_risk_snapshots WHERE policy_snapshot_id=?
     """, (latest,)).fetchall():
         try:
@@ -411,6 +412,7 @@ def _latest_risk(con, now=None):
         risks[row[0]] = {
             "allowed": bool(row[1]), "cap_pct": float(row[2]),
             "price": float(row[3]), "risk_as_of": str(row[4]),
+            "volatility_stop_reference_pct": float(row[5]),
             "policy_created_at": str(policy[0]),
         }
     return risks
@@ -659,6 +661,8 @@ def _candidate_for_hypothesis(
         "current_price": float(mid), "target_price": float(mid) * (
             1 + (1 if learned["direction"] == "LONG" else -1)
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
-        "risk_cap_pct": risk["cap_pct"], "evidence": evidence,
+        "risk_cap_pct": risk["cap_pct"],
+        "stop_reference_pct": risk["volatility_stop_reference_pct"],
+        "evidence": evidence,
         "evidence_sha256": digest,
     }]
