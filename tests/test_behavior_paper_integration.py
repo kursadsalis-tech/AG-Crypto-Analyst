@@ -23,6 +23,12 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         agent.ensure_tables(self.con)
+        # Portfolio valuation fixtures require the closed-candle market table.
+        self.con.execute("""CREATE TABLE IF NOT EXISTS market_klines(
+            symbol TEXT, interval TEXT, open_time INTEGER, open REAL,
+            high REAL, low REAL, close REAL, volume REAL,
+            close_time INTEGER, quote_volume REAL
+        )""")
         self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
         rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
         rules_patch.start()
