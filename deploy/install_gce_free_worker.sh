@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sudo systemctl disable --now agca-live-cycle.timer agca-hourly-forecast.timer agca-cloud-worker.service agca-paper-selection.timer 2>/dev/null || true
+sudo systemctl disable --now agca-live-cycle.timer agca-hourly-forecast.timer 2>/dev/null || true
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 stage=/home/kursadsalis/AG-Crypto-Analyst-cloud-new
 backup="/home/kursadsalis/AG-Crypto-Analyst-cloud-backup-${stamp}"
