@@ -1025,6 +1025,7 @@ def build_daily_report(con, report_date, start, end):
                funding_cost,liquidation_fee,liquidated
         FROM paper_agent_positions
         WHERE validation_cohort=? AND evidence_eligible=1 AND status='CLOSED'
+          AND COALESCE(funding_source,'')!='PENDING_RECONCILIATION'
         ORDER BY exit_time,position_id
     """, (FORWARD_COHORT,)).fetchall()
     lifetime_wins = sum(float(row[0]) > 0 for row in lifetime_rows)
