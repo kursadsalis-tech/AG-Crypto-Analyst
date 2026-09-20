@@ -59,18 +59,18 @@ class TradeLearningTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(count, 0)
 
-    def test_stable_negative_group_opens_bounded_challenger_only(self):
+    def test_legacy_negative_pnl_without_execution_ledger_cannot_open_challenger(self):
         for index in range(1, 101):
             self.add(index, weeks=3)
         result = trade_learning.run(self.con, "CLEAN")
-        self.assertEqual(result["status"], "CHALLENGER_EVIDENCE_READY")
-        self.assertGreater(len(result["patterns"]), 0)
-        rows = self.con.execute("""
-            SELECT status,promotion_allowed
-            FROM paper_agent_trade_learning_hypotheses
-        """).fetchall()
-        self.assertTrue(rows)
-        self.assertTrue(all(row == ("EVIDENCE_READY", 0) for row in rows))
+        self.assertEqual(result["status"], "COLLECTING_EVIDENCE")
+        self.assertEqual(result["closed"], 0)
+        self.assertFalse(result["promotion_allowed"])
+        self.assertEqual(
+            self.con.execute(
+                "SELECT COUNT(*) FROM paper_agent_trade_learning_hypotheses"
+            ).fetchone()[0], 0,
+        )
 
 
 if __name__ == "__main__":
