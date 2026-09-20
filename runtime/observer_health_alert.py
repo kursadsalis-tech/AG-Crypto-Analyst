@@ -1,4 +1,4 @@
-"""Idempotent operational alerts for the market-behavior observer."""
+"""Local, idempotent health-state tracking for the market-behavior observer."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,6 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from notifications.telegram_notifier import is_configured, send_message
 from runtime.cloud_attestation import market_behavior_health
 
 
@@ -64,20 +63,12 @@ def main():
     state, action, reason = evaluate(
         health, _load(args.state_path), forced_event=args.event, threshold=args.threshold,
     )
-    delivered = None
-    if action:
-        label = "ARIZA" if action == "ALERT" else "TOPARLANDI"
-        message = (
-            f"AGCA market-behavior observer {label}. {reason}. "
-            f"Durum={health.get('state')}/{health.get('status')}; "
-            f"uygun satır={health.get('eligible_row_count')}/{health.get('row_count')}. "
-            "Ana sistem PAPER_ONLY kalır; uygunsuz dakikalar öğrenmeye alınmaz."
-        )
-        delivered = is_configured() and send_message(message)
-    state["delivery_attempted"] = action is not None
-    state["delivery_succeeded"] = delivered
+    # Operational health is recorded locally. Notification delivery is intentionally
+    # outside this runtime component; AGCA must not depend on Telegram to stay healthy.
+    state["delivery_attempted"] = False
+    state["delivery_succeeded"] = None
     _write(args.state_path, state)
-    print(json.dumps({"action": action, "reason": reason, "delivered": delivered}, sort_keys=True))
+    print(json.dumps({"action": action, "reason": reason, "delivered": None}, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import pickle
 import sqlite3
 from database.runtime_store import connect as runtime_connect
@@ -21,7 +22,7 @@ from pathlib import Path
 from data.truth_engine import DataValidationError, record_audit
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 ENGINE_VERSION = "UNIFIED_FORECAST_ENGINE_V1"
 MODEL_VERSION = "POOLED_RIDGE_RUNTIME_V3_ADVANCED_TECHNICAL_1H_DIRECTION"
 MODEL_PATH = Path("reports/unified_forecast_model.pkl")

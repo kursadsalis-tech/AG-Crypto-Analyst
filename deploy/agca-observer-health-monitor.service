@@ -1,5 +1,5 @@
 [Unit]
-Description=Monitor AGCA observer health and send deduplicated alerts
+Description=Track AGCA observer health locally
 After=network-online.target
 
 [Service]
