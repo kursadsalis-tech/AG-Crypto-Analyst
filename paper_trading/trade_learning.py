@@ -65,7 +65,42 @@ def ensure_tables(con):
     """)
 
 
+def _execution_evidence_clause():
+    # This gate is deliberately for validated performance/promotion metrics,
+    # not for memory or discovery.  Every closed experience is retained by
+    # experience_memory; only economically final, executable round trips may
+    # claim calibrated performance authority.
+    return """
+      AND EXISTS (
+        SELECT 1 FROM paper_position_events ee
+        WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
+          AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
+          AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+          AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
+      )
+      AND EXISTS (
+        SELECT 1 FROM paper_position_events xe
+        WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
+          AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
+          AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+          AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
+      )
+    """
+
+
 def load_closed(con, validation_cohort):
+    # A legacy or freshly initialized database may not have the executable
+    # position-event ledger yet.  Without both event sides there is no
+    # performance-grade round trip: retain observations elsewhere, but do
+    # not award learning/promotion evidence.
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_events'"
+    ).fetchone():
+        return []
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"
     )}
@@ -90,6 +125,7 @@ def load_closed(con, validation_cohort):
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
           AND p.validation_cohort=? AND p.net_pnl IS NOT NULL
+          {_execution_evidence_clause()}
           {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """, (validation_cohort,)).fetchall()
@@ -166,7 +202,18 @@ def discover_patterns(groups):
             "metrics": score,
             "claim_level": "STATISTICAL_ASSOCIATION_NOT_CAUSATION",
         })
-    return sorted(patterns, key=lambda item: (-item["metrics"]["trades"], item["pattern_key"]))
+    # Trade count is an evidence sufficiency gate, not an objective. Rank
+    # harmful challengers by economic damage first so the learner investigates
+    # what loses the most money after costs instead of rewarding high activity.
+    return sorted(
+        patterns,
+        key=lambda item: (
+            item["metrics"]["mean_net_return_pct"],
+            item["metrics"]["net_pnl_usdt"],
+            -item["metrics"]["trades"],
+            item["pattern_key"],
+        ),
+    )
 
 
 def run(con, validation_cohort, now=None):
