@@ -178,10 +178,22 @@ def initialize_open_positions(con, now):
                     invalidation_stop = 100.0 * (invalidation_price-float(entry_price)) / float(entry_price)
             except (TypeError, ValueError):
                 invalidation_stop = None
-        stop_reference = (
-            min(volatility_stop, invalidation_stop)
-            if invalidation_stop is not None else volatility_stop
-        )
+        frozen_risk = thesis.get("execution_risk") or {}
+        frozen_stop = frozen_risk.get("planned_stop_distance_pct")
+        if frozen_stop is not None:
+            try:
+                frozen_stop = float(frozen_stop)
+            except (TypeError, ValueError):
+                frozen_stop = None
+        if frozen_stop is not None and (
+            not math.isfinite(frozen_stop) or not 0.5 <= frozen_stop <= 5.0
+        ):
+            blocked.append((int(position_id), "INVALID_FROZEN_STOP_PLAN"))
+            continue
+        # The risk budget and stop must refer to the SAME frozen selection
+        # plan.  An unvalidated invalidation price must not silently tighten
+        # the stop after sizing; legacy positions retain the volatility plan.
+        stop_reference = frozen_stop if frozen_stop is not None else volatility_stop
         state = initialize(direction, float(entry_price), stop_reference)
         con.execute("""INSERT INTO paper_position_management(
             position_id,manager_version,initialized_at,last_market_at,
@@ -204,9 +216,11 @@ def initialize_open_positions(con, now):
                    "thesis_invalidation_stop_pct": invalidation_stop,
                    "selected_stop_reference_pct": stop_reference,
                    "stop_reference_basis": (
-                       "THESIS_INVALIDATION_WITHIN_VOLATILITY_ENVELOPE"
-                       if invalidation_stop is not None and invalidation_stop <= volatility_stop
-                       else "VOLATILITY_ENVELOPE"
+                       "FROZEN_SELECTION_RISK_PLAN" if frozen_stop is not None
+                       else "LEGACY_VOLATILITY_ENVELOPE"
+                   ),
+                   "planned_stop_and_fee_risk_usdt": frozen_risk.get(
+                       "planned_stop_and_fee_risk_usdt"
                    ),
                    "entry_price": float(entry_price),
                    "direction": direction,
