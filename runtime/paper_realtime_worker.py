@@ -251,6 +251,8 @@ async def run():
                     "reason_counts": json.loads(latest_scan[6] or "{}"),
                 } if latest_scan else None),
                 "candidates": selection_result.get("candidates", []),
+                "open_positions": selection_result.get("open_positions", []),
+                "portfolio_capacity": selection_result.get("portfolio_capacity", {}),
                 "rejection_reasons": selection_result.get("rejection_reasons", {}),
                 "decision": (
                     "NEW_POSITION_SELECTED" if selected else "CONTINUE_SCANNING"
