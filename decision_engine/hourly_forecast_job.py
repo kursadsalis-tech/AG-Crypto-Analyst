@@ -84,13 +84,16 @@ def main():
             "AGCA_EXCHANGE_METADATA_CACHE",
             "/var/lib/agca/exchange-info-usdm.json",
         ))
-        metadata, metadata_transport = _refresh_exchange_metadata(cache_path)
-        metadata_result = {
-            "status": "SUCCESS", "market": metadata.market,
-            "symbols": len(metadata.symbols), "fetched_at": metadata.fetched_at,
-            "source_url": metadata.source_url,
-            "transport": metadata_transport,
-        }
+        try:
+            metadata, metadata_transport = _refresh_exchange_metadata(cache_path)
+            metadata_result = {
+                "status": "SUCCESS", "market": metadata.market,
+                "symbols": len(metadata.symbols), "fetched_at": metadata.fetched_at,
+                "source_url": metadata.source_url,
+                "transport": metadata_transport,
+            }
+        except Exception as exc:
+            metadata_result = {"status": "ERROR", "message": str(exc)[:300]}
     try:
         paper_result = crypto_profit_agent.main()
     except Exception as exc:
@@ -103,6 +106,7 @@ def main():
         name for name, result in (
             ("risk", risk_result),
             ("forecast", forecast_result),
+            ("exchange_metadata", metadata_result),
             ("paper_agent", paper_result),
             ("learning", learning_result),
         )
