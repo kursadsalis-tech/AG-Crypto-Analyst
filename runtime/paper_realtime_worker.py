@@ -81,10 +81,10 @@ async def run():
         # are discovered from recent eligible market observations, not a fixed
         # coin allowlist. Open positions are never displaced by the cap.
         candidates = con.execute("""
-            SELECT DISTINCT symbol FROM market_behavior_minute_features
+            SELECT symbol FROM market_behavior_minute_features
             WHERE eligible_for_learning=1
               AND minute_end_timestamp_ms >= ?
-            ORDER BY minute_end_timestamp_ms DESC LIMIT 100
+            GROUP BY symbol ORDER BY MAX(minute_end_timestamp_ms) DESC LIMIT 100
         """, (int(now().timestamp() * 1000) - 180000,)).fetchall()
         return sorted(set(open_positions) | {(row[0], "SPOT") for row in candidates})
 
@@ -122,8 +122,15 @@ async def run():
         )
         # Exit management takes priority over entry selection on each event.
         # Coalesce events arriving during a selection into one fresh rerun.
-        selection_pending = True
-        if selection_task is None or selection_task.done():
+        # Do not request a new entry from an old or non-executable quote.
+        # Exit management above retains its own independent fail-closed checks.
+        quote_fresh = (state.quote_timestamp_ms is not None
+                       and abs(observed_ms - state.quote_timestamp_ms) <= realtime_market.MAX_EVENT_AGE_MS)
+        executable_quote = (state.best_bid is not None and state.best_ask is not None
+                            and 0 < state.best_bid <= state.best_ask)
+        if quote_fresh and executable_quote:
+            selection_pending = True
+        if selection_pending and (selection_task is None or selection_task.done()):
             selection_task = asyncio.create_task(selection_once())
         if result.get("status") == "POSITION_CLOSED":
             reviews = experience_memory.review_closed_positions(con, observed_at)
