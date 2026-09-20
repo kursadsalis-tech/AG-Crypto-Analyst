@@ -97,6 +97,13 @@ def operator_view(snapshot):
         "kapanış_zamanı": row["exit_time"],
     } for row in snapshot.get("closed_positions", [])]
 
+    learning = snapshot.get("learning")
+    learning_labels = {
+        "COLLECTING_EVIDENCE": "Kanıt birikiyor",
+        "CHALLENGER_EVIDENCE_READY": "Challenger kanıtı incelemeye hazır",
+        "NO_STABLE_UNDERPERFORMANCE_PATTERN": "Kararlı düşük performans örüntüsü yok",
+    }
+    risk = snapshot.get("risk", {})
     return {
         "durum": health,
         "işlem_modu": "PAPER — gerçek emir kapalı",
@@ -111,5 +118,26 @@ def operator_view(snapshot):
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
         "açık_pozisyonlar": positions,
+        "risk": {
+            "mod": "PAPER — gerçek emir kapalı",
+            "açık_pozisyon": risk.get("open_positions", 0),
+            "gecikmiş_pozisyon": risk.get("stale_positions", 0),
+            "pozisyonlar": risk.get("positions", []),
+        },
+        "öğrenme": ({
+            "durum": learning_labels.get(learning["status"], learning["status"]),
+            "kapanan_kanıtlı_işlem": learning["closed_count"],
+            "bağımsız_hafta": learning["independent_weeks"],
+            "davranış_değişikliği_yetkisi": (
+                "İZİNLİ" if learning["promotion_allowed"] else "İZİNSİZ"
+            ),
+            "sürüm": learning["learning_version"],
+        } if learning else {
+            "durum": "Henüz öğrenme incelemesi yok",
+            "kapanan_kanıtlı_işlem": 0,
+            "bağımsız_hafta": 0,
+            "davranış_değişikliği_yetkisi": "İZİNSİZ",
+            "sürüm": "—",
+        }),
         "kapanan_işlemler": closed,
     }
