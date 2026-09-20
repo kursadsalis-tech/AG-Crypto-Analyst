@@ -8,18 +8,26 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
-    def test_health_payload_is_paper_only(self):
+    def test_market_state_payload_is_read_only_paper_telemetry(self):
         with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "health.json"
-            with patch.object(paper_realtime_worker, "HEALTH_PATH", target):
-                paper_realtime_worker.write_health(
-                    "CONNECTED",
-                    live_market=[{"symbol": "BTCUSDT", "best_bid": 100.0}],
+            target = Path(tmp) / "market-state.json"
+            with patch.object(paper_realtime_worker, "MARKET_STATE_PATH", target):
+                paper_realtime_worker.write_market_state(
+                    [{"symbol": "BTCUSDT", "best_bid": 100.0}]
                 )
             payload = json.loads(target.read_text())
             self.assertEqual(payload["execution_mode"], "PAPER_ONLY")
             self.assertFalse(payload["real_order_allowed"])
             self.assertEqual(payload["live_market"][0]["symbol"], "BTCUSDT")
+
+    def test_market_state_write_failure_cannot_break_paper_runtime(self):
+        with patch.object(
+            paper_realtime_worker, "_atomic_json_write",
+            side_effect=OSError("telemetry unavailable"),
+        ):
+            paper_realtime_worker.write_market_state(
+                [{"symbol": "BTCUSDT", "best_bid": 100.0}]
+            )
 
     def test_live_payload_preserves_worker_market_state(self):
         state = SimpleNamespace(
