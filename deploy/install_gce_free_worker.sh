@@ -43,10 +43,8 @@ if ! swapon --show | grep -q .; then
 fi
 
 retired=(
-  agca-cloud-worker.service
   agca-control-center.service
   agca-control-broker.service
-  agca-paper-selection.service agca-paper-selection.timer
   agca-agent-supervisor.service agca-agent-supervisor.timer
   agca-behavior-learning.service agca-behavior-learning.timer
   agca-derivatives-snapshot.service agca-derivatives-snapshot.timer
