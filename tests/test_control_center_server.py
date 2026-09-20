@@ -45,7 +45,7 @@ class ControlCenterServerTests(unittest.TestCase):
             response = conn.getresponse()
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            for panel in ("openPanel", "flowPanel", "riskPanel", "learningPanel", "closedPanel"):
+            for panel in ("openPanel", "marketPanel", "flowPanel", "riskPanel", "learningPanel", "closedPanel"):
                 self.assertIn(f'id="{panel}"', html)
                 self.assertIn(f'data-tab="{panel}"', html)
             self.assertIn('fetch("/api/v1/overview"', html)
