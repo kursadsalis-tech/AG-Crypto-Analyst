@@ -12,6 +12,7 @@ EnvironmentFile=-/etc/agca/agca.env
 EnvironmentFile=-/etc/agca/remote-database.env
 Environment=HOME=/home/kursadsalis
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
 Environment=AGCA_WORKER_SERVICE=agca-paper-realtime-worker.service
 Environment=AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS=900
 Environment=AGCA_MARKET_BEHAVIOR_HEALTH_MAX_AGE_SECONDS=180
