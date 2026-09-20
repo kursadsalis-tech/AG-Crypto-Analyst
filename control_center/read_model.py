@@ -115,6 +115,17 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                LEFT JOIN paper_position_management m USING(position_id)
                WHERE p.status='OPEN' ORDER BY p.position_id"""
         ).fetchall()
+        learning_row = None
+        has_learning = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_trade_learning_reviews'"
+        ).fetchone()
+        if has_learning:
+            learning_row = con.execute(
+                """SELECT created_at,learning_version,validation_cohort,closed_count,
+                          independent_weeks,status,promotion_allowed,evidence_json
+                   FROM paper_agent_trade_learning_reviews
+                   ORDER BY review_id DESC LIMIT 1"""
+            ).fetchone()
         closed_rows = con.execute(
             """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
                       exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
@@ -239,6 +250,31 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "unrealized_pnl": total_unrealized,
         },
         "positions": positions,
+        "learning": ({
+            "created_at": learning_row[0],
+            "learning_version": learning_row[1],
+            "validation_cohort": learning_row[2],
+            "closed_count": learning_row[3],
+            "independent_weeks": learning_row[4],
+            "status": learning_row[5],
+            "promotion_allowed": bool(learning_row[6]),
+            "evidence": json.loads(learning_row[7]) if learning_row[7] else {},
+        } if learning_row else None),
+        "risk": {
+            "execution_mode": "PAPER_ONLY",
+            "real_order_allowed": False,
+            "open_positions": len(positions),
+            "stale_positions": len(positions) - fresh_count,
+            "positions": [{
+                "position_id": p["position_id"],
+                "symbol": p["symbol"],
+                "direction": p["direction"],
+                "leverage": p["leverage"],
+                "current_stop_price": p["current_stop_price"],
+                "remaining_quantity": p["remaining_quantity"],
+                "market_status": p["market_status"],
+            } for p in positions],
+        },
         "closed_positions": [{
             "position_id": r[0], "symbol": r[1], "market_type": r[2],
             "direction": r[3], "entry_time": r[4], "entry_price": r[5],
