@@ -170,6 +170,11 @@ def operator_view(snapshot):
             "zaman": row.get("created_at") or "—",
             "ajan_fiyatı": _price(row.get("agent_price")),
             "kontrol_fiyatı": _price(row.get("operator_price")),
+            "fark": _price(row.get("price_difference")),
+            "fark_yüzde": (
+                "—" if row.get("price_difference_pct") is None
+                else f'{row["price_difference_pct"]:+.4f}%'
+            ),
             "kaynak": row.get("agent_quote_source") or "—",
             "not": row.get("note") or "—",
         } for row in snapshot.get("incidents", [])],
