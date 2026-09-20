@@ -434,13 +434,15 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     # are distinct costs.  A forced liquidation must pay both; previously the
     # liquidation fee was only reported in a column and never deducted from
     # cash/net PnL.
-    net = gross - entry_fee_part - exit_fee - liquidation_fee - funding_part
-    # remaining_cost_basis is allocated margin, not gross notional. PnL is
-    # calculated from full leveraged quantity, while only margin is returned
-    # to cash on close.
+    # remaining_cost_basis is allocated isolated margin, not gross notional.
+    # The account cannot recover less than zero from that isolated margin.
+    # Derive realized net PnL from the actual cash movement so a gap through
+    # liquidation cannot create a paper loss larger than the margin that was
+    # actually at risk (entry fee was already paid separately at entry).
     recovery = max(
         0.0, cost_basis + gross - exit_fee - liquidation_fee - funding_part
     )
+    net = recovery - cost_basis - entry_fee_part
     new_qty = float(remaining_qty) - closed_qty
     final = new_qty <= max(1e-12, rules.quantity_step / 2)
     con.execute("""UPDATE paper_position_management SET
