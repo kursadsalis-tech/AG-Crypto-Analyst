@@ -30,6 +30,10 @@ BRAIN_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_STATE",
     "/var/lib/agca/paper-realtime-brain-state.json",
 ))
+BRAIN_TIMELINE_PATH = Path(os.getenv(
+    "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
+    "/var/lib/agca/paper-realtime-brain-timeline.json",
+))
 
 
 def _utcnow():
@@ -67,6 +71,16 @@ def load_brain_state(path=BRAIN_STATE_PATH):
     if payload.get("real_order_allowed") is not False:
         return {"at": payload.get("at"), "phase": "UNKNOWN", "scan": None}
     return payload
+
+
+def load_brain_timeline(path=BRAIN_TIMELINE_PATH):
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [row for row in payload[-100:] if isinstance(row, dict)]
 
 
 def load_health(path=HEALTH_PATH):
@@ -145,6 +159,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     market = load_market_state(market_state_path)
     health = load_health(health_path)
     brain = load_brain_state()
+    brain_timeline = load_brain_timeline()
     feedback = load_operator_feedback()
     states = _state_index(market)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -440,6 +455,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             ),
         },
         "brain": brain,
+        "brain_timeline": brain_timeline,
         "selection": selection,
         "activity": {
             "stages": [{
