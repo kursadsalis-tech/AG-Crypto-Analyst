@@ -66,6 +66,17 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertAlmostEqual(position["unrealized_pnl"], 94.2)
             self.assertEqual(position["market_status"], "CANLI")
             self.assertEqual(result["system"]["market_data_status"], "CANLI")
+            self.assertEqual(len(result["market"]), 1)
+            market = result["market"][0]
+            self.assertEqual(market["symbol"], "ETHUSDT")
+            self.assertEqual(market["market_type"], "USD_M_PERPETUAL")
+            self.assertEqual(market["last_price"], 2347.2)
+            self.assertEqual(market["best_bid"], 2347.1)
+            self.assertEqual(market["best_ask"], 2347.2)
+            self.assertEqual(market["market_status"], "CANLI")
+            self.assertEqual(
+                market["quote_source"], "BINANCE_USD_M_WS_TICKER_BID_ASK"
+            )
             self.assertFalse(result["system"]["real_order_allowed"])
             self.assertTrue(result["system"]["worker_healthy"])
             self.assertEqual(result["system"]["worker_status"], "CONNECTED")
