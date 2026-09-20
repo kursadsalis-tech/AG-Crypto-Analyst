@@ -172,6 +172,8 @@ def review_closed_positions(con, now=None):
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
+          AND p.evidence_eligible=1
+          AND p.validation_cohort=t.validation_cohort
           {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """).fetchall()
