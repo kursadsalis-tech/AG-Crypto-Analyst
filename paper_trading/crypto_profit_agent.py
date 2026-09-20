@@ -1013,6 +1013,50 @@ def report_window(now):
     )
 
 
+def execution_evidence_summary(con, position_id):
+    """Explain the executable evidence a trade has and its realized economics."""
+    events = con.execute("""
+        SELECT event_type,evidence_json,fill_price,fill_quantity,fee,spread_cost,
+               slippage_cost FROM paper_position_events
+        WHERE position_id=? AND event_type IN ('ENTRY_FILLED','POSITION_CLOSED')
+        ORDER BY event_id
+    """, (position_id,)).fetchall()
+    by_type = {row[0]: row for row in events}
+    def unpack(event_type):
+        row = by_type.get(event_type)
+        if not row:
+            return {"proven": False, "missing": ["EVENT"]}
+        try:
+            evidence = json.loads(row[1] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            evidence = {}
+        required = ("best_bid","best_ask","quote_timestamp_ms","executable_reference_price")
+        missing = [key for key in required if evidence.get(key) is None]
+        return {
+            "proven": not missing and row[2] is not None and float(row[3] or 0)>0,
+            "missing": missing, "side": evidence.get("side"),
+            "best_bid": evidence.get("best_bid"), "best_ask": evidence.get("best_ask"),
+            "quote_timestamp_ms": evidence.get("quote_timestamp_ms"),
+            "executable_reference_price": evidence.get("executable_reference_price"),
+            "fill_price": row[2], "fill_quantity": row[3],
+            "fee": row[4], "spread_cost": row[5], "slippage_cost": row[6],
+        }
+    position = con.execute("""
+        SELECT net_pnl,gross_pnl,entry_fee,exit_fee,funding_cost,liquidation_fee,
+               funding_source FROM paper_agent_positions WHERE position_id=?
+    """, (position_id,)).fetchone()
+    economics = None if not position else {
+        "gross_pnl": position[1], "net_pnl": position[0],
+        "entry_fee": position[2], "exit_fee": position[3],
+        "funding_cost": position[4], "liquidation_fee": position[5],
+        "funding_source": position[6],
+    }
+    entry, exit_ = unpack("ENTRY_FILLED"), unpack("POSITION_CLOSED")
+    return {"position_id": int(position_id), "entry_execution": entry,
+            "exit_execution": exit_, "executable_round_trip_proven": bool(
+                entry["proven"] and exit_["proven"]), "economics": economics}
+
+
 def build_daily_report(con, report_date, start, end):
     snapshot = portfolio_snapshot(con)
     status_counts = dict(con.execute("""
