@@ -218,7 +218,12 @@ def connect(database, *args, **kwargs):
         int(float(os.getenv("AGCA_SQLITE_BUSY_TIMEOUT_SECONDS", "30")) * 1000),
     )
     connection.execute(f"PRAGMA busy_timeout={busy_ms}")
-    connection.execute("PRAGMA journal_mode=WAL")
+    current_journal = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+    if current_journal != "wal":
+        # WAL is persistent. Avoid requesting a journal-mode transition on
+        # every connection, because that transition itself needs database
+        # locking and can amplify startup contention between workers.
+        connection.execute("PRAGMA journal_mode=WAL")
     return connection
 
 
