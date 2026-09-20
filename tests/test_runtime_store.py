@@ -332,7 +332,8 @@ class RuntimeStoreTests(unittest.TestCase):
         """).fetchone()
         self.assertEqual(row[0], "HEALTHY")
         self.assertIsNotNone(row[1])
-        self.assertEqual(row[2], 1)
+        # Remote persistence does not prove recipient delivery.
+        self.assertEqual(row[2], 0)
         con.close()
 
 
