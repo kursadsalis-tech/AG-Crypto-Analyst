@@ -798,17 +798,32 @@ def select_new_positions(con, now, exchange_metadata=None):
             max(0.0, sizing_cap)
             * max(0.0, float(row["expected_net_edge_pct"])) / 100.0
         )
-        ranked_candidates.append((expected_profit_usdt, row))
+        # risk_cap_pct is already the portfolio risk budget produced by the
+        # fresh risk snapshot.  Compare expected dollars with dollars at risk;
+        # this prevents a larger but inefficient bet from automatically beating
+        # a smaller opportunity with materially better capital efficiency.
+        risk_budget_usdt = min(
+            max(0.0, risk_room),
+            max(0.0, sizing_cap) / max(float(tier.leverage), 1.0),
+        )
+        expected_profit_per_risk = (
+            expected_profit_usdt / risk_budget_usdt
+            if risk_budget_usdt > 0.0 else 0.0
+        )
+        ranked_candidates.append(
+            (expected_profit_per_risk, expected_profit_usdt, row)
+        )
     ranked_candidates.sort(
         key=lambda item: (
             item[0],
-            float(item[1]["expected_net_edge_pct"]),
-            float(item[1]["confidence"]),
+            item[1],
+            float(item[2]["expected_net_edge_pct"]),
+            float(item[2]["confidence"]),
         ),
         reverse=True,
     )
 
-    for _, row in ranked_candidates:
+    for _, _, row in ranked_candidates:
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
             continue
