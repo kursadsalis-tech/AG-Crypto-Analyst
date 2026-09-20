@@ -140,7 +140,29 @@ class ControlCenterReadModelTests(unittest.TestCase):
             db = Path(tmp) / "runtime.db"
             state = Path(tmp) / "market.json"
             health = Path(tmp) / "health.json"
-            self._make_db(db)
+            con = sqlite3.connect(db)
+            con.executescript("""
+                CREATE TABLE paper_agent_portfolio(
+                    portfolio_id INTEGER PRIMARY KEY, initial_capital REAL,
+                    cash REAL, realized_pnl REAL, total_fees REAL
+                );
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
+                    direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
+                    notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT, decision_reference_id INTEGER,
+                    exit_time TEXT, exit_price REAL, net_pnl REAL, close_reason TEXT,
+                    entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0
+                );
+                CREATE TABLE paper_position_management(
+                    position_id INTEGER PRIMARY KEY, stop_distance_pct REAL,
+                    current_stop_price REAL, tp1_done INTEGER, tp2_done INTEGER,
+                    remaining_quantity REAL
+                );
+                INSERT INTO paper_agent_portfolio VALUES(1,10000,10000,0,0);
+            """)
+            con.commit()
+            con.close()
             state.write_text(json.dumps({
                 "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
                 "live_market": [],
