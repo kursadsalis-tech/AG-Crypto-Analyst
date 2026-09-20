@@ -317,7 +317,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     worker_healthy = worker_status == "CONNECTED" and (
         heartbeat_age is not None and heartbeat_age <= 30.0
     )
-    market_states = list(market.get("states") or [])
+    market_states = list(market.get("live_market") or [])
     market_fresh = sum(
         1 for state in market_states
         if _freshness_seconds(state, now) is not None
