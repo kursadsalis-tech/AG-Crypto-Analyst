@@ -138,6 +138,27 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertIsNone(state.ask_quote_volume)
         self.assertIsNone(state.visible_quote_volume)
 
+    def test_binance_usdm_ticker_authorizes_side_specific_executable_liquidity(self):
+        states = {}
+        message = {"e": "24hrTicker", "s": "SOLUSDT", "E": NOW,
+                   "c": "150", "b": "149.9", "a": "150.1", "B": "4", "A": "3"}
+        state = realtime_market.apply_binance_message(
+            states, message, NOW, market_type="USD_M_PERPETUAL"
+        )[0]
+        self.assertEqual(state.market_type, "USD_M_PERPETUAL")
+        self.assertAlmostEqual(state.bid_quote_volume, 149.9 * 4)
+        self.assertAlmostEqual(state.ask_quote_volume, 150.1 * 3)
+        self.assertEqual(state.quote_timestamp_ms, NOW)
+        self.assertEqual(state.liquidity_timestamp_ms, NOW)
+        self.assertEqual(state.quote_source, "BINANCE_USD_M_WS_TICKER_BID_ASK")
+
+    def test_usdm_subscription_is_dynamic_and_does_not_include_spot(self):
+        params = realtime_market.binance_subscription_params(
+            [("SOLUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "SPOT")],
+            "USD_M_PERPETUAL",
+        )
+        self.assertEqual(params, ["solusdt@ticker", "solusdt@aggTrade"])
+
 
 if __name__ == "__main__":
     unittest.main()
