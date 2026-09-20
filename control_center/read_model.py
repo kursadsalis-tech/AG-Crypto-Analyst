@@ -61,6 +61,16 @@ def load_health(path=HEALTH_PATH):
     return payload
 
 
+def _safe_json_object(value):
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _state_index(payload):
     return {
         (row.get("symbol"), row.get("market_type")): row
@@ -218,7 +228,10 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
 
     initial, cash, realized, fees = portfolio or (0.0, 0.0, 0.0, 0.0)
     fresh_count = sum(p["market_status"] == "CANLI" for p in positions)
-    health_at = _parse_iso(health.get("at"))
+    try:
+        health_at = _parse_iso(health.get("at"))
+    except (TypeError, ValueError):
+        health_at = None
     heartbeat_age = (
         max(0.0, (now - health_at).total_seconds()) if health_at else None
     )
@@ -258,7 +271,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "independent_weeks": learning_row[4],
             "status": learning_row[5],
             "promotion_allowed": bool(learning_row[6]),
-            "evidence": json.loads(learning_row[7]) if learning_row[7] else {},
+            "evidence": _safe_json_object(learning_row[7]),
         } if learning_row else None),
         "risk": {
             "execution_mode": "PAPER_ONLY",
