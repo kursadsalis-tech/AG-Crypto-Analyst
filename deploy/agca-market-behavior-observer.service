@@ -1,6 +1,6 @@
 [Unit]
 Description=AGCA lightweight market behavior observer
-After=network-online.target agca-cloud-worker.service
+After=network-online.target
 Wants=network-online.target
 OnFailure=agca-market-behavior-observer-failure-alert.service
 
