@@ -40,7 +40,8 @@ jobs:
             tests.test_execution_model \
             tests.test_crypto_profit_agent_fail_closed \
             tests.test_single_runtime_authority \
-            tests.test_paper_governance
+            tests.test_paper_governance \
+            tests.test_control_center_live_state
       - name: Check canonical branch ancestry
         run: |
           # main is the canonical product branch; lifecycle authority is enforced by
