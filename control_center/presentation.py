@@ -104,6 +104,38 @@ def operator_view(snapshot):
         "NO_STABLE_UNDERPERFORMANCE_PATTERN": "Kararlı düşük performans örüntüsü yok",
     }
     risk = snapshot.get("risk", {})
+    brain = snapshot.get("brain") or {}
+    brain_scan = brain.get("scan") or {}
+    brain_reasons = brain_scan.get("reason_counts") or {}
+    brain_reason_text = ", ".join(
+        f"{key}: {value}" for key, value in sorted(
+            brain_reasons.items(), key=lambda item: item[1], reverse=True
+        )[:5]
+    ) or "engel yok / kayıt yok"
+    brain_decision_labels = {
+        "NEW_POSITION_SELECTED": "YENİ FIRSAT SEÇİLDİ",
+        "CONTINUE_SCANNING": "TARAMAYA DEVAM",
+    }
+    brain_view = {
+        "aşama": brain.get("phase") or "BİLİNMİYOR",
+        "mesaj": brain.get("message") or "Canlı beyin telemetrisi henüz yok",
+        "zaman": brain.get("at") or "—",
+        "gördüğü": (
+            f'{brain.get("observed_symbol") or "—"} · '
+            f'{brain.get("observed_market_type") or "—"} · '
+            f'{_price(brain.get("observed_price"))}'
+        ),
+        "izlenen_piyasa": brain.get("monitored_symbols", 0),
+        "aday": brain_scan.get("candidate_count", 0),
+        "seçilen": brain_scan.get("selected_count", 0),
+        "aktif_pozisyon": brain_scan.get("active_position_count", 0),
+        "kapasite": brain_scan.get("capacity", 0),
+        "nedenler": brain_reason_text,
+        "karar": brain_decision_labels.get(
+            brain.get("decision"), brain.get("decision") or "HENÜZ KARAR YOK"
+        ),
+        "yeni_fırsat": brain.get("decision") == "NEW_POSITION_SELECTED",
+    }
     selection = snapshot.get("selection")
     if selection:
         reasons = selection.get("reason_counts") or {}
@@ -158,6 +190,7 @@ def operator_view(snapshot):
         "açık_pozisyon_tutarı": _money(portfolio.get("open_position_notional")),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
+        "ajan_beyni": brain_view,
         "son_fırsat_taraması": selection_view,
         "aktivite": [{
             "aşama": row.get("name"),
