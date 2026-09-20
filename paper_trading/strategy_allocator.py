@@ -75,7 +75,12 @@ def rebalance(con, now):
         WHERE status IN ('ACTIVE','EXPLORING') ORDER BY strategy_id
     """).fetchall()
     scores = []
+    has_execution_ledger = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_events'"
+    ).fetchone())
     for strategy_id, _ in strategies:
+        # No ledger means no performance-grade evidence. Keep exploration
+        # neutral rather than reallocating virtual capital from legacy PnL.
         count, pnl, notional = con.execute("""
             SELECT count(*),coalesce(sum(net_pnl),0),coalesce(sum(notional),0)
             FROM paper_agent_positions p
@@ -99,7 +104,7 @@ def rebalance(con, now):
                   AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
                   AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
               )
-        """, (strategy_id,)).fetchone()
+        """, (strategy_id,)).fetchone() if has_execution_ledger else (0, 0.0, 0.0)
         return_pct = 100.0 * float(pnl) / float(notional) if notional else 0.0
         # Until a sleeve has enough closed trades, equal exploration beats noise.
         score = max(-3.0, min(3.0, return_pct / 2.0)) if count >= MIN_CLOSED_FOR_REALLOCATION else 0.0
