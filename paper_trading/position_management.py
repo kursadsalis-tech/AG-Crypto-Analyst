@@ -382,13 +382,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     )
     fill = execution.fill
     evidence.update(execution.evidence)
-    if fill is not None and forced_liquidation:
-        fill = ExecutionFill(
-            price=fill.price, quantity=fill.quantity,
-            fee=fill.quantity * fill.price * float(rules.liquidation_fee_rate),
-            spread_cost=fill.spread_cost, slippage_cost=fill.slippage_cost,
-            partial=fill.partial,
-        )
+    # Keep the normal execution/taker fee on the fill.  Liquidation is an
+    # additional exchange charge and is accounted separately below; replacing
+    # fill.fee here would silently discard the taker fee and then double-count
+    # the liquidation fee.
     if fill is None:
         rejection_reason = execution.reason
         _event(con, position_id, market_at, observed_at, "EXIT_REJECTED",
@@ -429,7 +426,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     funding_part = funding_pool * fraction
     gross = ((fill.price - float(entry_price)) * closed_qty
              if direction == "LONG" else (float(entry_price) - fill.price) * closed_qty)
-    liquidation_fee = exit_fee if forced_liquidation else 0.0
+    liquidation_fee = (
+        closed_qty * fill.price * float(rules.liquidation_fee_rate)
+        if forced_liquidation else 0.0
+    )
     # The execution model's normal taker fee and the exchange liquidation fee
     # are distinct costs.  A forced liquidation must pay both; previously the
     # liquidation fee was only reported in a column and never deducted from
@@ -460,7 +460,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     ))
     con.execute("""UPDATE paper_agent_portfolio SET cash=cash+?,
         realized_pnl=realized_pnl+?,total_fees=total_fees+? WHERE portfolio_id=1""",
-        (recovery, net, exit_fee))
+        (recovery, net, exit_fee + liquidation_fee))
     con.execute("""UPDATE paper_agent_positions SET exit_fee=exit_fee+?,
         exit_spread_cost=exit_spread_cost+?,exit_slippage_cost=exit_slippage_cost+?,
         funding_cost=funding_cost+?,gross_pnl=?,net_pnl=?,
