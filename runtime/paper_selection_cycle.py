@@ -27,23 +27,20 @@ def _write_health(status, **details):
 
 
 def main():
+    """Legacy timer shim: lifecycle authority belongs to paper_realtime_worker."""
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: PAPER selection accepts PAPER_ONLY exclusively")
-    try:
-        result = crypto_profit_agent.run_behavior_selection()
-        decision_status = result.get("decision_status", "NO_SELECTION_EVIDENCE")
-        _write_health(
-            "DATA_BLOCKED" if decision_status in {"NO_FRESH_ELIGIBLE_BEHAVIOR", "NO_SELECTION_EVIDENCE"} else "SUCCESS",
-            decision_status=decision_status,
-            selected=int(result["selected"]), filled=int(result["filled"]),
-            closed=int(result["closed"]), cancelled=int(result["cancelled"]),
-            open_positions=int(result["portfolio"]["open_positions"]),
-            learning_status=str(result["trade_learning"]["status"]),
-        )
-        return result
-    except Exception as exc:
-        _write_health("FAILED", error_type=type(exc).__name__, message=str(exc)[:300])
-        raise
+    result = {
+        "status": "DELEGATED_TO_REALTIME_WORKER",
+        "selected": 0, "filled": 0, "closed": 0, "cancelled": 0,
+    }
+    _write_health(
+        "DELEGATED_TO_REALTIME_WORKER",
+        decision_status="LIVE_EVENT_STREAM_AUTHORITY",
+        selected=0, filled=0, closed=0, cancelled=0,
+        open_positions=0, learning_status="REALTIME_WORKER_OWNS_LIFECYCLE",
+    )
+    return result
 
 
 if __name__ == "__main__":
