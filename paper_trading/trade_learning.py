@@ -93,6 +93,14 @@ def _execution_evidence_clause():
 
 
 def load_closed(con, validation_cohort):
+    # A legacy or freshly initialized database may not have the executable
+    # position-event ledger yet.  Without both event sides there is no
+    # performance-grade round trip: retain observations elsewhere, but do
+    # not award learning/promotion evidence.
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_events'"
+    ).fetchone():
+        return []
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"
     )}
