@@ -1540,14 +1540,27 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         )
         if result is None:
             continue
-        entry_time, reference_price, quote_volume = result
+        entry_time, reference_price, _audit_quote_volume = result
         side = "BUY" if direction == "LONG" else "SELL"
+        # The last trade/reference price above is audit context only. A PAPER
+        # entry must execute from the fresh side of the live quote and only the
+        # visible liquidity on that same side (BUY=ask, SELL=bid).
+        executable_price = live.best_ask if side == "BUY" else live.best_bid
+        side_quote_volume = (
+            live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
+        )
         fill = simulated_fill(
-            reference_price=reference_price, requested_notional=float(notional),
-            side=side, available_quote_volume=quote_volume, require_liquidity=True,
+            reference_price=float(executable_price) if executable_price is not None else 0.0,
+            requested_notional=float(notional), side=side,
+            available_quote_volume=side_quote_volume, require_liquidity=True,
             symbol=symbol, quantity_step=rules.quantity_step if rules else 1e-8,
             price_tick=rules.price_tick if rules else 1e-8,
             min_notional=rules.min_notional if rules else 5.0,
+            best_bid=live.best_bid, best_ask=live.best_ask,
+            quote_timestamp_ms=live.quote_timestamp_ms,
+            liquidity_timestamp_ms=live.liquidity_timestamp_ms,
+            observed_at=iso(now), market_type=market_type,
+            source=live.quote_source,
         )
         if fill is None:
             continue
