@@ -1,6 +1,6 @@
 [Unit]
 Description=AGCA unattended cloud runtime attestation
-After=network-online.target agca-cloud-worker.service
+After=network-online.target agca-paper-realtime-worker.service
 Wants=network-online.target
 
 [Service]
@@ -12,7 +12,7 @@ EnvironmentFile=-/etc/agca/agca.env
 EnvironmentFile=-/etc/agca/remote-database.env
 Environment=HOME=/home/kursadsalis
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
-Environment=AGCA_WORKER_SERVICE=agca-cloud-worker.service
+Environment=AGCA_WORKER_SERVICE=agca-paper-realtime-worker.service
 Environment=AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS=900
 Environment=AGCA_MARKET_BEHAVIOR_HEALTH_MAX_AGE_SECONDS=180
 Environment=AGCA_EXACT_MACRO_HEALTH_MAX_AGE_SECONDS=180
