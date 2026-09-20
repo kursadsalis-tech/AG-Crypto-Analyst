@@ -157,6 +157,31 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertLess(position[3], 81)
         self.assertAlmostEqual(cash, 10_000 - position[1] - position[2] * .0005)
 
+    def test_candidate_ranking_prefers_expected_net_usdt_over_edge_pct(self):
+        tiny_high_edge = self.candidate()
+        tiny_high_edge.update({
+            "decision_id": 21, "symbol": "TINYUSDT",
+            "expected_net_edge_pct": 1.00, "risk_cap_pct": 0.25,
+            "evidence_sha256": "1" * 64,
+        })
+        larger_lower_edge = self.candidate()
+        larger_lower_edge.update({
+            "decision_id": 22, "symbol": "LARGEUSDT",
+            "expected_net_edge_pct": 0.30, "risk_cap_pct": 10.0,
+            "evidence_sha256": "2" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE",
+            "candidates": [tiny_high_edge, larger_lower_edge],
+            "review": {},
+        }), patch.object(agent, "MAX_NEW_PER_CYCLE", 1):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        selected = self.con.execute(
+            "SELECT symbol,notional FROM paper_agent_positions"
+        ).fetchone()
+        self.assertEqual(selected[0], "LARGEUSDT")
+        self.assertAlmostEqual(selected[1], 50.0)
+
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()
         too_small["risk_cap_pct"] = 0.05
