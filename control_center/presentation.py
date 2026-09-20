@@ -191,6 +191,19 @@ def operator_view(snapshot):
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
         "ajan_beyni": brain_view,
+        "düşünce_akışı": [{
+            "zaman": row.get("at") or "—",
+            "aşama": row.get("phase") or "—",
+            "piyasa": f'{row.get("symbol") or "—"} · {row.get("market_type") or "—"}',
+            "fiyat": _price(row.get("price")),
+            "mesaj": row.get("message") or "—",
+            "karar": brain_decision_labels.get(
+                row.get("decision"), row.get("decision") or "—"
+            ),
+            "aday": (row.get("scan") or {}).get("candidate_count", 0),
+            "seçilen": (row.get("scan") or {}).get("selected_count", 0),
+            "yeni_fırsat": row.get("decision") == "NEW_POSITION_SELECTED",
+        } for row in reversed(snapshot.get("brain_timeline", [])[-30:])],
         "son_fırsat_taraması": selection_view,
         "aktivite": [{
             "aşama": row.get("name"),
