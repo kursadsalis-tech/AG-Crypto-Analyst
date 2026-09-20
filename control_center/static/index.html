@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGCA Live Control Center</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0f14;--panel:#121923;--line:#263244;--text:#edf2f7;--muted:#93a4b8;--good:#38d996;--warn:#ffbf47;--bad:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,sans-serif}.wrap{max-width:1400px;margin:auto;padding:24px}
+header{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}h1{font-size:22px;margin:0}.mode{border:1px solid var(--line);padding:8px 12px;border-radius:999px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}.label{color:var(--muted);font-size:12px}.value{font-size:20px;font-weight:700;margin-top:6px}
+.status{margin:16px 0;padding:14px 16px;border:1px solid var(--line);border-radius:12px}.tabs{display:flex;gap:8px;margin:22px 0 12px}.tab{background:transparent;color:var(--muted);border:1px solid var(--line);padding:9px 14px;border-radius:9px;cursor:pointer}.tab.active{color:var(--text);background:var(--panel)}
+table{width:100%;border-collapse:collapse}.panel{overflow:auto}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:600;font-size:12px}.live{color:var(--good)}.stale{color:var(--warn)}.pnl-pos{color:var(--good)}.pnl-neg{color:var(--bad)}.hidden{display:none}.empty{color:var(--muted);padding:22px 8px}
+@media(max-width:800px){.grid{grid-template-columns:1fr 1fr}.wrap{padding:14px}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body><div class="wrap">
+<header><div><h1>AGCA Live Control Center</h1><div class="label">Kanonik PAPER sistemi — salt okunur görünüm</div></div><div class="mode" id="mode">Yükleniyor…</div></header>
+<div class="status" id="status">AGCA durumu okunuyor…</div>
+<div class="grid">
+<div class="card"><div class="label">Açık Pozisyon</div><div class="value" id="open">—</div></div>
+<div class="card"><div class="label">Serbest Nakit</div><div class="value" id="cash">—</div></div>
+<div class="card"><div class="label">Gerçekleşmiş Sonuç</div><div class="value" id="realized">—</div></div>
+<div class="card"><div class="label">Açık Pozisyon Sonucu</div><div class="value" id="unrealized">—</div></div>
+</div>
+<div class="tabs"><button class="tab active" data-tab="openPanel">Açık Pozisyonlar</button><button class="tab" data-tab="closedPanel">Kapanan İşlemler</button></div>
+<div class="panel" id="openPanel"><table><thead><tr><th>İşlem</th><th>Durum</th><th>Giriş</th><th>Ajanın Fiyatı</th><th>TP1</th><th>TP2</th><th>Güncel STOP</th><th>Anlık Sonuç</th><th>Fiyat Güncelliği</th></tr></thead><tbody id="openRows"></tbody></table><div class="empty hidden" id="openEmpty">Açık PAPER pozisyon yok.</div></div>
+<div class="panel hidden" id="closedPanel"><table><thead><tr><th>İşlem</th><th>Giriş</th><th>Kapanış</th><th>Net Sonuç</th><th>Ücretler</th><th>Kapanış Nedeni</th><th>Kapanış Zamanı</th></tr></thead><tbody id="closedRows"></tbody></table><div class="empty hidden" id="closedEmpty">Kapanan işlem yok.</div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id); const esc=v=>String(v??"—").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function pnlClass(v){return String(v).trim().startsWith("-")?"pnl-neg":"pnl-pos"}
+function render(d){$("status").textContent=d.durum;$("mode").textContent=d.işlem_modu;$("open").textContent=d.açık_pozisyon;$("cash").textContent=d.serbest_nakit;$("realized").textContent=d.gerçekleşmiş_sonuç;$("unrealized").textContent=d.açık_pozisyon_sonucu;
+const opens=d.açık_pozisyonlar||[];$("openEmpty").classList.toggle("hidden",opens.length>0);$("openRows").innerHTML=opens.map(p=>`<tr><td><b>${esc(p.başlık)}</b><br><span class="label">${esc(p.piyasa)}</span></td><td class="${p.durum==="CANLI"?"live":"stale"}">${esc(p.durum_etiketi)} · ${esc(p.durum)}</td><td>${esc(p.pozisyona_giriş)}</td><td>${esc(p.ajanın_gördüğü_fiyat)}</td><td>${esc(p.tp1)}<br><span class="label">${esc(p.tp1_durumu)}</span></td><td>${esc(p.tp2)}<br><span class="label">${esc(p.tp2_durumu)}</span></td><td>${esc(p.güncel_stop)}</td><td class="${pnlClass(p.anlık_sonuç)}">${esc(p.anlık_sonuç)}</td><td>${esc(p.son_fiyat)}${p.uyarı?`<br><span class="stale">${esc(p.uyarı)}</span>`:""}</td></tr>`).join("");
+const closed=d.kapanan_işlemler||[];$("closedEmpty").classList.toggle("hidden",closed.length>0);$("closedRows").innerHTML=closed.map(p=>`<tr><td><b>${esc(p.başlık)}</b></td><td>${esc(p.giriş_fiyatı)}</td><td>${esc(p.kapanış_fiyatı)}</td><td class="${pnlClass(p.net_sonuç)}">${esc(p.net_sonuç)}</td><td>${esc(p.ücretler)}</td><td>${esc(p.kapanış_nedeni)}</td><td>${esc(p.kapanış_zamanı)}</td></tr>`).join("")}
+async function refresh(){try{const r=await fetch("/api/v1/overview",{cache:"no-store"});if(!r.ok)throw Error(r.status);render(await r.json())}catch(e){$("status").textContent="Control Center verisi alınamadı — AGCA işlem sistemi bundan bağımsız çalışmaya devam eder";$("status").className="status stale"}}
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));b.classList.add("active");["openPanel","closedPanel"].forEach(id=>$(id).classList.toggle("hidden",id!==b.dataset.tab))});
+refresh();setInterval(refresh,2000);
+</script></body></html>
