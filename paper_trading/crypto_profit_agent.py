@@ -542,6 +542,89 @@ def fill_pending(con, now, exchange_metadata=None):
     return filled, cancelled
 
 
+
+def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
+    """Fill pending PAPER entries only from the authoritative live state callback."""
+    rows = con.execute("""
+        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
+               market_type
+        FROM paper_agent_positions
+        WHERE status='PENDING_ENTRY' AND symbol=? AND market_type=?
+        ORDER BY selected_at,position_id
+    """, (live.symbol, live.market_type)).fetchall()
+    filled = cancelled = 0
+    for (position_id, symbol, planned_entry_time, notional, direction, leverage,
+         market_type) in rows:
+        planned = parse_time(planned_entry_time)
+        if now < planned:
+            continue
+        metadata = (
+            exchange_metadata.get(market_type)
+            if isinstance(exchange_metadata, dict) else exchange_metadata
+        )
+        try:
+            rules = rules_for(metadata, symbol) if metadata else None
+        except ExchangeMetadataError:
+            rules = None
+        if exchange_metadata is not None and rules is None:
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                cancel_reason=? WHERE position_id=? AND status='PENDING_ENTRY'""",
+                (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
+            cancelled += 1
+            continue
+        result = execution_market_data.capture_live_reference(
+            con, position_id=position_id, symbol=symbol, purpose="ENTRY",
+            live=live, observed_at=now,
+        )
+        if result is None:
+            continue
+        entry_time, reference_price, quote_volume = result
+        side = "BUY" if direction == "LONG" else "SELL"
+        fill = simulated_fill(
+            reference_price=reference_price, requested_notional=float(notional),
+            side=side, available_quote_volume=quote_volume, require_liquidity=True,
+            symbol=symbol, quantity_step=rules.quantity_step if rules else 1e-8,
+            price_tick=rules.price_tick if rules else 1e-8,
+            min_notional=rules.min_notional if rules else 5.0,
+        )
+        if fill is None:
+            continue
+        entry_price, fee = fill.price, fill.fee
+        actual_notional = fill.quantity * fill.price
+        margin = actual_notional / float(leverage)
+        cash = float(con.execute(
+            "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
+        ).fetchone()[0])
+        if cash + 1e-9 < margin + fee:
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                cancel_reason='INSUFFICIENT_VIRTUAL_CASH'
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+            cancelled += 1
+            continue
+        maintenance_rate = float(os.getenv(
+            "AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"
+        ))
+        liquidation_threshold = liquidation_price(
+            entry_price=entry_price, direction=direction, leverage=float(leverage),
+            maintenance_margin_rate=maintenance_rate,
+        ) if market_type == "USD_M_PERPETUAL" else None
+        con.execute("""UPDATE paper_agent_positions SET
+            status='OPEN',entry_time=?,entry_price=?,quantity=?,notional=?,entry_fee=?,
+            market_type=?,entry_spread_cost=?,entry_slippage_cost=?,partial_fill=?,
+            liquidation_price=?,margin_allocated=?
+            WHERE position_id=? AND status='PENDING_ENTRY'""", (
+            iso(entry_time), entry_price, fill.quantity, actual_notional, fee,
+            market_type, fill.spread_cost, fill.slippage_cost, int(fill.partial),
+            liquidation_threshold, margin, position_id,
+        ))
+        con.execute("""UPDATE paper_agent_portfolio
+            SET cash=cash-?,total_fees=total_fees+? WHERE portfolio_id=1""",
+            (margin + fee, fee))
+        filled += 1
+    con.commit()
+    return filled, cancelled
+
+
 def settle_open(con, now, exchange_metadata=None):
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.due_time,p.entry_time,
