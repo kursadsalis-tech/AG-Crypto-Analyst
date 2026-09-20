@@ -132,6 +132,7 @@ def execution_feedback(con, now=None):
         WHERE p.decision_source='MARKET_BEHAVIOR_CORE'
           AND p.status='CLOSED' AND p.evidence_eligible=1
           AND p.net_pnl IS NOT NULL AND p.notional>0 AND p.exit_time<=?
+          AND COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'
         ORDER BY p.position_id
     """, (iso(now),)).fetchall()
     grouped = defaultdict(list)
