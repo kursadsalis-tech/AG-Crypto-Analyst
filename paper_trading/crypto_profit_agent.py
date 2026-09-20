@@ -464,6 +464,22 @@ def fill_pending(con, now, exchange_metadata=None):
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
          market_type) in rows:
         planned = parse_time(planned_entry_time)
+        # A pending entry is only meaningful inside the bounded executable
+        # observation window.  Cancel expired rows before metadata/network
+        # work so a stale order can never be resurrected by a later cycle.
+        if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
+            record_execution(
+                con, position_id, now, "ENTRY", symbol,
+                "BUY" if direction == "LONG" else "SELL", market_type,
+                ExecutionDecision("REJECTED", "ENTRY_OBSERVATION_WINDOW_EXPIRED"),
+            )
+            con.execute("""
+                UPDATE paper_agent_positions
+                SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'
+            """, (f"EXACT_{market_type}_ENTRY_CAPTURE_EXPIRED", position_id))
+            cancelled += 1
+            continue
         metadata = (
             exchange_metadata.get(market_type)
             if isinstance(exchange_metadata, dict) else exchange_metadata
