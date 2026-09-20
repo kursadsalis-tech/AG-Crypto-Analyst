@@ -890,6 +890,26 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         ),
         reverse=True,
     )
+    open_position_xray = []
+    for position_id, symbol, direction, entry_price, quantity, notional, selection_reason in con.execute(
+        """SELECT position_id,symbol,direction,entry_price,quantity,notional,
+                  selection_reason
+           FROM paper_agent_positions WHERE status='OPEN'
+           ORDER BY position_id"""
+    ).fetchall():
+        mark_state = latest_mark(con, symbol, now)
+        mark = mark_state[0] if mark_state else None
+        unrealized = (
+            directional_pnl(direction, float(entry_price), float(mark), float(quantity))
+            if mark is not None and entry_price is not None and quantity is not None
+            else None
+        )
+        open_position_xray.append({
+            "position_id": position_id, "symbol": symbol, "direction": direction,
+            "entry_price": entry_price, "mark_price": mark, "notional": notional,
+            "unrealized_pnl": unrealized, "selection_reason": selection_reason,
+        })
+
     candidate_xray = [{
         "rank": rank,
         "symbol": row["symbol"],
@@ -1054,6 +1074,11 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             ],
             "core_status": behavior_result["status"],
             "rejection_reasons": dict(reasons),
+            "open_positions": open_position_xray,
+            "portfolio_capacity": {
+                "active": len(active), "capacity": capacity,
+                "available_exposure": available_exposure,
+            },
         })
     return selected
 
