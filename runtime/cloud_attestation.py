@@ -16,7 +16,7 @@ from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_a
 
 
 DB_NAME = "crypto_data.db"
-ATTESTATION_VERSION = "AGCA_CLOUD_ATTESTATION_V2_REALTIME_PAPER"
+ATTESTATION_VERSION = "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER"
 MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
 SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
@@ -57,7 +57,7 @@ def iso(value):
 
 def ensure_table(con):
     con.execute("""
-        CREATE TABLE IF NOT EXISTS cloud_runtime_attestations (
+        CREATE TABLE IF NOT EXISTS runtime_attestations (
             attestation_id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT NOT NULL UNIQUE,
             attestation_version TEXT NOT NULL,
@@ -66,9 +66,6 @@ def ensure_table(con):
             execution_mode TEXT NOT NULL,
             may_send_real_orders INTEGER NOT NULL,
             sqlite_quick_check TEXT NOT NULL,
-            product_cycle_status TEXT,
-            hourly_job_status TEXT,
-            paper_agent_status TEXT,
             validation_cohort TEXT NOT NULL,
             pending_count INTEGER NOT NULL,
             open_count INTEGER NOT NULL,
@@ -78,6 +75,9 @@ def ensure_table(con):
             cash REAL NOT NULL,
             realized_pnl REAL NOT NULL,
             total_fees REAL NOT NULL,
+            realtime_manager_state TEXT,
+            behavior_observer_state TEXT,
+            macro_observer_state TEXT,
             payload_json TEXT NOT NULL,
             payload_sha256 TEXT NOT NULL
         )
@@ -249,8 +249,6 @@ def build(
         policy_version=AUTHORIZED_POLICY_VERSION,
         initial_capital=float(portfolio[0]),
     )
-    hourly = last_results.get("hourly_job", {})
-    paper = hourly.get("paper_agent", {}) if isinstance(hourly, dict) else {}
     payload = {
         "attestation_version": ATTESTATION_VERSION,
         "created_at": iso(now),
@@ -260,9 +258,6 @@ def build(
         "may_send_real_orders": bool(authority["may_send_real_orders"]),
         "sqlite_quick_check": str(integrity),
         "sqlite_integrity_evidence": integrity_evidence,
-        "product_cycle_status": _status(last_results.get("product_cycle", {})),
-        "hourly_job_status": _status(hourly),
-        "paper_agent_status": _status(paper),
         "validation_cohort": str(portfolio[4]),
         "positions": {
             "pending": counts.get("PENDING_ENTRY", 0),
@@ -300,28 +295,29 @@ def record(worker_status, last_results, now=None, database=DB_NAME):
         positions = payload["positions"]
         portfolio = payload["portfolio"]
         con.execute("""
-            INSERT INTO cloud_runtime_attestations(
+            INSERT INTO runtime_attestations(
                 created_at,attestation_version,worker_id,worker_status,
                 execution_mode,may_send_real_orders,sqlite_quick_check,
-                product_cycle_status,hourly_job_status,paper_agent_status,
                 validation_cohort,pending_count,open_count,closed_count,
                 cancelled_count,initial_capital,cash,realized_pnl,total_fees,
+                realtime_manager_state,behavior_observer_state,macro_observer_state,
                 payload_json,payload_sha256
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             payload["created_at"], ATTESTATION_VERSION, payload["worker_id"],
             payload["worker_status"], payload["execution_mode"],
             int(payload["may_send_real_orders"]), payload["sqlite_quick_check"],
-            payload["product_cycle_status"], payload["hourly_job_status"],
-            payload["paper_agent_status"], payload["validation_cohort"],
-            positions["pending"], positions["open"], positions["closed"],
-            positions["cancelled"], portfolio["initial_capital"], portfolio["cash"],
-            portfolio["realized_pnl"], portfolio["total_fees"], encoded, digest,
+            payload["validation_cohort"], positions["pending"], positions["open"],
+            positions["closed"], positions["cancelled"], portfolio["initial_capital"],
+            portfolio["cash"], portfolio["realized_pnl"], portfolio["total_fees"],
+            payload["paper_realtime_manager"]["state"],
+            payload["market_behavior_observer"]["state"],
+            payload["exact_macro_observer"]["state"], encoded, digest,
         ))
         con.commit()
         return {"payload": payload, "sha256": digest,
                 "mirrored": con.remote_mirror_result.succeeded_for(
-                    "cloud_runtime_attestations"
+                    "runtime_attestations"
                 )}
     finally:
         con.close()
@@ -329,27 +325,25 @@ def record(worker_status, last_results, now=None, database=DB_NAME):
 
 def main():
     health_path = Path(os.getenv(
-        "AGCA_WORKER_HEALTH_PATH", "/var/lib/agca/worker-health.json"
+        "AGCA_PAPER_REALTIME_HEALTH", "/var/lib/agca/paper-realtime-health.json"
     ))
     health = json.loads(health_path.read_text(encoding="utf-8"))
-    service = os.getenv("AGCA_WORKER_SERVICE", "agca-cloud-worker.service")
+    service = os.getenv("AGCA_WORKER_SERVICE", "agca-paper-realtime-worker.service")
     active = subprocess.run(
         ["systemctl", "is-active", "--quiet", service], check=False,
     ).returncode == 0
+    now = datetime.now(timezone.utc)
     health_status = str(health.get("status") or "DEGRADED")
     health_at = datetime.fromisoformat(str(health.get("at")).replace("Z", "+00:00"))
-    age = (datetime.now(timezone.utc) - health_at.astimezone(timezone.utc)).total_seconds()
-    max_age = float(os.getenv("AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS", "900"))
+    age = (now - health_at.astimezone(timezone.utc)).total_seconds()
+    max_age = float(os.getenv("AGCA_ATTESTATION_HEALTH_MAX_AGE_SECONDS", "30"))
     if not active:
         worker_status = "STOPPED"
     elif age > max_age:
         worker_status = "STALE"
     else:
         worker_status = health_status
-    result = record(
-        worker_status,
-        dict(health.get("last_results") or {}),
-    )
+    result = record(worker_status, {}, now=now)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return result
 
