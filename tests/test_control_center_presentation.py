@@ -23,6 +23,9 @@ class ControlCenterPresentationTests(unittest.TestCase):
                 "unrealized_pnl": -12.25, "freshness_seconds": 8.2,
                 "market_status": "GECİKMİŞ",
                 "decision_reason": "PAPER opportunity",
+                "tp1_price": 2323, "tp2_price": 2346,
+                "tp1_done": False, "tp2_done": False,
+                "current_stop_price": 2277,
             }],
             "closed_positions": [],
         }
@@ -52,12 +55,28 @@ class ControlCenterPresentationTests(unittest.TestCase):
                 "last_price": 59900, "best_bid": 59899, "best_ask": 59901,
                 "unrealized_pnl": 10, "freshness_seconds": 0.4,
                 "market_status": "CANLI", "decision_reason": "PAPER opportunity",
+                "tp1_price": 59400, "tp2_price": 58800,
+                "tp1_done": True, "tp2_done": False,
+                "current_stop_price": 59880,
             }],
         }
+        snapshot["closed_positions"] = [{
+            "symbol": "ETHUSDT", "direction": "LONG", "entry_price": 2300,
+            "exit_price": 2350, "net_pnl": 45, "total_fees": 5,
+            "close_reason": "PROTECTIVE_STOP",
+            "entry_time": "2026-09-21T10:00:00+00:00",
+            "exit_time": "2026-09-21T11:00:00+00:00",
+        }]
         view = operator_view(snapshot)
         self.assertEqual(view["durum"], "Sistem çalışıyor — canlı piyasa verisi geliyor")
         self.assertEqual(view["açık_pozisyonlar"][0]["son_fiyat"], "1 saniyeden kısa süre önce")
         self.assertIsNone(view["açık_pozisyonlar"][0]["uyarı"])
+        self.assertEqual(view["açık_pozisyonlar"][0]["tp1_durumu"], "GERÇEKLEŞTİ")
+        self.assertEqual(view["kapanan_işlemler"][0]["durum_etiketi"], "KAPANDI")
+        self.assertEqual(
+            view["kapanan_işlemler"][0]["kapanış_nedeni"],
+            "Koruyucu stop çalıştı",
+        )
 
 
 if __name__ == "__main__":
