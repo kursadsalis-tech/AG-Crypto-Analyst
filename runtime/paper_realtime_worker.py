@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 import signal
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,8 +66,6 @@ async def run():
     stop_event = asyncio.Event()
     last_health_at = None
     selection_task = None
-    last_selection_at = 0.0
-    selection_interval = max(1.0, float(os.getenv("AGCA_LIVE_SELECTION_MIN_INTERVAL_SECONDS", "5")))
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -93,10 +90,8 @@ async def run():
             write_health("DEGRADED", error=f"LIVE_SELECTION_{type(exc).__name__}")
 
     async def on_state(state, observed_ms):
-        nonlocal last_health_at, selection_task, last_selection_at
-        elapsed = time.monotonic()
-        if (selection_task is None or selection_task.done()) and elapsed - last_selection_at >= selection_interval:
-            last_selection_at = elapsed
+        nonlocal last_health_at, selection_task
+        if selection_task is None or selection_task.done():
             selection_task = asyncio.create_task(selection_once())
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
         rule = rules_for(metadata[state.market_type], state.symbol)
