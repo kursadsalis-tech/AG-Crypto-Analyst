@@ -70,6 +70,39 @@ async def run():
     stop_event = asyncio.Event()
     last_health_at = None
     last_selection_attempt_at = None
+    live_states = {}
+
+    def live_state_payload(state, observed_ms):
+        """Operator view of the exact normalized market state used by PAPER."""
+        return {
+            "symbol": state.symbol,
+            "market_type": state.market_type,
+            "last_price": state.last_price,
+            "best_bid": state.best_bid,
+            "best_ask": state.best_ask,
+            "quote_source": state.quote_source,
+            "market_timestamp_ms": state.market_timestamp_ms,
+            "quote_timestamp_ms": state.quote_timestamp_ms,
+            "observed_timestamp_ms": observed_ms,
+        }
+
+    def live_state_snapshot():
+        return [live_states[key] for key in sorted(live_states)]
+
+    def publish_live_state(state, observed_ms):
+        live_states[(state.symbol, state.market_type)] = live_state_payload(
+            state, observed_ms
+        )
+        # This is deliberately the same state the canonical worker consumes:
+        # no second feed, price authority, database, or trading lifecycle.
+        write_health(
+            "CONNECTED",
+            active_symbols=symbols(),
+            live_market=live_state_snapshot(),
+            heartbeat=False,
+        )
+
+    last_selection_attempt_at = None
     last_learning_at = None
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
@@ -103,11 +136,15 @@ async def run():
         return sorted(active | monitored)
 
     def health(state, error):
-        write_health(state, error=error, active_symbols=symbols())
+        write_health(
+            state, error=error, active_symbols=symbols(),
+            live_market=live_state_snapshot(),
+        )
 
     async def on_state(state, observed_ms):
         nonlocal last_health_at, last_selection_attempt_at, last_learning_at
         observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
+        publish_live_state(state, observed_ms)
         # One authoritative live callback now drives decision -> PAPER entry ->
         # open-position management. The decision core still consumes only
         # completed causal minute evidence; the fill uses this exact live state.
@@ -186,13 +223,19 @@ async def run():
         # Liveness must not depend on receiving a market callback. A quiet or
         # reconnecting stream can otherwise make a healthy worker look stale.
         while not stop_event.is_set():
-            write_health("CONNECTED", active_symbols=symbols(), heartbeat=True)
+            write_health(
+                "CONNECTED", active_symbols=symbols(),
+                live_market=live_state_snapshot(), heartbeat=True,
+            )
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=10)
             except asyncio.TimeoutError:
                 pass
 
-    write_health("STARTING", active_symbols=symbols())
+    write_health(
+        "STARTING", active_symbols=symbols(),
+        live_market=live_state_snapshot(),
+    )
     try:
         await asyncio.gather(
             realtime_market.stream(symbols, on_state, stop_event, health),
