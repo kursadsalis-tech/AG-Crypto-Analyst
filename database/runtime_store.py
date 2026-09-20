@@ -386,8 +386,8 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> M
             for table, keys in applied.items():
                 sqlite3.Connection.executemany(local, """
                     DELETE FROM remote_mirror_outbox
-                    WHERE table_name=? AND pk_json=?
-                """, [(table, key) for key in keys])
+                    WHERE table_name=? AND pk_json=? AND operation=? AND queued_at=?
+                """, [(table, key, operation, queued_at) for key, operation, queued_at in keys])
             for table, signature in confirmed_schemas.items():
                 sqlite3.Connection.execute(local, """
                     INSERT INTO remote_mirror_schema_state(
@@ -606,7 +606,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
 
     batch_size = max(1, int(os.getenv(REMOTE_BATCH_SIZE_ENV, "100")))
     changes = sqlite3.Connection.execute(local, """
-        SELECT pk_json,operation FROM remote_mirror_outbox
+        SELECT pk_json,operation,queued_at FROM remote_mirror_outbox
         WHERE table_name=? ORDER BY queued_at,pk_json LIMIT ?
     """, (table, batch_size)).fetchall()
     if not changes:
@@ -615,7 +615,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
     pk_where = " AND ".join(f"{_quote(name)}=%s" for name in primary_keys)
     upsert_rows = []
     applied_keys = []
-    for pk_json, operation in changes:
+    for pk_json, operation, queued_at in changes:
         key = json.loads(pk_json)
         if len(key) != len(primary_keys):
             raise RuntimeError(f"Invalid mirror key for {table}")
@@ -636,7 +636,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
                 )
             else:
                 upsert_rows.append(local_row)
-        applied_keys.append(pk_json)
+        applied_keys.append((pk_json, operation, queued_at))
 
     columns_sql = ",".join(_quote(name) for name in names)
     placeholders = ",".join(["%s"] * len(names))
