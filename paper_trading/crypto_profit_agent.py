@@ -1293,6 +1293,15 @@ def _confirm_remote_report_delivery(con, report_date):
     """, (mirrored_at, report_date))
     con.commit()
     if con.remote_mirror_result.succeeded_for("paper_agent_daily_reports"):
+        # Mark recipient-independent persistence complete only after the remote
+        # mirror has acknowledged the report row. Bypass RuntimeConnection's
+        # mirroring hook so this local acknowledgement cannot recursively
+        # create another remote delivery attempt.
+        sqlite3.Connection.execute(con, """
+            UPDATE paper_agent_daily_reports SET delivery_complete=1
+            WHERE report_date=?
+        """, (report_date,))
+        sqlite3.Connection.commit(con)
         return True
     # The local delivery flag must never claim success when the remote write failed.
     sqlite3.Connection.execute(con, """
