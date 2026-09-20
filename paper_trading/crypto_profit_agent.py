@@ -806,11 +806,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                               "core_status": behavior_result["status"],
                               "rejection_reasons": dict(reasons)})
         return 0
-    if capacity <= 0:
+    portfolio_full = capacity <= 0
+    if portfolio_full:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
-        record_run(0, 0.0)
-        con.commit()
-        return 0
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
     # Fresh marked exposure comes from the same valuation used for equity.
@@ -926,6 +924,10 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     } for rank, (profit_per_risk, expected_profit, row)
        in enumerate(ranked_candidates[:12], start=1)]
 
+    if portfolio_full:
+        for row in candidate_xray:
+            row["portfolio_comparison"] = "PORTFOLIO_FULL_CANDIDATE_VISIBLE"
+
     candidate_outcomes = {
         (row["symbol"], row["direction"], row["horizon"]): {
             "status": "DEĞERLENDİRİLİYOR", "reason": None
@@ -934,6 +936,12 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
 
     for _, _, row in ranked_candidates:
         outcome_key = (row["symbol"], row["direction"], row["horizon"])
+        if portfolio_full:
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ",
+                "reason": "PORTFOLIO_POSITION_CAPACITY_FULL",
+            }
+            continue
         if selected >= max_new:
             reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
             candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "PER_CYCLE_NEW_POSITION_CAP_REACHED"}
