@@ -164,17 +164,19 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertLess(position[3], 81)
         self.assertAlmostEqual(cash, 10_000 - position[1] - position[2] * .0005)
 
-    def test_candidate_ranking_prefers_expected_net_usdt_over_edge_pct(self):
+    def test_candidate_ranking_prefers_executable_profit_per_risk_over_edge_pct(self):
         tiny_high_edge = self.candidate()
         tiny_high_edge.update({
             "decision_id": 21, "symbol": "TINYUSDT",
             "expected_net_edge_pct": 1.00, "risk_cap_pct": 0.25,
+            "stop_reference_pct": 5.0,
             "evidence_sha256": "1" * 64,
         })
         larger_lower_edge = self.candidate()
         larger_lower_edge.update({
             "decision_id": 22, "symbol": "LARGEUSDT",
             "expected_net_edge_pct": 0.30, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 0.5,
             "evidence_sha256": "2" * 64,
         })
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
@@ -194,12 +196,14 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         inefficient.update({
             "decision_id": 23, "symbol": "RISKYUSDT",
             "expected_net_edge_pct": 0.40, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 5.0,
             "evidence_sha256": "3" * 64,
         })
         efficient = self.candidate()
         efficient.update({
             "decision_id": 24, "symbol": "EFFICIENTUSDT",
             "expected_net_edge_pct": 0.35, "risk_cap_pct": 0.25,
+            "stop_reference_pct": 0.5,
             "evidence_sha256": "4" * 64,
         })
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
@@ -240,13 +244,13 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         tight = self.candidate()
         tight.update({
             "decision_id": 27, "symbol": "TIGHTSIZEUSDT",
-            "stop_reference_pct": 1.0, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 1.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
             "evidence_sha256": "7" * 64,
         })
         wide = self.candidate()
         wide.update({
             "decision_id": 28, "symbol": "WIDESIZEUSDT",
-            "stop_reference_pct": 5.0, "risk_cap_pct": 10.0,
+            "stop_reference_pct": 5.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
             "evidence_sha256": "8" * 64,
         })
         # Remove the exploratory base-margin ceiling so this test isolates
@@ -267,7 +271,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         tight_risk = notionals["TIGHTSIZEUSDT"] * (0.01 + 2 * agent.FEE_RATE)
         wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
-        self.assertAlmostEqual(tight_risk, 75.0, places=6)
+        self.assertAlmostEqual(tight_risk, 50.0, places=6)
 
     def test_existing_pending_entry_reserves_cash_and_gross_exposure(self):
         pending = self.candidate()
