@@ -174,6 +174,24 @@ def review_closed_positions(con, now=None):
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL AND r.position_id IS NULL
           AND p.evidence_eligible=1
           AND p.validation_cohort=t.validation_cohort
+          AND EXISTS (
+            SELECT 1 FROM paper_position_events ee
+            WHERE ee.position_id=p.position_id AND ee.event_type='ENTRY_FILLED'
+              AND ee.fill_price IS NOT NULL AND ee.fill_quantity>0
+              AND json_extract(ee.evidence_json,'$.best_bid') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.best_ask') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+              AND json_extract(ee.evidence_json,'$.executable_reference_price') IS NOT NULL
+          )
+          AND EXISTS (
+            SELECT 1 FROM paper_position_events xe
+            WHERE xe.position_id=p.position_id AND xe.event_type='POSITION_CLOSED'
+              AND xe.fill_price IS NOT NULL AND xe.fill_quantity>0
+              AND json_extract(xe.evidence_json,'$.best_bid') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.best_ask') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.quote_timestamp_ms') IS NOT NULL
+              AND json_extract(xe.evidence_json,'$.executable_reference_price') IS NOT NULL
+          )
           {funding_clause}
         ORDER BY p.exit_time,p.position_id
     """).fetchall()
