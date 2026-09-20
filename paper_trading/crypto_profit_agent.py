@@ -970,6 +970,13 @@ def select_new_positions(con, now, exchange_metadata=None):
                 "risk_tier": tier.tier, "leverage": tier.leverage,
                 "margin_allocated": notional / tier.leverage,
                 "gross_exposure": notional,
+                "planned_stop_distance_pct": effective_stop_pct,
+                "planned_stop_reference_pct": raw_stop_pct,
+                "risk_per_trade_pct": float(row.get("risk_per_trade_pct") or 0.0),
+                "planned_stop_and_fee_risk_usdt": notional * (
+                    effective_stop_pct / 100.0 + 2.0 * FEE_RATE
+                ),
+                "stop_basis": "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT",
                 "independent_signal_count": tier.independent_signal_count,
                 "signal_sources": list(tier.signal_sources),
             }
