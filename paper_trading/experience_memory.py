@@ -152,24 +152,50 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
 def review_closed_positions(con, now=None):
     """Review every closed forward experience; evidence quality controls authority."""
     now = now or datetime.now(timezone.utc)
-    rows = con.execute("""
+    position_columns = {r[1] for r in con.execute("PRAGMA table_info(paper_agent_positions)")}
+    manager_exists = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_management'"
+    ).fetchone())
+    events_exist = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_events'"
+    ).fetchone())
+    def pcol(name, fallback):
+        return "p." + name if name in position_columns else fallback
+    margin_sql = pcol("margin_allocated", "p.notional")
+    leverage_sql = pcol("leverage", "1")
+    tier_sql = pcol("risk_tier", "'PAPER_RISK_TIER_1'")
+    funding_sql = pcol("funding_source", "''")
+    liquidation_sql = pcol("liquidation_price", "NULL")
+    cohort_clause = (
+        "AND p.validation_cohort=t.validation_cohort"
+        if "validation_cohort" in position_columns else ""
+    )
+    manager_select = (
+        "m.stop_distance_pct,m.current_stop_price,m.best_price"
+        if manager_exists else "NULL,NULL,NULL"
+    )
+    manager_join = (
+        "LEFT JOIN paper_position_management m ON m.position_id=p.position_id"
+        if manager_exists else ""
+    )
+    rows = con.execute(f"""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
-               t.thesis_json,t.thesis_sha256,COALESCE(p.margin_allocated,p.notional),
-               COALESCE(p.leverage,1),COALESCE(p.risk_tier,'PAPER_RISK_TIER_1'),
-               COALESCE(p.funding_source,''),p.liquidation_price,
-               m.stop_distance_pct,m.current_stop_price,m.best_price
+               t.thesis_json,t.thesis_sha256,COALESCE({margin_sql},p.notional),
+               COALESCE({leverage_sql},1),COALESCE({tier_sql},'PAPER_RISK_TIER_1'),
+               COALESCE({funding_sql},''),{liquidation_sql},
+               {manager_select}
         FROM paper_agent_positions p
         JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
-        LEFT JOIN paper_position_management m ON m.position_id=p.position_id
+        {manager_join}
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL
-          AND p.validation_cohort=t.validation_cohort
+          {cohort_clause}
           AND (
               r.position_id IS NULL
               OR (
-                  COALESCE(p.funding_source,'')!='PENDING_RECONCILIATION'
+                  COALESCE({funding_sql},'')!='PENDING_RECONCILIATION'
                   AND json_valid(r.review_json)
                   AND json_extract(r.review_json,'$.evidence_assessment.economics_final')=0
                   AND json_extract(r.review_json,'$.evidence_assessment.limitations') LIKE '%FUNDING_PENDING%'
@@ -184,11 +210,11 @@ def review_closed_positions(con, now=None):
          liquidated, close_reason, thesis_json, thesis_sha, margin_allocated,
          leverage, risk_tier, funding_source, liquidation_price,
          stop_distance_pct, final_stop_price, best_price) = row
-        events = con.execute("""
+        events = (con.execute("""
             SELECT event_type,evidence_json,fill_price,fill_quantity
             FROM paper_position_events
             WHERE position_id=? AND event_type IN ('ENTRY_FILLED','POSITION_CLOSED')
-        """, (position_id,)).fetchall()
+        """, (position_id,)).fetchall() if events_exist else [])
         event_map = {event[0]: event for event in events}
         limitations = []
         for event_type in ("ENTRY_FILLED", "POSITION_CLOSED"):
