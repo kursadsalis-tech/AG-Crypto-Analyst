@@ -1098,7 +1098,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             "selected_count": selected,
             "candidates": [
                 {**row, **candidate_outcomes.get(
-                    (row["symbol"], row["direction"], row["horizon"]), {}
+                    (row["symbol"], row["direction"], row["horizon_hours"]), {}
                 )} for row in candidate_xray
             ],
             "core_status": behavior_result["status"],
