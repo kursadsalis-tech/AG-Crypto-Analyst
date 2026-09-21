@@ -169,6 +169,7 @@ async def run():
             "market_timestamp_ms": state.market_timestamp_ms,
             "quote_timestamp_ms": state.quote_timestamp_ms,
             "liquidity_timestamp_ms": state.liquidity_timestamp_ms,
+            "trade_timestamp_ms": state.trade_timestamp_ms,
             "visible_quote_volume": state.visible_quote_volume,
             "bid_quote_volume": state.bid_quote_volume,
             "ask_quote_volume": state.ask_quote_volume,
