@@ -54,7 +54,7 @@ def from_ws_caches(exchange_info, metadata_fetched_at, mini_by_symbol,
         if not isinstance(mini, dict) or not isinstance(book, dict):
             continue
         if (mini.get("e") != "24hrMiniTicker" or book.get("e") != "bookTicker"
-                or mini.get("st") != 1 or book.get("st") != 1
+                or mini.get("st", 1) != 1 or book.get("st", 1) != 1
                 or mini.get("s") != symbol or book.get("s") != symbol):
             continue
         try:
