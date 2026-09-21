@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from scripts import probe_binance_observer_risk_handoff as probe
 
@@ -9,7 +9,7 @@ class ObserverRiskHandoffProbeTests(unittest.TestCase):
     def _collector(self):
         collector = Mock()
         collector.allowed = frozenset({"BTCUSDT", "1000PEPEUSDT"})
-        collector.run = Mock(return_value={
+        collector.run = AsyncMock(return_value={
             "minute_end_ms": 1_800_000_000_000,
             "bundles": [{"x": 1}],
             "transport": {
