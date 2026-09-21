@@ -180,6 +180,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(candidate["direction"], "LONG")
         self.assertEqual(candidate["experiment_tier"], "EXPLORATORY_LEARNING")
         self.assertEqual(candidate["decision_source"], "MARKET_BEHAVIOR_CORE")
+        self.assertEqual(candidate["market_type"], "USD_M_PERPETUAL")
         self.assertFalse(candidate["evidence"]["unified_forecast_used"])
         self.assertTrue(
             candidate["evidence"]["learned_pattern"]["observational_promotion_ready"]
