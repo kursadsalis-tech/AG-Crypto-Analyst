@@ -781,6 +781,7 @@ def latest_candidates(con, now=None):
 
 def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
+    candidates = behavior_result["candidates"]
     snapshot = portfolio_snapshot(con, now)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
@@ -798,10 +799,66 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             active_position_count,capacity,available_exposure,
             reason_counts_json,real_order_allowed
         ) VALUES(?,?,?,?,?,?,?,?,0)""", (
-            iso(now), behavior_result["status"], len(behavior_result["candidates"]),
+            iso(now), behavior_result["status"], len(candidates),
             selected_count, len(active), capacity, available_exposure,
             json.dumps(reasons, sort_keys=True),
         ))
+
+    policy_limits = None
+    if candidates:
+        rows = [row.get("risk_policy_limits") for row in candidates]
+        if any(not isinstance(value, dict) for value in rows):
+            reject("GLOBAL_RISK_POLICY_LIMITS_MISSING")
+            record_run(0, 0.0)
+            con.commit()
+            if telemetry is not None:
+                telemetry.update({"selected_count": 0, "candidates": [],
+                                  "core_status": behavior_result["status"],
+                                  "rejection_reasons": dict(reasons)})
+            return 0
+        keys = (
+            "max_total_exposure_pct", "max_alt_exposure_pct",
+            "max_single_position_pct", "daily_loss_limit_pct",
+            "max_new_positions",
+        )
+        signatures = {
+            tuple(value.get(key) for key in keys) for value in rows
+        }
+        if len(signatures) != 1:
+            reject("GLOBAL_RISK_POLICY_LIMITS_INCONSISTENT")
+            record_run(0, 0.0)
+            con.commit()
+            if telemetry is not None:
+                telemetry.update({"selected_count": 0, "candidates": [],
+                                  "core_status": behavior_result["status"],
+                                  "rejection_reasons": dict(reasons)})
+            return 0
+        policy_limits = rows[0]
+        try:
+            policy_total_pct = float(policy_limits["max_total_exposure_pct"])
+            policy_alt_pct = float(policy_limits["max_alt_exposure_pct"])
+            policy_daily_loss_pct = float(policy_limits["daily_loss_limit_pct"])
+            policy_max_new = int(policy_limits["max_new_positions"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            reject("GLOBAL_RISK_POLICY_LIMITS_INVALID")
+            record_run(0, 0.0)
+            con.commit()
+            return 0
+        if (
+            not math.isfinite(policy_total_pct) or policy_total_pct <= 0
+            or not math.isfinite(policy_alt_pct) or policy_alt_pct < 0
+            or not math.isfinite(policy_daily_loss_pct) or policy_daily_loss_pct <= 0
+            or policy_max_new <= 0
+        ):
+            reject("GLOBAL_RISK_POLICY_LIMITS_INVALID")
+            record_run(0, 0.0)
+            con.commit()
+            return 0
+    else:
+        policy_total_pct = 100.0 * MAX_TOTAL_EXPOSURE
+        policy_alt_pct = policy_total_pct
+        policy_daily_loss_pct = 100.0
+        policy_max_new = MAX_NEW_PER_CYCLE
 
     if not snapshot["valuation_complete"]:
         reject("PORTFOLIO_VALUATION_STALE_OR_MISSING")
@@ -815,19 +872,25 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     portfolio_full = capacity <= 0
     if portfolio_full:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
-    max_new = min(MAX_NEW_PER_CYCLE, capacity)
-    max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
+    max_new = min(MAX_NEW_PER_CYCLE, capacity, policy_max_new)
+    max_exposure = snapshot["equity"] * min(
+        MAX_TOTAL_EXPOSURE, policy_total_pct / 100.0
+    )
+    max_alt_exposure = snapshot["equity"] * (policy_alt_pct / 100.0)
     # Fresh marked exposure comes from the same valuation used for equity.
     # Entry price is historical accounting data and must not size new risk.
     open_gross_exposure = float(snapshot["gross_exposure"])
     pending = con.execute("""
         SELECT COALESCE(SUM(notional),0),
-               COALESCE(SUM(notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END),0)
+               COALESCE(SUM(notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END),0),
+               COALESCE(SUM(CASE WHEN symbol NOT IN ('BTCUSDT','ETHUSDT')
+                                 THEN notional ELSE 0 END),0)
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
     """).fetchone()
     pending_gross_exposure = float(pending[0] or 0.0)
     pending_margin = float(pending[1] or 0.0)
+    pending_alt_exposure = float(pending[2] or 0.0)
     pending_entry_fees = pending_gross_exposure * FEE_RATE
     available_cash = max(
         0.0, snapshot["cash"] - pending_margin - pending_entry_fees
@@ -835,6 +898,33 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     available_exposure = max(
         0.0, max_exposure - open_gross_exposure - pending_gross_exposure
     )
+    open_alt_exposure = sum(
+        float(value) for symbol, value in
+        snapshot.get("gross_exposure_by_symbol", {}).items()
+        if symbol not in {"BTCUSDT", "ETHUSDT"}
+    )
+    available_alt_exposure = max(
+        0.0, max_alt_exposure - open_alt_exposure - pending_alt_exposure
+    )
+    day_start = now.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    realized_today = float(con.execute("""
+        SELECT COALESCE(SUM(net_pnl),0)
+        FROM paper_agent_positions
+        WHERE status='CLOSED' AND exit_time>=? AND exit_time<=?
+          AND net_pnl IS NOT NULL
+    """, (iso(day_start), iso(now))).fetchone()[0] or 0.0)
+    daily_loss_usdt = max(
+        0.0, -(realized_today + min(0.0, float(snapshot["unrealized_pnl"])))
+    )
+    daily_loss_limit_usdt = (
+        float(snapshot["initial_capital"]) * policy_daily_loss_pct / 100.0
+    )
+    daily_loss_blocked = daily_loss_usdt >= daily_loss_limit_usdt
+    if daily_loss_blocked:
+        max_new = 0
+        reject("DAILY_LOSS_LIMIT_REACHED")
     selected = 0
     planned_entry = immediate_paper_entry_time(now)
 
@@ -843,7 +933,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     # as selection, so a tiny high-% setup cannot crowd out a larger opportunity
     # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
     ranked_candidates = []
-    for row in behavior_result["candidates"]:
+    for row in candidates:
         tier = risk_tiering.tier_for(row)
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
@@ -970,8 +1060,15 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             }
             continue
         if selected >= max_new:
-            reject("PER_CYCLE_NEW_POSITION_CAP_REACHED")
-            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "PER_CYCLE_NEW_POSITION_CAP_REACHED"}
+            reason_code = (
+                "DAILY_LOSS_LIMIT_REACHED"
+                if daily_loss_blocked else
+                "GLOBAL_RISK_MAX_NEW_POSITIONS_REACHED"
+            )
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ", "reason": reason_code
+            }
             continue
         if row["symbol"] in active_symbols:
             reject("SYMBOL_ALREADY_ACTIVE")
@@ -995,16 +1092,29 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * FEE_RATE)
             if trade_risk_budget > 0.0 else 0.0
         )
-        notional = min(
+        limits = [
             base_margin * tier.leverage,
             available_exposure,
             position_cap,
             risk_sized_notional,
             available_cash * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
-        )
+        ]
+        is_alt = row["symbol"] not in {"BTCUSDT", "ETHUSDT"}
+        if is_alt:
+            limits.append(available_alt_exposure)
+        notional = min(limits)
         if notional < MIN_PAPER_NOTIONAL_USDT:
-            reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
-            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"}
+            reason_code = (
+                "ALT_EXPOSURE_LIMIT_REACHED"
+                if is_alt and available_alt_exposure < MIN_PAPER_NOTIONAL_USDT
+                else "TOTAL_EXPOSURE_LIMIT_REACHED"
+                if available_exposure < MIN_PAPER_NOTIONAL_USDT
+                else "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"
+            )
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ", "reason": reason_code
+            }
             continue
         if exchange_metadata is not None:
             metadata = exchange_metadata.get(tier.market_type)
@@ -1091,6 +1201,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
+            if is_alt:
+                available_alt_exposure = max(0.0, available_alt_exposure - notional)
             reservation = notional / tier.leverage + notional * FEE_RATE
             available_cash = max(0.0, available_cash - reservation)
             snapshot["cash"] -= reservation
