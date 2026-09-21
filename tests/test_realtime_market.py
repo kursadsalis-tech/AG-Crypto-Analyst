@@ -1,6 +1,7 @@
 import unittest
 import asyncio
 import json
+from collections import deque
 from unittest.mock import patch
 
 from paper_trading import realtime_market
@@ -176,6 +177,60 @@ class RealtimeMarketTests(unittest.TestCase):
             "USD_M_PERPETUAL",
         )
         self.assertEqual(params, ["solusdt@bookTicker", "solusdt@trade"])
+
+
+    def test_latest_state_queue_coalesces_hot_symbol_and_snapshots_state(self):
+        pending, order, queued = {}, deque(), set()
+        state = LiveState(
+            "BTCUSDT", "USD_M_PERPETUAL", last_price=100,
+            market_timestamp_ms=NOW, quote_timestamp_ms=NOW,
+        )
+        realtime_market._queue_latest_state(
+            pending, order, queued, state, NOW
+        )
+        state.last_price = 101
+        state.market_timestamp_ms = NOW + 1
+        state.quote_timestamp_ms = NOW + 1
+        realtime_market._queue_latest_state(
+            pending, order, queued, state, NOW + 1
+        )
+        snapshot, observed_ms = realtime_market._pop_latest_state(
+            pending, order, queued
+        )
+        self.assertEqual(snapshot.last_price, 101)
+        self.assertEqual(snapshot.market_timestamp_ms, NOW + 1)
+        self.assertEqual(observed_ms, NOW + 1)
+        state.last_price = 999
+        self.assertEqual(snapshot.last_price, 101)
+        self.assertFalse(pending)
+        self.assertFalse(order)
+        self.assertFalse(queued)
+
+    def test_latest_state_queue_is_fair_across_symbols(self):
+        pending, order, queued = {}, deque(), set()
+        btc = LiveState(
+            "BTCUSDT", "USD_M_PERPETUAL", last_price=100,
+            market_timestamp_ms=NOW,
+        )
+        eth = LiveState(
+            "ETHUSDT", "USD_M_PERPETUAL", last_price=200,
+            market_timestamp_ms=NOW,
+        )
+        realtime_market._queue_latest_state(pending, order, queued, btc, NOW)
+        realtime_market._queue_latest_state(pending, order, queued, eth, NOW)
+        btc.last_price = 101
+        btc.market_timestamp_ms = NOW + 1
+        realtime_market._queue_latest_state(
+            pending, order, queued, btc, NOW + 1
+        )
+        first, _ = realtime_market._pop_latest_state(
+            pending, order, queued
+        )
+        second, _ = realtime_market._pop_latest_state(
+            pending, order, queued
+        )
+        self.assertEqual((first.symbol, first.last_price), ("BTCUSDT", 101))
+        self.assertEqual((second.symbol, second.last_price), ("ETHUSDT", 200))
 
 
 if __name__ == "__main__":
