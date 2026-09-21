@@ -292,14 +292,13 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
 
 
 async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *, market_type="SPOT"):
-    """Stream Binance state without letting heavy PAPER callbacks create raw-event backlog.
+    """Keep Binance ingest independent from the heavier PAPER decision callback.
 
-    Binance bookTicker/trade can emit thousands of events per second. The PAPER
-    decision path does not need every intermediate event; it needs the newest
-    executable state. We therefore keep parsing the raw stream at wire speed,
-    coalesce pending callbacks to one immutable latest state per symbol, and
-    dispatch them at a bounded cadence. This prevents stale websocket queues
-    while preserving the latest quote, liquidity and accumulated taker flow.
+    The receiver task continuously drains websocket traffic and coalesces it to
+    one immutable latest state per symbol. A separate dispatcher consumes those
+    latest states at a bounded cadence. Intermediate events are intentionally
+    dropped: PAPER execution needs the newest executable state, not a historical
+    queue of every book/trade tick.
     """
     context = ssl.create_default_context(cafile=certifi.where())
     states, backoff = {}, 1
@@ -311,64 +310,89 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
         try:
             states.clear()
             async with websockets.connect(
-                BINANCE_SPOT_WS_URL if market_type == "SPOT" else BINANCE_USDM_WS_URL, ssl=context, open_timeout=10,
-                ping_interval=20, ping_timeout=10, max_queue=1024,
+                BINANCE_SPOT_WS_URL if market_type == "SPOT" else BINANCE_USDM_WS_URL,
+                ssl=context,
+                open_timeout=10,
+                ping_interval=20,
+                ping_timeout=10,
+                max_queue=1024,
             ) as socket:
                 active = desired
-                await socket.send(json.dumps({"method": "SUBSCRIBE", "params": active, "id": 1}))
+                await socket.send(json.dumps({
+                    "method": "SUBSCRIBE", "params": active, "id": 1
+                }))
                 backoff = 1
                 pending = {}
                 dirty_order = deque()
                 dirty_symbols = set()
-                next_dispatch_at = 0.0
 
-                async def dispatch_one(now_ms):
-                    nonlocal next_dispatch_at
-                    loop_now = asyncio.get_running_loop().time()
-                    if not pending or loop_now < next_dispatch_at:
-                        return
-                    item = _pop_latest_state(pending, dirty_order, dirty_symbols)
-                    if item is None:
-                        return
-                    state, observed_ms = item
-                    # Never hand a delayed raw event to PAPER execution. A newer
-                    # state for this symbol, if present, remains queued separately.
-                    stamp_ms = state.market_timestamp_ms
-                    if stamp_ms is None or now_ms - stamp_ms <= MAX_EVENT_AGE_MS:
+                async def receiver():
+                    nonlocal active
+                    while not stop_event.is_set():
+                        desired_now = binance_subscription_params(
+                            symbols(), market_type
+                        )
+                        removed = sorted(set(active) - set(desired_now))
+                        added = sorted(set(desired_now) - set(active))
+                        if removed:
+                            await socket.send(json.dumps({
+                                "method": "UNSUBSCRIBE",
+                                "params": removed,
+                                "id": 2,
+                            }))
+                        if added:
+                            await socket.send(json.dumps({
+                                "method": "SUBSCRIBE",
+                                "params": added,
+                                "id": 3,
+                            }))
+                        active = desired_now
+                        try:
+                            raw = await asyncio.wait_for(socket.recv(), timeout=1)
+                        except asyncio.TimeoutError:
+                            continue
+                        received_ms = int(time.time() * 1000)
+                        message = json.loads(raw)
+                        if message.get("code") is not None:
+                            if health_callback:
+                                health_callback(
+                                    "DEGRADED",
+                                    f"BINANCE_SUBSCRIPTION_ERROR_{message['code']}",
+                                )
+                            continue
+                        for state in apply_binance_message(
+                            states, message, received_ms,
+                            market_type=market_type,
+                        ):
+                            _queue_latest_state(
+                                pending, dirty_order, dirty_symbols,
+                                state, received_ms,
+                            )
+
+                async def dispatcher():
+                    while not stop_event.is_set():
+                        await asyncio.sleep(BINANCE_DISPATCH_INTERVAL_SECONDS)
+                        item = _pop_latest_state(
+                            pending, dirty_order, dirty_symbols
+                        )
+                        if item is None:
+                            continue
+                        state, observed_ms = item
+                        now_ms = int(time.time() * 1000)
+                        stamp_ms = state.market_timestamp_ms
+                        # Fail closed: never hand an already stale market state
+                        # to PAPER execution. A fresh replacement, if received,
+                        # will be queued by receiver independently.
+                        if (
+                            stamp_ms is not None
+                            and now_ms - stamp_ms > MAX_EVENT_AGE_MS
+                        ):
+                            continue
                         await on_state(state, observed_ms)
-                    # Always leave a drain window after a potentially heavy
-                    # callback so socket.recv can catch up before the next one.
-                    next_dispatch_at = (
-                        asyncio.get_running_loop().time()
-                        + BINANCE_DISPATCH_INTERVAL_SECONDS
-                    )
 
                 if health_callback:
                     health_callback("CONNECTED", None)
-                while not stop_event.is_set():
-                    desired = binance_subscription_params(symbols(), market_type)
-                    removed, added = sorted(set(active) - set(desired)), sorted(set(desired) - set(active))
-                    if removed:
-                        await socket.send(json.dumps({"method": "UNSUBSCRIBE", "params": removed, "id": 2}))
-                    if added:
-                        await socket.send(json.dumps({"method": "SUBSCRIBE", "params": added, "id": 3}))
-                    active = desired
-                    try:
-                        raw = await asyncio.wait_for(socket.recv(), timeout=1)
-                    except asyncio.TimeoutError:
-                        await dispatch_one(int(time.time() * 1000))
-                        continue
-                    received_ms = int(time.time() * 1000)
-                    message = json.loads(raw)
-                    if message.get("code") is not None:
-                        if health_callback:
-                            health_callback("DEGRADED", f"BINANCE_SUBSCRIPTION_ERROR_{message['code']}")
-                        continue
-                    for state in apply_binance_message(states, message, received_ms, market_type=market_type):
-                        _queue_latest_state(
-                            pending, dirty_order, dirty_symbols, state, received_ms
-                        )
-                    await dispatch_one(received_ms)
+                await asyncio.gather(receiver(), dispatcher())
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
             if health_callback:
