@@ -93,6 +93,17 @@ def build_readiness(root=PROJECT_ROOT):
             for key, passed in checks.items() if not passed
         )
 
+    # The current GCE execution VM returned HTTP 451 from every direct
+    # Binance futures REST endpoint. A source tree that still requires those
+    # blocked collector paths cannot be described as deployment-ready, even
+    # when its isolated offline unit tests pass. Remove this gate ONLY once
+    # the executable observer consumes validated WS + bounded private OI.
+    collector_path = root / "scripts/collect_closed_behavior_minute.py"
+    collector = collector_path.read_text(encoding="utf-8") if collector_path.is_file() else ""
+    if ("from data.binance_live_evidence import collect" in collector
+            or 'fetch_market_overview("exchangeInfo")' in collector):
+        failures.append("BINANCE_DIRECT_REST_451_OBSERVER_NOT_DEPLOYABLE")
+
     requirements_path = root / "requirements-runtime.txt"
     requirements = (
         requirements_path.read_text(encoding="utf-8")
