@@ -16,7 +16,8 @@ import websockets
 
 
 VERSION = "BINANCE_USDM_LIQUIDATION_OBSERVER_V1"
-WS_URL = "wss://fstream.binance.com/public/ws"
+# Binance routes all-market forceOrder over MARKET, not PUBLIC.
+WS_URL = "wss://fstream.binance.com/market/ws"
 STREAM = "!forceOrder@arr"
 MAX_EVENT_AGE_MS = 2_000
 MAX_EVENTS = 5_000
