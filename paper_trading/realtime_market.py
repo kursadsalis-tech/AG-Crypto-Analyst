@@ -329,6 +329,13 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
                 async def receiver():
                     # Hot path: only drain/parse/coalesce websocket events.
                     # Never query the database or run PAPER logic here.
+                    #
+                    # websockets.recv() may complete immediately while its
+                    # internal queue is continuously non-empty (BTC/ETH can
+                    # generate thousands of events per second). Without an
+                    # explicit cooperative yield this task can monopolize the
+                    # asyncio loop and starve the dispatcher for seconds.
+                    messages_since_yield = 0
                     while not stop_event.is_set():
                         try:
                             raw = await asyncio.wait_for(socket.recv(), timeout=1)
@@ -351,6 +358,10 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
                                 pending, dirty_order, dirty_symbols,
                                 state, received_ms,
                             )
+                        messages_since_yield += 1
+                        if messages_since_yield >= 32:
+                            messages_since_yield = 0
+                            await asyncio.sleep(0)
 
                 async def refresh_subscriptions():
                     nonlocal active
