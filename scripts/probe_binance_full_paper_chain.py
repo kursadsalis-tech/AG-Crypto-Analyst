@@ -36,12 +36,67 @@ from scripts.collect_closed_behavior_minute import verified_exchange_info
 CANONICAL_DB = "/var/lib/agca/crypto_data.db"
 
 
-def _clone_read_only(source_path: str, destination_path: str) -> None:
+SEED_TABLES = (
+    "behavior_event_forward_outcomes",
+    "paper_agent_portfolio",
+    "paper_agent_positions",
+    "paper_behavior_decisions",
+)
+
+
+def _phase(name, **detail):
+    payload = {"probe_phase": name, **detail}
+    print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+
+
+def _seed_from_canonical(source_path: str, destination_path: str) -> dict:
+    """Copy only decision-relevant bounded tables; never clone the full hot DB."""
     source_uri = Path(source_path).resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(source_uri, uri=True) as source:
+    counts = {}
+    with sqlite3.connect(source_uri, uri=True, timeout=10) as source:
         source.execute("PRAGMA query_only=ON")
+        source.execute("PRAGMA busy_timeout=10000")
+        active = 0
+        if source.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                AND name='paper_agent_positions'""").fetchone():
+            active = source.execute("""
+                SELECT COUNT(*) FROM paper_agent_positions
+                WHERE status IN ('OPEN','PENDING_ENTRY','PENDING')
+            """).fetchone()[0]
+        if active:
+            return {"blocked_active_positions": int(active), "table_rows": {}}
+
         with sqlite3.connect(destination_path) as destination:
-            source.backup(destination)
+            destination.execute("PRAGMA journal_mode=DELETE")
+            for table in SEED_TABLES:
+                row = source.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if not row or not row[0]:
+                    continue
+                destination.execute(row[0])
+                columns = [
+                    item[1] for item in source.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                ]
+                if not columns:
+                    continue
+                placeholders = ",".join("?" for _ in columns)
+                select = source.execute(f"SELECT * FROM {table}")
+                copied = 0
+                while True:
+                    batch = select.fetchmany(500)
+                    if not batch:
+                        break
+                    destination.executemany(
+                        f"INSERT INTO {table} VALUES({placeholders})", batch
+                    )
+                    copied += len(batch)
+                counts[table] = copied
+            destination.commit()
+    return {"blocked_active_positions": 0, "table_rows": counts}
 
 
 def _cleanup(path: str) -> None:
@@ -66,7 +121,18 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
     temp_db = handle.name
     handle.close()
     try:
-        _clone_read_only(source_db, temp_db)
+        _phase("SEED_TEMP_DB_START")
+        seeded = _seed_from_canonical(source_db, temp_db)
+        _phase("SEED_TEMP_DB_DONE", **seeded)
+        if seeded["blocked_active_positions"]:
+            return {
+                "mode": "ISOLATED_TEMP_DB_PAPER_CHAIN",
+                "status": "BLOCKED_ACTIVE_POSITIONS",
+                "canonical_db_written": False,
+                "active_position_count": seeded["blocked_active_positions"],
+                "temp_db_deleted_on_exit": True,
+                "real_orders": False,
+            }
         with sqlite3.connect(temp_db) as con:
             baseline_position_id = con.execute(
                 "SELECT COALESCE(MAX(position_id),0) FROM paper_agent_positions"
@@ -75,6 +141,7 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
                 "AND name='paper_agent_positions'"
             ).fetchone() else 0
 
+        _phase("OBSERVER_START")
         info, fetched_at = verified_exchange_info()
         usd_m_metadata = load_cache(
             os.getenv(
@@ -97,6 +164,8 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
             0, (minute_end - int(time.time() * 1000)) / 1000 + 0.02
         ))
         report = aggregate_closed_minute(collected["bundles"], minute_end)
+        _phase("OBSERVER_DONE", row_count=report["row_count"],
+               eligible_row_count=report["eligible_row_count"])
         report["source_exchange"] = "BINANCE_USD_M"
         report["causal_external_evidence"] = {
             "contract_version": "CAUSAL_MINUTE_EVIDENCE_V1",
@@ -108,13 +177,16 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
             },
             "events": [],
         }
+        _phase("TEMP_PERSIST_START")
         persisted = persist_closed_minute(temp_db, report, retention_days=30)
+        _phase("TEMP_PERSIST_DONE", upserted=persisted.get("upserted"))
         eligible = tuple(sorted(
             row["instrument"] for row in report["rows"]
             if row.get("eligible_for_learning")
         ))
 
         # Risk manager reads/writes only the cloned DB for this process.
+        _phase("RISK_START", eligible_symbols=list(eligible))
         original_risk_db = risk.DB_NAME
         risk.DB_NAME = temp_db
         try:
@@ -122,11 +194,14 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
         finally:
             risk.DB_NAME = original_risk_db
 
+        _phase("RISK_DONE", market_state=risk_result.get("market_state"),
+               source_error_count=len(risk_result.get("source_errors") or {}))
         risk_symbols = {
             row["symbol"] for row in risk_result.get("assets", [])
         }
         missing_dynamic_risk = sorted(set(eligible) - risk_symbols)
 
+        _phase("DECISION_GATE_START")
         now = datetime.now(timezone.utc)
         telemetry = {}
         with runtime_connect(temp_db, timeout=30) as con:
@@ -158,6 +233,8 @@ def run_probe(*, source_db=CANONICAL_DB, samples=4, cadence_seconds=10):
                     ORDER BY symbol,rejection_reason
                 """, (minute_end,)).fetchall()
 
+        _phase("DECISION_GATE_DONE", selected=int(selected),
+               core_status=latest_scan[0] if latest_scan else None)
         invalid_selected_market = [
             {
                 "position_id": int(row[0]), "symbol": row[1],
