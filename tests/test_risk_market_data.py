@@ -20,6 +20,7 @@ class RiskMarketDataTests(unittest.TestCase):
         cursor = mock.MagicMock()
         cursor.fetchone.return_value = (200, "application/json", json.dumps(rows))
         conn = mock.MagicMock()
+        conn.__enter__.return_value = conn
         conn.cursor.return_value.__enter__.return_value = cursor
         fake_psycopg = SimpleNamespace(connect=mock.Mock(return_value=conn))
         validated = object()
