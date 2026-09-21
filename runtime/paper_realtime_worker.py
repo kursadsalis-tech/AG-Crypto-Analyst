@@ -265,14 +265,12 @@ async def run():
                 WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
                 (latest,),
             ).fetchall():
-                symbol = str(instrument).replace(
-                    "-USDT-SWAP", "USDT"
-                ).replace("-", "")
-                market_type = (
-                    "USD_M_PERPETUAL"
-                    if str(instrument).endswith("-SWAP") else "SPOT"
-                )
-                monitored.add((symbol, market_type))
+                symbol = str(instrument).upper()
+                # Only exact Binance-native USD-M IDs authorise a new quote
+                # subscription. Historical OKX instruments remain in SQLite
+                # for learning/audit, not as inferred Binance contracts.
+                if symbol.endswith("USDT") and "-" not in symbol:
+                    monitored.add((symbol, "USD_M_PERPETUAL"))
         return tuple(sorted(active | monitored))
 
     def symbols():
