@@ -254,8 +254,7 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
             await asyncio.sleep(1)
             continue
         try:
-            if shared_states is None:
-                states.clear()
+            states.clear()
             async with websockets.connect(
                 WS_URL, ssl=context, open_timeout=10, ping_interval=20,
                 ping_timeout=10, max_queue=1024,
@@ -324,7 +323,8 @@ async def _binance_stream(
             await asyncio.sleep(1)
             continue
         try:
-            states.clear()
+            if shared_states is None:
+                states.clear()
             async with websockets.connect(
                 BINANCE_SPOT_WS_URL if market_type == "SPOT" else BINANCE_USDM_WS_URL,
                 ssl=context,
