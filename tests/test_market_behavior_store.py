@@ -37,6 +37,30 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             self.assertEqual(count, 1)
             self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
 
+    def test_missing_binance_oi_is_not_persisted_as_real_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            incoming = report(120_000, "1000PEPEUSDT")
+            incoming["source_exchange"] = "BINANCE_USD_M"
+            first = persist_closed_minute(path, incoming)
+            self.assertEqual(first["upserted"], 1)
+            # A re-observation that loses the required OI must remove any
+            # previously accepted sample for that exact minute as well.
+            row = incoming["rows"][0]
+            row["eligible_for_learning"] = False
+            row["quality_gates"] = {"required_sources": False}
+            row["open_interest_usd_first"] = 0
+            row["open_interest_usd_last"] = 0
+            row["open_interest_usd_change"] = 0
+            second = persist_closed_minute(path, incoming)
+            self.assertEqual(second["upserted"], 0)
+            self.assertEqual(second["ineligible_binance_rows_skipped"], 1)
+            with sqlite3.connect(path) as connection:
+                stored = connection.execute(
+                    f"SELECT COUNT(*) FROM {TABLE} WHERE instrument='1000PEPEUSDT'"
+                ).fetchone()[0]
+            self.assertEqual(stored, 0)
+
     def test_retention_prunes_old_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.db"
