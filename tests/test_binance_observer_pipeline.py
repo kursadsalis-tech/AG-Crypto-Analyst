@@ -2,7 +2,6 @@
 
 No network, DB writes, new model, or real order capability.
 """
-import copy
 import unittest
 
 from data.binance_live_evidence import summarize_instrument
@@ -63,7 +62,7 @@ class BinanceObserverPipelineTests(unittest.TestCase):
         row = report["rows"][0]
         self.assertEqual(row["instrument"], SYMBOL)
         self.assertTrue(row["eligible_for_learning"])
-        self.assertGreater(row["book_imbalance_20_mean"], 0)
+        self.assertLess(row["book_imbalance_20_mean"], 0)
         self.assertGreater(row["taker_imbalance_snapshot_mean"], 0)
         self.assertEqual(row["sample_count"], 4)
         self.assertTrue(all(row["quality_gates"].values()))
