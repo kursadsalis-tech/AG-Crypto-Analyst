@@ -414,7 +414,7 @@ class FlowIsolationTests(unittest.TestCase):
             async def on_state(state, _):
                 seen.append(state.symbol)
 
-            with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \\
+            with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
                     patch.object(realtime_market.time, "time", return_value=NOW/1000):
                 await realtime_market._binance_stream(
                     cache.symbols, on_state, stop,
