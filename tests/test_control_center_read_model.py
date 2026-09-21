@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from control_center.read_model import overview
 
@@ -229,6 +230,7 @@ class ControlCenterReadModelTests(unittest.TestCase):
             con.commit(); con.close()
             stamp = int(now.timestamp() * 1000)
             state.write_text(json.dumps({
+                "at": now.isoformat(),
                 "execution_mode":"PAPER_ONLY","real_order_allowed":False,
                 "live_market":[{"symbol":"BTCUSDT","market_type":"USD_M_PERPETUAL",
                 "last_price":60000,"best_bid":59999,"best_ask":60001,
@@ -253,6 +255,61 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertEqual(healthy_hold["system"]["pipeline_state"], "İŞ ÜRETMİYOR")
             self.assertTrue(healthy_hold["system"]["healthy_hold"])
             self.assertFalse(healthy_hold["system"]["brain_scan_fresh"])
+
+
+    def test_global_feed_health_does_not_require_every_quiet_symbol_under_five_seconds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "runtime.db"
+            state = Path(tmp) / "market.json"
+            health = Path(tmp) / "health.json"
+            now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
+            con = sqlite3.connect(db)
+            con.executescript("""
+                CREATE TABLE paper_agent_portfolio(
+                    portfolio_id INTEGER PRIMARY KEY, initial_capital REAL,
+                    cash REAL, realized_pnl REAL, total_fees REAL);
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
+                    direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
+                    notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT, decision_reference_id INTEGER,
+                    selected_at TEXT, exit_time TEXT, exit_price REAL, net_pnl REAL,
+                    close_reason TEXT, entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0);
+                CREATE TABLE paper_position_management(
+                    position_id INTEGER PRIMARY KEY, stop_distance_pct REAL,
+                    current_stop_price REAL, tp1_done INTEGER, tp2_done INTEGER,
+                    remaining_quantity REAL);
+                INSERT INTO paper_agent_portfolio VALUES(1,10000,10000,0,0);
+            """)
+            con.commit(); con.close()
+            fresh = int(now.timestamp() * 1000)
+            quiet = int((now.timestamp() - 20) * 1000)
+            state.write_text(json.dumps({
+                "at": now.isoformat(),
+                "execution_mode": "PAPER_ONLY",
+                "real_order_allowed": False,
+                "live_market": [
+                    {"symbol":"BTCUSDT","market_type":"USD_M_PERPETUAL",
+                     "last_price":60000,"best_bid":59999,"best_ask":60001,
+                     "quote_timestamp_ms":fresh},
+                    {"symbol":"UBUSDT","market_type":"USD_M_PERPETUAL",
+                     "last_price":0.12,"best_bid":0.119,"best_ask":0.121,
+                     "quote_timestamp_ms":quiet},
+                ],
+            }))
+            health.write_text(json.dumps({
+                "execution_mode":"PAPER_ONLY","real_order_allowed":False,
+                "status":"CONNECTED","at":now.isoformat(),"action":"HOLD",
+            }))
+            with patch(
+                "control_center.read_model.load_brain_state",
+                return_value={"at": now.isoformat(), "phase": "SCANNING", "scan": {}},
+            ):
+                result = overview(db, state, health, now=now)
+            self.assertEqual(result["system"]["observed_symbols"], 2)
+            self.assertEqual(result["system"]["fresh_market_symbols"], 1)
+            self.assertTrue(result["system"]["market_feed_fresh"])
+            self.assertEqual(result["system"]["pipeline_state"], "ÇALIŞIYOR")
 
 
 if __name__ == "__main__":

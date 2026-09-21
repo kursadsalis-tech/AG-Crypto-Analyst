@@ -389,6 +389,20 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         and _freshness_seconds(state, now) <= 5.0
     )
     observed_symbols = len(market_states)
+    # Individual symbol quotes can legitimately stay unchanged for several
+    # seconds on quiet markets. Global feed health must therefore follow the
+    # canonical market telemetry snapshot timestamp, not require every symbol
+    # to emit a quote inside the same 5-second window.
+    try:
+        market_at = _parse_iso(market.get("at"))
+    except (TypeError, ValueError):
+        market_at = None
+    market_snapshot_age = (
+        max(0.0, (now - market_at).total_seconds()) if market_at else None
+    )
+    market_feed_fresh = (
+        market_snapshot_age is not None and market_snapshot_age <= 30.0
+    )
     activity_ages = {}
     for name, stamp in activity.items():
         try:
@@ -413,7 +427,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     work_stalled = (
         worker_healthy
         and observed_symbols > 0
-        and market_fresh == observed_symbols
+        and market_feed_fresh
         and (
             not scan_fresh
             or (latest_work_age is not None and latest_work_age > 300.0 and not healthy_hold)
@@ -423,7 +437,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         "İŞ ÜRETMİYOR"
         if work_stalled
         else "ÇALIŞIYOR"
-        if worker_healthy and observed_symbols > 0 and market_fresh == observed_symbols
+        if worker_healthy and observed_symbols > 0 and market_feed_fresh
         else "VERİ GECİKİYOR"
         if worker_healthy and observed_symbols > 0
         else "PİYASA AKIŞI YOK"
@@ -449,6 +463,8 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "pipeline_state": pipeline_state,
             "observed_symbols": observed_symbols,
             "fresh_market_symbols": market_fresh,
+            "market_snapshot_age_seconds": market_snapshot_age,
+            "market_feed_fresh": market_feed_fresh,
             "latest_work_age_seconds": latest_work_age,
             "brain_scan_age_seconds": brain_age,
             "brain_scan_fresh": scan_fresh,
