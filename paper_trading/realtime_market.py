@@ -18,7 +18,7 @@ import websockets
 
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
-BINANCE_USDM_WS_URL = "wss://fstream.binance.com/ws"
+BINANCE_USDM_WS_URL = "wss://fstream.binance.com/public/ws"
 MAX_EVENT_AGE_MS = 2_000
 BINANCE_DISPATCH_INTERVAL_SECONDS = 0.05
 BINANCE_DISPATCH_BATCH_MAX = 64
@@ -142,8 +142,35 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
     return updates
 
 
-def apply_binance_message(states: dict[str, LiveState], message: dict, received_ms: int, market_type="SPOT"):
-    """Normalize Binance ticker and aggregate-trade events for PAPER execution."""
+def _futures_partial_book_top(message, symbol):
+    """Validate complete top-five USD-M book on its own subscribed channel.
+
+    Diff-depth uses the same event type/field names. It must never enter
+    this path without explicit partial-depth channel provenance.
+    """
+    if message.get("st", 1) != 1 or message.get("ps", symbol) != symbol:
+        return None
+    bids, asks = message.get("b"), message.get("a")
+    if not (isinstance(bids, list) and isinstance(asks, list)
+            and len(bids) == 5 and len(asks) == 5):
+        return None
+    try:
+        bid_levels = [(_positive(row[0]), _positive(row[1])) for row in bids]
+        ask_levels = [(_positive(row[0]), _positive(row[1])) for row in asks]
+    except (ValueError, TypeError, IndexError):
+        return None
+    if (not all(bid_levels[i][0] > bid_levels[i + 1][0] for i in range(4))
+            or not all(ask_levels[i][0] < ask_levels[i + 1][0] for i in range(4))
+            or bid_levels[0][0] >= ask_levels[0][0]):
+        return None
+    return bid_levels[0], ask_levels[0]
+
+
+def apply_binance_message(
+    states: dict[str, LiveState], message: dict, received_ms: int,
+    market_type="SPOT", *, partial_depth=False,
+):
+    """Normalize Binance quotes/trades; partial depth needs channel provenance."""
     event = message.get("e")
     symbol = str(message.get("s") or "").upper()
     if event not in {"24hrTicker", "bookTicker", "depthUpdate", "aggTrade", "trade"} or not symbol:
@@ -151,6 +178,29 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
     timestamp = int(message.get("E", 0))
     if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
         return []
+    if event == "depthUpdate":
+        if not partial_depth or market_type != "USD_M_PERPETUAL":
+            return []
+        sides = _futures_partial_book_top(message, symbol)
+        if sides is None:
+            return []
+        current = states.get(symbol)
+        if current is not None and current.quote_timestamp_ms is not None and timestamp < current.quote_timestamp_ms:
+            return []
+        state = states.setdefault(symbol, LiveState(symbol, market_type))
+        (bid, bid_qty), (ask, ask_qty) = sides
+        bid_value, ask_value = bid * bid_qty, ask * ask_qty
+        total = bid_value + ask_value
+        state.last_price = (bid + ask) / 2
+        state.best_bid, state.best_ask = bid, ask
+        state.bid_quote_volume, state.ask_quote_volume = bid_value, ask_value
+        state.visible_quote_volume = total
+        state.book_imbalance = (bid_value - ask_value) / total
+        state.quote_timestamp_ms = timestamp
+        state.liquidity_timestamp_ms = timestamp
+        state.market_timestamp_ms = timestamp
+        state.quote_source = "BINANCE_USD_M_WS_PARTIAL_DEPTH5"
+        return [state]
     state = states.setdefault(symbol, LiveState(symbol, market_type))
     if event in {"24hrTicker", "bookTicker"}:
         if state.quote_timestamp_ms is not None and timestamp < state.quote_timestamp_ms:
@@ -568,7 +618,7 @@ async def _binance_stream(
                             continue
                         if flow_sink is not None and message.get("e") not in {"trade", "aggTrade"}:
                             continue
-                        if flow_cache is not None and message.get("e") not in {"bookTicker", "24hrTicker"}:
+                        if flow_cache is not None and message.get("e") not in {"bookTicker", "24hrTicker", "depthUpdate"}:
                             continue
                         if metrics is not None:
                             metrics["received_total"] += 1
@@ -591,6 +641,7 @@ async def _binance_stream(
                         for state in apply_binance_message(
                             states, message, received_ms,
                             market_type=market_type,
+                            partial_depth=(channels == ("depth5@500ms",)),
                         ):
                             if flow_sink is not None:
                                 flow_sink.publish(state)
@@ -735,7 +786,7 @@ async def stream(symbols, on_state, stop_event, health_callback=None, quote_metr
         ),
         _binance_stream(
             swap_symbols, on_state, stop_event, health_callback,
-            market_type="USD_M_PERPETUAL", channels=("bookTicker",),
+            market_type="USD_M_PERPETUAL", channels=("depth5@500ms",),
             flow_cache=cache,
             metrics=(quote_metrics["USD_M_PERPETUAL"]
                      if quote_metrics is not None else None),
