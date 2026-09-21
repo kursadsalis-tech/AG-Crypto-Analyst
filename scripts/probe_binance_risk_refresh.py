@@ -7,6 +7,11 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from paper_trading.exchange_metadata import load_cache
 from risk_manager import risk_manager as risk
