@@ -88,6 +88,8 @@ def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=3,
                                    (url,))
                     received = int(time.time()*1000) if now_ms is None else int(now_ms)
                     rtt = int((time.monotonic()-start)*1000)
+                    if (time.monotonic()-batch_started)*1000 > MAX_BATCH_WALL_MS:
+                        raise BinanceOIError("OI_BATCH_WALL_BUDGET_EXCEEDED")
                     result = cursor.fetchone()
                     if not result or result[0] != 200 or str(result[1] or "").split(";", 1)[0].strip().lower() != "application/json":
                         raise BinanceOIError("BINANCE_OI_HTTP_UNAVAILABLE")
