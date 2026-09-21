@@ -282,7 +282,10 @@ def _applies(symbols_json, instrument):
         symbols = [str(value).upper() for value in json.loads(symbols_json or "[]")]
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
-    base = str(instrument).split("-")[0].upper()
+    value = str(instrument).upper()
+    # For native Binance IDs only, use the literal base-asset spelling.
+    # A "1000" prefix is a contract identity, never a guessed alias.
+    base = value[:-4] if value.endswith("USDT") and "-" not in value else value.split("-")[0]
     return not symbols or base in symbols or _symbol(instrument) in symbols
 
 
