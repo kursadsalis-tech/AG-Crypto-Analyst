@@ -1,3 +1,33 @@
+# 2026-09-21 — PR #25 quote freshness regression: flow thread isolation
+
+Current work supersedes the historical next-session priorities below.
+Base: main `40d07643f06d9be9d2a47f4d39e4f68764dbfd16`.
+Branch: `fix/quote-flow-thread-isolation`.
+Canonical repository: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+Isolated Git worktree: `/Users/elifzilan/Documents/AG-Crypto-Analyst-worktrees/quote-flow-thread`.
+The canonical checkout contains pre-existing staged/unstaged work; it was not altered.
+
+Raw USD-M trade and SPOT aggregate-trade sockets now run in a dedicated thread
+with their own asyncio event loop. They publish immutable flow-only snapshots
+through a locked latest cache and never dispatch PAPER decisions. Dynamic
+subscription input is copied from the main loop; worker/database callbacks are
+never invoked by the trade thread. Quote sockets remain on the main loop and
+snapshot flow on accepted quotes. Missing/stale flow cannot support a thesis;
+flow cannot refresh quote, liquidity, or market timestamps. Task cancellation
+joins the flow thread; socket tasks are cancelled before reconnecting.
+PAPER_ONLY, execution authority, and stale-state rejection are unchanged.
+
+Validation: full local offline suite passed 359 tests before the final two
+regression cases; final focused realtime suite passed 21 tests. Tests cover
+quote progress under a blocked trade loop (under one second), distinct thread
+and event-loop ownership, flow-only cache updates with no decision callbacks,
+immutable/market-separated/expired snapshots, stale queued quote rejection,
+and cancellation without a surviving trade thread. Final full CI must pass
+on the PR head before merge. No VM deployment or live quote-age measurement
+has been performed in this task; those remain the operational acceptance step.
+
+--- Historical session records ---
+
 # Latest AGCA Session Handoff
 
 # 2026-09-02 — Oturum kapanışı: doğal SPOT ve mobil teslimat kanıtı

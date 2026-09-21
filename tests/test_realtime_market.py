@@ -1,6 +1,8 @@
 import unittest
 import asyncio
 import json
+import threading
+import time
 from collections import deque
 from unittest.mock import patch
 
@@ -244,6 +246,200 @@ class RealtimeMarketTests(unittest.TestCase):
         )
         self.assertEqual((first.symbol, first.last_price), ("BTCUSDT", 101))
         self.assertEqual((second.symbol, second.last_price), ("ETHUSDT", 200))
+
+
+class FlowIsolationTests(unittest.TestCase):
+    def test_cache_snapshots_flow_without_refreshing_quote_and_expires_support(self):
+        cache = realtime_market.LatestFlowCache()
+        cache.set_symbols(["BTCUSDT", ("BTCUSDT", "SPOT")])
+        flow = LiveState("BTCUSDT", trade_timestamp_ms=NOW,
+                         taker_imbalance=1, trade_buy_notional=200)
+        cache.publish(flow)
+        flow.trade_buy_notional = 999
+        quote = LiveState("BTCUSDT", quote_timestamp_ms=NOW-100,
+                          market_timestamp_ms=NOW-100, book_imbalance=0.5)
+        cache.apply_to(quote, NOW)
+        self.assertEqual(quote.trade_buy_notional, 200)
+        self.assertEqual(quote.quote_timestamp_ms, NOW-100)
+        self.assertEqual(quote.market_timestamp_ms, NOW-100)
+        self.assertEqual(quote.trade_timestamp_ms, NOW)
+        self.assertTrue(quote.thesis_supported("LONG"))
+        cache.apply_to(quote, NOW+3000)
+        self.assertIsNone(quote.thesis_supported("LONG"))
+        spot = LiveState("BTCUSDT", "SPOT")
+        cache.apply_to(spot, NOW)
+        self.assertIsNone(spot.trade_timestamp_ms)
+        cache.set_symbols([])
+        cache.publish(flow)
+        cache.apply_to(quote, NOW)
+        self.assertIsNone(quote.trade_timestamp_ms)
+
+    def test_trade_ingest_does_not_dispatch_and_quotes_survive_blocked_trade_loop(self):
+        main_thread = threading.get_ident()
+        flow_started = threading.Event()
+        release_flow = threading.Event()
+        seen, locations = [], []
+        subscriptions = []
+
+        class Socket:
+            def __init__(self):
+                self.channel = None
+                self.count = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def send(self, raw):
+                params = json.loads(raw).get("params", [])
+                subscriptions.extend(params)
+                if params:
+                    self.channel = params[0].split("@")[1]
+
+            async def recv(self):
+                locations.append((self.channel, threading.get_ident(), id(asyncio.get_running_loop())))
+                self.count += 1
+                if self.channel == "trade":
+                    if self.count > 200:
+                        flow_started.set()
+                        # Deliberately block only the trade loop. Quotes must
+                        # arrive before this is released by their callback.
+                        release_flow.wait(2)
+                        await asyncio.sleep(0.01)
+                    return json.dumps({"e": "trade", "s": "BTCUSDT", "E": NOW,
+                                       "p": "100", "q": "2", "m": False})
+                await asyncio.sleep(0.01)
+                return json.dumps({"e": "bookTicker", "s": "BTCUSDT", "E": NOW,
+                                   "b": "99", "B": "2", "a": "101", "A": "3"})
+
+        async def scenario():
+            stop = asyncio.Event()
+            started = time.monotonic()
+
+            async def on_state(state, _):
+                self.assertEqual(threading.get_ident(), main_thread)
+                self.assertEqual(state.quote_timestamp_ms, NOW)
+                if flow_started.is_set():
+                    seen.append(state)
+                    self.assertFalse(release_flow.is_set())
+                    self.assertLess(time.monotonic()-started, 1)
+                    release_flow.set()
+                    stop.set()
+
+            try:
+                await asyncio.wait_for(realtime_market.stream(
+                    lambda: ["BTCUSDT"], on_state, stop,
+                ), timeout=3)
+            finally:
+                release_flow.set()
+
+        with patch.object(realtime_market.websockets, "connect", side_effect=lambda *a, **k: Socket()), \
+                patch.object(realtime_market.time, "time", return_value=NOW/1000):
+            asyncio.run(scenario())
+        self.assertTrue(seen)
+        self.assertEqual(seen[-1].trade_timestamp_ms, NOW)
+        self.assertEqual(seen[-1].trade_buy_notional, 40000)
+        self.assertEqual(seen[-1].taker_imbalance, 1)
+        quotes = {(tid, loop) for channel, tid, loop in locations if channel == "bookTicker"}
+        trades = {(tid, loop) for channel, tid, loop in locations if channel == "trade"}
+        self.assertTrue(quotes and trades)
+        self.assertTrue(all(tid == main_thread for tid, _ in quotes))
+        self.assertTrue(all(tid != main_thread for tid, _ in trades))
+        self.assertTrue({loop for _, loop in quotes}.isdisjoint({loop for _, loop in trades}))
+        self.assertFalse(any(t.name == "agca-trade-flow" for t in threading.enumerate()))
+
+    def test_flow_only_socket_never_calls_decision_callback(self):
+        async def scenario():
+            stop = asyncio.Event()
+            cache = realtime_market.LatestFlowCache()
+            cache.set_symbols(["BTCUSDT"])
+
+            class Socket:
+                count = 0
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *_):
+                    pass
+
+                async def send(self, _):
+                    pass
+
+                async def recv(self):
+                    self.count += 1
+                    if self.count == 100:
+                        stop.set()
+                    return json.dumps({"e": "trade", "s": "BTCUSDT", "E": NOW,
+                                       "p": "100", "q": "2", "m": False})
+
+            async def forbidden(*_):
+                self.fail("raw trade reached decision dispatcher")
+
+            with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
+                    patch.object(realtime_market.time, "time", return_value=NOW/1000):
+                await realtime_market._binance_stream(
+                    cache.symbols, forbidden, stop, market_type="USD_M_PERPETUAL",
+                    channels=("trade",), flow_sink=cache,
+                )
+            quote = LiveState("BTCUSDT")
+            cache.apply_to(quote, NOW)
+            self.assertEqual(quote.trade_buy_notional, 20000)
+        asyncio.run(scenario())
+
+    def test_queued_quote_is_rejected_when_it_becomes_stale(self):
+        async def scenario():
+            stop = asyncio.Event()
+            clock = [NOW/1000]
+            cache = realtime_market.LatestFlowCache()
+            cache.set_symbols(["BTCUSDT"])
+
+            class Socket:
+                count = 0
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *_):
+                    pass
+
+                async def send(self, _):
+                    pass
+
+                async def recv(self):
+                    self.count += 1
+                    if self.count > 1:
+                        clock[0] += 3
+                        await asyncio.sleep(0.15)
+                        stop.set()
+                        return "{}"
+                    return json.dumps({"e": "bookTicker", "s": "BTCUSDT", "E": NOW,
+                                       "b": "99", "B": "2", "a": "101", "A": "3"})
+
+            async def forbidden(*_):
+                self.fail("stale queued quote reached decision dispatcher")
+
+            with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
+                    patch.object(realtime_market.time, "time", side_effect=lambda: clock[0]):
+                await realtime_market._binance_stream(
+                    cache.symbols, forbidden, stop, market_type="USD_M_PERPETUAL",
+                    channels=("bookTicker",), flow_cache=cache,
+                )
+        asyncio.run(scenario())
+
+    def test_cancellation_stops_trade_thread(self):
+        async def scenario():
+            stop = asyncio.Event()
+            cache = realtime_market.LatestFlowCache()
+            task = asyncio.create_task(realtime_market._flow_thread(cache, stop))
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+        asyncio.run(scenario())
+        self.assertFalse(any(t.name == "agca-trade-flow" for t in threading.enumerate()))
 
 
 if __name__ == "__main__":

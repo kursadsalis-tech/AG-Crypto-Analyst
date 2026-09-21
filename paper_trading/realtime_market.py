@@ -6,6 +6,7 @@ import json
 import math
 import ssl
 import time
+import threading
 from collections import deque
 from dataclasses import dataclass, field, replace
 
@@ -211,6 +212,101 @@ def binance_subscription_params(symbols, market_type="SPOT", channels=None):
         for channel in channels
     ]
 
+
+class LatestFlowCache:
+    """Bounded, immutable flow snapshots; never share quote state across threads."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._symbols = ()
+        self._latest = {}
+
+    def set_symbols(self, symbols):
+        normalized = tuple(sorted({
+            (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
+            for item in symbols
+        }))
+        with self._lock:
+            self._symbols = normalized
+            allowed = set(normalized)
+            self._latest = {key: value for key, value in self._latest.items()
+                            if key in allowed}
+
+    def symbols(self):
+        with self._lock:
+            return self._symbols
+
+    def publish(self, state):
+        key = (state.symbol, state.market_type)
+        snapshot = (state.trade_timestamp_ms, state.taker_imbalance,
+                    state.trade_buy_notional, state.trade_sell_notional)
+        with self._lock:
+            if key in self._symbols:
+                self._latest[key] = snapshot
+
+    def apply_to(self, state, now_ms):
+        with self._lock:
+            snapshot = self._latest.get((state.symbol, state.market_type))
+        stamp, imbalance, buy, sell = snapshot or (None, None, 0.0, 0.0)
+        state.trade_timestamp_ms = stamp
+        state.taker_imbalance = (
+            imbalance if stamp is not None and
+            -500 <= now_ms - stamp <= MAX_EVENT_AGE_MS else None
+        )
+        state.trade_buy_notional = buy
+        state.trade_sell_notional = sell
+
+
+async def _flow_thread(cache, stop_event):
+    """Own all trade sockets/tasks in a dedicated thread and asyncio loop."""
+    loop = asyncio.new_event_loop()
+    stopped = threading.Event()
+
+    async def ingest():
+        tasks = [asyncio.create_task(_binance_stream(
+            cache.symbols, None, stopped, market_type=market_type,
+            channels=channels, flow_sink=cache,
+        )) for market_type, channels in (
+            ("SPOT", ("aggTrade",)), ("USD_M_PERPETUAL", ("trade",)),
+        )]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    task = loop.create_task(ingest())
+    errors = []
+
+    def run():
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=run, name="agca-trade-flow", daemon=True)
+    thread.start()
+    try:
+        while not stop_event.is_set():
+            if not thread.is_alive():
+                if errors:
+                    raise errors[0]
+                raise RuntimeError("trade flow thread stopped unexpectedly")
+            await asyncio.sleep(0.05)
+    finally:
+        stopped.set()
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:  # Thread already closed its loop.
+            pass
+        await asyncio.to_thread(thread.join)
+
 def _queue_latest_state(pending, order, queued, state, received_ms):
     """Coalesce a hot websocket stream to the newest immutable state per symbol."""
     symbol = state.symbol
@@ -302,7 +398,8 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
 
 async def _binance_stream(
     symbols, on_state, stop_event, health_callback=None, *,
-    market_type="SPOT", channels=None, shared_states=None,
+    market_type="SPOT", channels=None, shared_states=None, flow_cache=None,
+    flow_sink=None,
 ):
     """Keep Binance ingest independent from the heavier PAPER decision callback.
 
@@ -366,10 +463,19 @@ async def _binance_stream(
                                     f"BINANCE_SUBSCRIPTION_ERROR_{message['code']}",
                                 )
                             continue
+                        if flow_sink is not None and message.get("e") not in {"trade", "aggTrade"}:
+                            continue
+                        if flow_cache is not None and message.get("e") not in {"bookTicker", "24hrTicker"}:
+                            continue
                         for state in apply_binance_message(
                             states, message, received_ms,
                             market_type=market_type,
                         ):
+                            if flow_sink is not None:
+                                flow_sink.publish(state)
+                                continue
+                            if flow_cache is not None:
+                                flow_cache.apply_to(state, received_ms)
                             _queue_latest_state(
                                 pending, dirty_order, dirty_symbols,
                                 state, received_ms,
@@ -401,6 +507,11 @@ async def _binance_stream(
                                 "id": 3,
                             }))
                         active = desired_now
+                        if flow_sink is not None:
+                            active_symbols = {param.split("@")[0].upper() for param in active}
+                            for symbol in tuple(states):
+                                if symbol not in active_symbols:
+                                    states.pop(symbol, None)
 
                 async def dispatcher():
                     while not stop_event.is_set():
@@ -421,13 +532,26 @@ async def _binance_stream(
                             and now_ms - stamp_ms > MAX_EVENT_AGE_MS
                         ):
                             continue
+                        if flow_cache is not None and (
+                            state.trade_timestamp_ms is None or
+                            now_ms - state.trade_timestamp_ms > MAX_EVENT_AGE_MS
+                        ):
+                            state.taker_imbalance = None
                         await on_state(state, observed_ms)
 
                 if health_callback:
                     health_callback("CONNECTED", None)
-                await asyncio.gather(
-                    receiver(), dispatcher(), refresh_subscriptions()
-                )
+                # Explicitly cancel siblings before reconnecting or closing.
+                coroutines = [receiver(), refresh_subscriptions()]
+                if flow_sink is None:
+                    coroutines.append(dispatcher())
+                tasks = [asyncio.create_task(coro) for coro in coroutines]
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
             if health_callback:
@@ -437,7 +561,7 @@ async def _binance_stream(
 
 
 async def stream(symbols, on_state, stop_event, health_callback=None):
-    """Manage SPOT on Binance and legacy USD-M positions on OKX concurrently."""
+    """Keep Binance executable quotes on this loop; isolate trade ingest."""
     def spot_symbols():
         return [item for item in symbols()
                 if not isinstance(item, str) and tuple(item)[1] == "SPOT"]
@@ -452,33 +576,29 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
                 health_callback("IDLE", None)
             await asyncio.sleep(1)
 
-    spot_states = {}
-    swap_states = {}
-    await asyncio.gather(
+    cache = LatestFlowCache()
+    cache.set_symbols(symbols())
+
+    async def refresh_flow_symbols():
+        while not stop_event.is_set():
+            cache.set_symbols(symbols())
+            await asyncio.sleep(0.5)
+
+    tasks = [asyncio.create_task(coro) for coro in (
         _binance_stream(
             spot_symbols, on_state, stop_event, health_callback,
-            market_type="SPOT", channels=("ticker",),
-            shared_states=spot_states,
+            market_type="SPOT", channels=("ticker",), flow_cache=cache,
         ),
-        _binance_stream(
-            spot_symbols, on_state, stop_event, health_callback,
-            market_type="SPOT", channels=("aggTrade",),
-            shared_states=spot_states,
-        ),
-        # Keep executable USD-M quotes on a dedicated socket so BTC/ETH trade
-        # bursts can never backlog the price feed used for fills/stops.
         _binance_stream(
             swap_symbols, on_state, stop_event, health_callback,
             market_type="USD_M_PERPETUAL", channels=("bookTicker",),
-            shared_states=swap_states,
+            flow_cache=cache,
         ),
-        # Flow remains live on an independent raw-trade socket. This is kept
-        # separate from executable quotes so high trade volume cannot backlog
-        # the price feed used for fills/stops.
-        _binance_stream(
-            swap_symbols, on_state, stop_event, health_callback,
-            market_type="USD_M_PERPETUAL", channels=("trade",),
-            shared_states=swap_states,
-        ),
-        idle_health(),
-    )
+        _flow_thread(cache, stop_event), refresh_flow_symbols(), idle_health(),
+    )]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
