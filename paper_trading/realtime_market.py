@@ -546,9 +546,16 @@ async def _binance_stream(
                     # asyncio loop and starve the dispatcher for seconds.
                     messages_since_yield = 0
                     while not stop_event.is_set():
+                        # wait_for(recv()) creates and schedules a separate
+                        # Task for EVERY frame. At thousands of bookTicker
+                        # frames/second, that overhead makes the reader fall
+                        # behind and discard market events older than 2s.
+                        # timeout() cancels the current task on expiry without
+                        # spawning a per-frame Task (Python 3.11+).
                         try:
-                            raw = await asyncio.wait_for(socket.recv(), timeout=1)
-                        except asyncio.TimeoutError:
+                            async with asyncio.timeout(1):
+                                raw = await socket.recv()
+                        except TimeoutError:
                             continue
                         received_ms = int(time.time() * 1000)
                         message = json.loads(raw)
