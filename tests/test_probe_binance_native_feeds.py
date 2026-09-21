@@ -28,7 +28,7 @@ class ProbeBinanceNativeFeedsTests(unittest.TestCase):
 
     def test_stale_future_wrong_type_and_unexpected_event_are_ignored(self):
         for payload in (
-            {"e": "bookTicker", "s": "BTCUSDT", "E": 100, "st": 1},
+            {"e": "bookTicker", "s": "BTCUSDT", "E": -5000, "st": 1},
             {"e": "bookTicker", "s": "BTCUSDT", "E": 10000, "st": 1},
             {"e": "bookTicker", "s": "BTCUSDT", "E": 1000, "st": 2},
             {"e": "aggTrade", "s": "BTCUSDT", "E": 1000, "st": 1},
