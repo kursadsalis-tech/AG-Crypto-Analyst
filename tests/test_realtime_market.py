@@ -1,6 +1,7 @@
 import unittest
 import asyncio
 import json
+import inspect
 import threading
 import time
 from collections import deque
@@ -111,6 +112,82 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual(state.liquidity_timestamp_ms, NOW)
         self.assertEqual(state.market_timestamp_ms, NOW+1000)
         self.assertEqual(state.trade_timestamp_ms, NOW+1000)
+
+    def test_futures_partial_depth_requires_provenance_and_complete_ordered_book(self):
+        def book(**changes):
+            value = {
+                "e": "depthUpdate", "s": "BTCUSDT", "E": NOW,
+                "st": 1, "ps": "BTCUSDT",
+                "b": [[str(100 - i), "2"] for i in range(5)],
+                "a": [[str(101 + i), "3"] for i in range(5)],
+            }
+            value.update(changes)
+            return value
+
+        states = {}
+        self.assertEqual(realtime_market.apply_binance_message(
+            states, book(), NOW, "USD_M_PERPETUAL",
+        ), [])
+        self.assertFalse(states)
+        good = realtime_market.apply_binance_message(
+            states, book(), NOW, "USD_M_PERPETUAL", partial_depth=True,
+        )
+        self.assertEqual(len(good), 1)
+        state = good[0]
+        self.assertEqual((state.best_bid, state.best_ask), (100, 101))
+        self.assertEqual((state.bid_quote_volume, state.ask_quote_volume), (200, 303))
+        self.assertEqual(state.visible_quote_volume, 503)
+        self.assertEqual(state.quote_timestamp_ms, NOW)
+        self.assertEqual(state.liquidity_timestamp_ms, NOW)
+        self.assertEqual(state.quote_source, "BINANCE_USD_M_WS_PARTIAL_DEPTH5")
+        self.assertEqual(state.last_price, 100.5)
+
+        invalid = (
+            book(b=[["100", "2"]]),
+            book(a=[["101", "3"]]),
+            book(b=[["100", "0"]] + [[str(100 - i), "2"] for i in range(1, 5)]),
+            book(a=[["101", "3"], ["100", "3"], ["103", "3"], ["104", "3"], ["105", "3"]]),
+            book(b=[["102", "2"]] + [[str(100 - i), "2"] for i in range(1, 5)]),
+            book(st=2),
+            book(ps="ETHUSDT"),
+            book(E=NOW - 3000),
+        )
+        for bad in invalid:
+            self.assertEqual(
+                realtime_market.apply_binance_message(
+                    states, bad, NOW, "USD_M_PERPETUAL", partial_depth=True,
+                ), [],
+            )
+            self.assertEqual(state.best_bid, 100)
+            self.assertEqual(state.quote_timestamp_ms, NOW)
+        self.assertEqual(realtime_market.apply_binance_message(
+            states, book(E=NOW + 600), NOW,
+            "USD_M_PERPETUAL", partial_depth=True,
+        ), [])
+
+        # Same event and 5-level shape cannot be interpreted as Spot or diff
+        # depth without the explicitly subscribed Futures partial channel.
+        self.assertEqual(realtime_market.apply_binance_message(
+            {}, book(), NOW, "SPOT", partial_depth=True,
+        ), [])
+
+    def test_live_futures_quote_subscription_uses_bounded_partial_depth(self):
+        source = inspect.getsource(realtime_market.stream)
+        self.assertIn('channels=("depth5@500ms",)', source)
+        self.assertEqual(
+            realtime_market.binance_subscription_params(
+                ["BTCUSDT"], "USD_M_PERPETUAL", channels=("depth5@500ms",),
+            ),
+            ["btcusdt@depth5@500ms"],
+        )
+        self.assertEqual(
+            realtime_market.BINANCE_USDM_WS_URL,
+            "wss://fstream.binance.com/public/ws",
+        )
+        self.assertEqual(
+            realtime_market.BINANCE_USDM_TRADE_WS_URL,
+            "wss://fstream.binance.com/ws",
+        )
 
     def test_incremental_depth_cannot_be_mistaken_for_best_book(self):
         states = {"DYNAMICUSDT": LiveState("DYNAMICUSDT", "SPOT", best_bid=99, best_ask=101,
