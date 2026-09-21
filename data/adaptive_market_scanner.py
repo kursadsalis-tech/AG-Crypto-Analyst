@@ -12,7 +12,17 @@ from pathlib import Path
 
 
 VERSION = "ADAPTIVE_MARKET_SCANNER_V1"
-CONTEXT_INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP")
+CONTEXT_BASES = ("BTC", "ETH")
+
+
+def _is_context_instrument(row):
+    """Use exact venue-native IDs; context cannot authorise an alias trade."""
+    instrument = str(row.get("instrument") or "")
+    base = row.get("base_currency")
+    if base in CONTEXT_BASES and row.get("market_type") == "USD_M_PERPETUAL":
+        return instrument == base + "USDT"
+    return instrument in tuple(base + "-USDT-SWAP" for base in CONTEXT_BASES)
+
 
 
 def _percentile_ranks(rows, key, reverse=False):
@@ -48,10 +58,9 @@ def build_attention_route(universe, opportunity_slots=10):
             "role": "OPPORTUNITY_CANDIDATE",
         })
     scored.sort(key=lambda row: (-row["attention_score"], row["instrument"]))
-    opportunity = [row for row in scored if row["instrument"] not in CONTEXT_INSTRUMENTS]
+    context = [row["instrument"] for row in rows if _is_context_instrument(row)]
+    opportunity = [row for row in scored if row["instrument"] not in context]
     opportunity = opportunity[:opportunity_slots]
-    context = [instrument for instrument in CONTEXT_INSTRUMENTS
-               if any(row["instrument"] == instrument for row in rows)]
     deep = context + [row["instrument"] for row in opportunity]
     return {
         "version": VERSION,
