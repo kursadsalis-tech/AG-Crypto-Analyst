@@ -186,7 +186,7 @@ class RealtimeMarketTests(unittest.TestCase):
         )
         self.assertEqual(
             realtime_market.BINANCE_USDM_TRADE_WS_URL,
-            "wss://fstream.binance.com/market/ws",
+            "wss://fstream.binance.com/ws",
         )
 
     def test_incremental_depth_cannot_be_mistaken_for_best_book(self):
