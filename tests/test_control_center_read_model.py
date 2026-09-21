@@ -311,6 +311,29 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertTrue(result["system"]["market_feed_fresh"])
             self.assertEqual(result["system"]["pipeline_state"], "ÇALIŞIYOR")
 
+            # A current telemetry-file timestamp cannot make old quotes live.
+            state.write_text(json.dumps({
+                "at": now.isoformat(),
+                "execution_mode": "PAPER_ONLY",
+                "real_order_allowed": False,
+                "live_market": [
+                    {"symbol": "BTCUSDT", "market_type": "USD_M_PERPETUAL",
+                     "last_price": 60000, "best_bid": 59999, "best_ask": 60001,
+                     "quote_timestamp_ms": quiet},
+                    {"symbol": "UBUSDT", "market_type": "USD_M_PERPETUAL",
+                     "last_price": 0.12, "best_bid": 0.119, "best_ask": 0.121,
+                     "quote_timestamp_ms": quiet},
+                ],
+            }))
+            with patch(
+                "control_center.read_model.load_brain_state",
+                return_value={"at": now.isoformat(), "phase": "SCANNING", "scan": {}},
+            ):
+                stale = overview(db, state, health, now=now)
+            self.assertEqual(stale["system"]["fresh_market_symbols"], 0)
+            self.assertFalse(stale["system"]["market_feed_fresh"])
+            self.assertEqual(stale["system"]["pipeline_state"], "VERİ GECİKİYOR")
+
 
 if __name__ == "__main__":
     unittest.main()
