@@ -62,15 +62,17 @@ def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=15,
         raise BinanceOIError("NON_AUTHORITATIVE_OI_SYMBOL")
     if not database_url:
         raise BinanceOIError("SUPABASE_DATABASE_URL_UNAVAILABLE")
+    if not 1 <= timeout_seconds <= 20:
+        raise BinanceOIError("UNBOUNDED_OI_TIMEOUT")
     import psycopg
-    timeout_ms = max(1000, int(timeout_seconds*1000))
+    timeout_ms = int(timeout_seconds*1000)
     results = {}
     # Do not reveal remote DSN, headers, response bodies, or connection errors.
     try:
         with psycopg.connect(database_url, connect_timeout=max(1, int(timeout_seconds)),
                             tcp_user_timeout=timeout_ms) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SET LOCAL statement_timeout = %s", (str(timeout_ms*MAX_BATCH),))
+                cursor.execute(f"SET LOCAL statement_timeout = '{timeout_ms}ms'")
                 cursor.execute("SELECT extensions.http_set_curlopt('CURLOPT_CONNECTTIMEOUT_MS', %s)",
                                (str(timeout_ms),))
                 cursor.execute("SELECT extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', %s)",
