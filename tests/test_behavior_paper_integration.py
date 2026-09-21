@@ -49,6 +49,13 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "experiment_tier": "EXPLORATORY_LEARNING",
             "current_price": 100.0, "target_price": 100.3, "risk_cap_pct": 10.0,
             "stop_reference_pct": 2.0, "risk_per_trade_pct": 0.75,
+            "risk_policy_limits": {
+                "max_total_exposure_pct": 60.0,
+                "max_alt_exposure_pct": 25.0,
+                "max_single_position_pct": 10.0,
+                "daily_loss_limit_pct": 2.0,
+                "max_new_positions": 3,
+            },
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
@@ -272,6 +279,79 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 50.0, places=6)
+
+    def test_global_risk_max_new_positions_overrides_agent_constant(self):
+        rows = []
+        for index, symbol in enumerate(("AAAUSDT", "BBBUSDT", "CCCUSDT"), start=1):
+            candidate = self.candidate()
+            candidate.update({
+                "decision_id": 200 + index, "symbol": symbol,
+                "evidence_sha256": f"{index}" * 64,
+            })
+            candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+            candidate["risk_policy_limits"]["max_new_positions"] = 2
+            rows.append(candidate)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": rows, "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 2)
+        self.assertEqual(
+            self.con.execute(
+                "SELECT COUNT(*) FROM paper_agent_positions WHERE status='PENDING_ENTRY'"
+            ).fetchone()[0], 2
+        )
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertEqual(reasons.get("GLOBAL_RISK_MAX_NEW_POSITIONS_REACHED"), 1)
+
+    def test_global_total_and_alt_exposure_caps_are_authoritative(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 210, "symbol": "ALTUSDT",
+            "risk_cap_pct": 100.0, "evidence_sha256": "f" * 64,
+        })
+        candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+        candidate["risk_policy_limits"].update({
+            "max_total_exposure_pct": 40.0,
+            "max_alt_exposure_pct": 0.4,
+            "max_new_positions": 2,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='ALTUSDT'"
+        ).fetchone()[0]
+        self.assertLessEqual(notional, 40.0 + 1e-9)
+
+    def test_daily_loss_limit_blocks_new_paper_selection(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,exit_time,net_pnl
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -300,"test","test","LOSSUSDT",1,"LONG","CLOSED",
+            NOW.isoformat(),NOW.isoformat(),NOW.isoformat(),NOW.isoformat(),
+            100,.6,.6,.4,100,"test","0"*64,"test","USD_M_PERPETUAL",
+            agent.FORWARD_COHORT,1,"test","MARKET_BEHAVIOR_CORE",300,1,100,
+            "TEST",1,"[]",NOW.isoformat(),-250.0,
+        ))
+        candidate = self.candidate()
+        candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+        candidate["risk_policy_limits"]["daily_loss_limit_pct"] = 2.0
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 0)
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertIn("DAILY_LOSS_LIMIT_REACHED", reasons)
 
     def test_full_portfolio_still_exports_ranked_opportunity_telemetry(self):
         for index in range(agent.MAX_OPEN_POSITIONS):
