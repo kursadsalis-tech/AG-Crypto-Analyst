@@ -327,26 +327,9 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
                 dirty_symbols = set()
 
                 async def receiver():
-                    nonlocal active
+                    # Hot path: only drain/parse/coalesce websocket events.
+                    # Never query the database or run PAPER logic here.
                     while not stop_event.is_set():
-                        desired_now = binance_subscription_params(
-                            symbols(), market_type
-                        )
-                        removed = sorted(set(active) - set(desired_now))
-                        added = sorted(set(desired_now) - set(active))
-                        if removed:
-                            await socket.send(json.dumps({
-                                "method": "UNSUBSCRIBE",
-                                "params": removed,
-                                "id": 2,
-                            }))
-                        if added:
-                            await socket.send(json.dumps({
-                                "method": "SUBSCRIBE",
-                                "params": added,
-                                "id": 3,
-                            }))
-                        active = desired_now
                         try:
                             raw = await asyncio.wait_for(socket.recv(), timeout=1)
                         except asyncio.TimeoutError:
@@ -368,6 +351,29 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
                                 pending, dirty_order, dirty_symbols,
                                 state, received_ms,
                             )
+
+                async def refresh_subscriptions():
+                    nonlocal active
+                    while not stop_event.is_set():
+                        await asyncio.sleep(1.0)
+                        desired_now = binance_subscription_params(
+                            symbols(), market_type
+                        )
+                        removed = sorted(set(active) - set(desired_now))
+                        added = sorted(set(desired_now) - set(active))
+                        if removed:
+                            await socket.send(json.dumps({
+                                "method": "UNSUBSCRIBE",
+                                "params": removed,
+                                "id": 2,
+                            }))
+                        if added:
+                            await socket.send(json.dumps({
+                                "method": "SUBSCRIBE",
+                                "params": added,
+                                "id": 3,
+                            }))
+                        active = desired_now
 
                 async def dispatcher():
                     while not stop_event.is_set():
@@ -392,7 +398,9 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
 
                 if health_callback:
                     health_callback("CONNECTED", None)
-                await asyncio.gather(receiver(), dispatcher())
+                await asyncio.gather(
+                    receiver(), dispatcher(), refresh_subscriptions()
+                )
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
             if health_callback:
