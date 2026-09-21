@@ -372,12 +372,23 @@ def _latest_risk(con):
     if latest is None:
         return {}
     policy = con.execute("""
-        SELECT created_at,new_positions_allowed FROM risk_policy_snapshots WHERE id=?
+        SELECT created_at,new_positions_allowed,risk_per_trade_pct
+        FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
         return {}
+    # The global per-trade risk limit is the authoritative sizing input.
+    # Missing, zero or invalid policy limits fail closed; never infer a
+    # positive budget from the asset's maximum notional allocation.
+    try:
+        trade_risk_pct = float(policy[2])
+    except (TypeError, ValueError):
+        return {}
+    if not math.isfinite(trade_risk_pct) or trade_risk_pct <= 0:
+        return {}
     return {row[0]: {"allowed": bool(row[1]), "cap_pct": float(row[2]),
                      "price": float(row[3]), "risk_as_of": str(row[4]),
+                     "risk_per_trade_pct": trade_risk_pct,
                      "policy_created_at": str(policy[0])}
             for row in con.execute("""
                 SELECT symbol,new_position_allowed,max_position_pct,price,as_of
@@ -628,6 +639,8 @@ def _candidate_for_hypothesis(
         "current_price": float(mid), "target_price": float(mid) * (
             1 + (1 if learned["direction"] == "LONG" else -1)
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
-        "risk_cap_pct": risk["cap_pct"], "evidence": evidence,
+        "risk_cap_pct": risk["cap_pct"],
+        "risk_per_trade_pct": float(risk.get("risk_per_trade_pct") or 0.0),
+        "evidence": evidence,
         "evidence_sha256": digest,
     }]
