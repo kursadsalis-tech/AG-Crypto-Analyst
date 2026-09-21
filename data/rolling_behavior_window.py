@@ -13,7 +13,10 @@ MINUTE_MS = 60_000
 
 
 def _average(values):
-    return sum(values) / len(values) if values else 0.0
+    # Unavailable source observations are NULL, not zero or an average
+    # silently computed from a subset of otherwise required samples.
+    return (None if any(value is None for value in values)
+            else sum(values) / len(values) if values else 0.0)
 
 
 def _mid_price(row):
@@ -69,6 +72,10 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
             "minimum_samples": len(instrument_samples) >= min_samples,
             "maximum_gap": not gaps or max(gaps) <= max_gap_ms,
             "required_sources": len(complete) == len(instrument_samples),
+            "open_interest_present": all(
+                row["open_interest"]["usd"] is not None for row in instrument_samples),
+            "funding_present": all(
+                row["funding"]["rate"] is not None for row in instrument_samples),
             "liquidation_channel": bool(channel_states) and all(channel_states),
             "valid_mid_price": first_mid is not None and last_mid is not None,
         }
