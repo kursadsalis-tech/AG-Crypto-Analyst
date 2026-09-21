@@ -177,7 +177,7 @@ class BinanceWsMinuteCollector:
                 if self.errors or not all((self.ack["public"], self.ack["market"])):
                     raise RuntimeError("BROAD_WS_SUBSCRIPTIONS_UNAVAILABLE")
                 universe = self.discovery()
-                route = build_attention_route(universe, opportunity_slots=10)
+                route = build_attention_route(universe, opportunity_slots=4)
                 names = route["deep_stream_instruments"]
                 if len(names) > MAX_BATCH or len(set(names)) != len(names):
                     raise RuntimeError("UNBOUNDED_DEEP_ROUTE")
