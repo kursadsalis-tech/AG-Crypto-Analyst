@@ -6,10 +6,11 @@ from scripts.observer_deployment_readiness import REQUIRED_FILES, build_readines
 
 
 class ObserverDeploymentReadinessTests(unittest.TestCase):
-    def test_repository_observer_package_is_ready_but_not_installed(self):
+    def test_blocked_rest_observer_cannot_be_marked_deployable(self):
         result = build_readiness()
-        self.assertTrue(result["ready_for_controlled_cloud_install"])
-        self.assertEqual(result["failure_count"], 0)
+        self.assertFalse(result["ready_for_controlled_cloud_install"])
+        self.assertIn("BINANCE_DIRECT_REST_451_OBSERVER_NOT_DEPLOYABLE",
+                      result["failures"])
         self.assertFalse(result["cloud_install_performed"])
         self.assertFalse(result["timers_started"])
         self.assertEqual(len(result["required_file_sha256"]), len(REQUIRED_FILES))
