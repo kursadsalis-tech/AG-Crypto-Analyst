@@ -1,5 +1,9 @@
 import time
 import sqlite3
+import os
+import json
+import sys
+from types import SimpleNamespace
 from datetime import datetime, timezone
 import unittest
 from unittest import mock
@@ -8,31 +12,45 @@ from risk_manager import risk_manager
 
 
 class RiskMarketDataTests(unittest.TestCase):
-    def test_dynamic_symbol_prefers_binance_usd_m(self):
-        expected = object()
-        with mock.patch.object(
-            risk_manager, "fetch_closed_1h_klines", return_value=expected
-        ) as fetch:
-            self.assertIs(
-                risk_manager.fetch_dynamic_closed_1h_klines("ZORAUSDT"),
-                expected,
-            )
-        fetch.assert_called_once_with(
-            "ZORAUSDT",
-            url=risk_manager.BINANCE_USD_M_KLINES_URL,
-            source_prefix="BINANCE_USD_M_KLINES",
-        )
+    def test_dynamic_risk_uses_fixed_binance_usdm_url_through_private_egress(self):
+        now = int(time.time()*1000)
+        rows = [[now-i*3600_000, "10", "11", "9", "10.5", "100",
+                 now-i*3600_000+3599999, "1050"]
+                for i in range(170, 0, -1)]
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = (200, "application/json", json.dumps(rows))
+        conn = mock.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        fake_psycopg = SimpleNamespace(connect=mock.Mock(return_value=conn))
+        validated = object()
+        with mock.patch.dict(os.environ, {"AGCA_REMOTE_DATABASE_URL": "fake-dsn"}), \
+             mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}), \
+             mock.patch.object(risk_manager, "validate_closed_klines",
+                               return_value=validated) as validate, \
+             mock.patch.object(risk_manager.requests, "get") as direct:
+            result = risk_manager.fetch_dynamic_closed_1h_klines("1000PEPEUSDT")
+        self.assertIs(result, validated)
+        direct.assert_not_called()
+        requested_url = cursor.execute.call_args_list[-1].args[1][0]
+        self.assertIn("/fapi/v1/klines?symbol=1000PEPEUSDT", requested_url)
+        self.assertIn("interval=1h", requested_url)
+        self.assertIn("limit=170", requested_url)
+        self.assertEqual(validate.call_args.kwargs["minimum_rows"], 169)
 
-    def test_binance_outage_does_not_substitute_okx_swap(self):
-        with mock.patch.object(
-            risk_manager, "fetch_closed_1h_klines",
-            side_effect=RuntimeError("Binance USD-M unavailable"),
-        ), mock.patch.object(
-            risk_manager, "fetch_okx_closed_1h_klines"
-        ) as fetch_okx:
-            with self.assertRaisesRegex(RuntimeError, "Binance USD-M unavailable"):
+    def test_missing_private_egress_never_falls_back_to_okx_or_direct_rest(self):
+        with mock.patch.dict(os.environ, {"AGCA_REMOTE_DATABASE_URL": ""}), \
+             mock.patch.object(risk_manager, "fetch_okx_closed_1h_klines") as okx, \
+             mock.patch.object(risk_manager.requests, "get") as direct:
+            with self.assertRaisesRegex(RuntimeError, "PRIVATE_EGRESS_UNAVAILABLE"):
                 risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT")
-        fetch_okx.assert_not_called()
+        okx.assert_not_called()
+        direct.assert_not_called()
+
+    def test_invalid_dynamic_symbol_rejected_before_private_connection(self):
+        with mock.patch.dict(os.environ, {"AGCA_REMOTE_DATABASE_URL": "fake"}):
+            for symbol in ("PEPE-USDT-SWAP", "BTCUSD", "BTCUSDT?other=1"):
+                with self.assertRaisesRegex(RuntimeError, "INVALID_BINANCE"):
+                    risk_manager.fetch_dynamic_closed_1h_klines(symbol)
 
     def test_dynamic_universe_keeps_native_symbols_and_rejects_okx_aliases(self):
         con = sqlite3.connect(":memory:")
