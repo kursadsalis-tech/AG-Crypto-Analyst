@@ -1,7 +1,7 @@
 """Binance liquidation stream is sparse, same-venue and fails closed."""
 import unittest
 
-from data.binance_liquidation_channel import normalize_event, classify
+from data.binance_liquidation_channel import normalize_event, classify, WS_URL, STREAM
 
 
 NOW = 1_800_000_000_000
@@ -16,6 +16,10 @@ def event(symbol="1000PEPEUSDT"):
 
 
 class BinanceLiquidationTests(unittest.TestCase):
+    def test_liquidation_uses_documented_market_stream_endpoint(self):
+        self.assertEqual(WS_URL, "wss://fstream.binance.com/market/ws")
+        self.assertEqual(STREAM, "!forceOrder@arr")
+
     def test_native_contract_and_actual_filled_quantity(self):
         row = normalize_event(event(), NOW)
         self.assertEqual(row["instrument"], "1000PEPEUSDT")
