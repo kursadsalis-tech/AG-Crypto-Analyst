@@ -1,5 +1,4 @@
 """Regression tests for exact Binance contract identity and fresh native quotes."""
-import copy
 import unittest
 
 from data.binance_market_universe import build_universe
@@ -113,7 +112,7 @@ class BinanceMarketUniverseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.build(info={"symbols": None})
         with self.assertRaises(ValueError):
-            self.build(books=None if False else {})
+            self.build(books={})
         with self.assertRaises(ValueError):
             self.build(tickers={})
 
