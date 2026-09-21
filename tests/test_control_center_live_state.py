@@ -20,6 +20,26 @@ class LiveControlStateTests(unittest.TestCase):
                          ("CONNECTED", None))
         self.assertEqual(status([], None, 10_000), ("IDLE", None))
 
+    def test_partial_quote_gap_is_not_hidden_by_fresh_btc(self):
+        active = [("BTCUSDT", "USD_M_PERPETUAL"),
+                  ("ETHUSDT", "USD_M_PERPETUAL")]
+        live = {
+            active[0]: {"quote_timestamp_ms": 99_800},
+            active[1]: {"quote_timestamp_ms": -28_000},
+        }
+        gaps = paper_realtime_worker.stale_quote_symbols(active, live, 100_000)
+        self.assertEqual(gaps, [active[1]])
+        live[active[1]] = {"quote_timestamp_ms": 99_900}
+        self.assertEqual(
+            paper_realtime_worker.stale_quote_symbols(active, live, 100_000), [],
+        )
+        self.assertEqual(
+            paper_realtime_worker.stale_quote_symbols(
+                active, {active[0]: live[active[0]]}, 100_000,
+            ),
+            [active[1]],
+        )
+
     def test_market_state_payload_is_read_only_paper_telemetry(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "market-state.json"
