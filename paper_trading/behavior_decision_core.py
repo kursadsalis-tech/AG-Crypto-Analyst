@@ -481,8 +481,12 @@ def evaluate(con, now=None):
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
          long_liq, short_liq, liq_count, quality_json, mid_first) = raw
+        # Historical OKX features remain available for audit/research,
+        # but cannot authorise Binance PAPER candidates via guessed aliases.
+        if not str(instrument).endswith("USDT") or "-" in str(instrument):
+            continue
         pattern = _flow_pattern(float(book), float(taker))
-        symbol = _symbol(instrument)
+        symbol = str(instrument).upper()
         risk = risks.get(symbol)
         if not pattern or mid is None:
             continue
