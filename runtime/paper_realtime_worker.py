@@ -184,6 +184,10 @@ async def run():
     stop_event = asyncio.Event()
     last_health_at = None
     last_quote_received_ms = None
+    quote_metrics = {
+        "SPOT": realtime_market.new_quote_metrics(),
+        "USD_M_PERPETUAL": realtime_market.new_quote_metrics(),
+    }
     last_action_status = None
     last_selection_attempt_at = None
     live_states = {}
@@ -277,6 +281,31 @@ async def run():
         with symbol_cache_lock:
             return list(cached_symbols)
 
+    def quote_ingest_snapshot(wall_clock_ms):
+        """Separate exchange receiver progress from PAPER dispatch progress."""
+        result = {}
+        for market_type, metric in quote_metrics.items():
+            last_received = metric["last_received_ms"]
+            symbol_received = metric["received_by_symbol_ms"].copy()
+            result[market_type] = {
+                "received_total": metric["received_total"],
+                "accepted_total": metric["accepted_total"],
+                "stale_received_total": metric["stale_received_total"],
+                "stale_dispatch_total": metric["stale_dispatch_total"],
+                "dispatched_total": metric["dispatched_total"],
+                "last_receive_lag_ms": metric["last_receive_lag_ms"],
+                "max_receive_lag_ms": metric["max_receive_lag_ms"],
+                "receiver_age_ms": (
+                    wall_clock_ms - last_received
+                    if last_received is not None else None
+                ),
+                "received_by_symbol_age_ms": {
+                    symbol: wall_clock_ms - received
+                    for symbol, received in symbol_received.items()
+                },
+            }
+        return result
+
     def emit_health(status, **details):
         """One canonical status contract for stream, decision and heartbeat."""
         nonlocal last_action_status
@@ -307,6 +336,7 @@ async def run():
                 if last_quote_received_ms is not None else None
             ),
             "action": last_action_status,
+            "quote_ingest": quote_ingest_snapshot(wall_clock_ms),
         })
         write_health(status, **details)
 
@@ -596,7 +626,9 @@ async def run():
     )
     try:
         await asyncio.gather(
-            realtime_market.stream(symbols, on_state, stop_event, health),
+            realtime_market.stream(
+                symbols, on_state, stop_event, health, quote_metrics=quote_metrics,
+            ),
             decision_loop(),
             refresh_symbol_cache(),
             maintenance(),
