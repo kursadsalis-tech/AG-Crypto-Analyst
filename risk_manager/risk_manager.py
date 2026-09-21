@@ -233,7 +233,7 @@ def fetch_dynamic_closed_1h_klines(symbol):
     failure with OKX candles or the dissimilar Binance spot contract. Only
     recent CLOSED Binance USD-M 1h rows authorise dynamic risk coverage.
     """
-    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{5,30}USDT", symbol):
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{1,26}USDT", symbol):
         raise RuntimeError("INVALID_BINANCE_USD_M_RISK_SYMBOL")
     database_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
     if not database_url:
