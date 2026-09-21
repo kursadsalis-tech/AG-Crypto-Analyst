@@ -1,4 +1,6 @@
 import time
+import sqlite3
+from datetime import datetime, timezone
 import unittest
 from unittest import mock
 
@@ -31,6 +33,19 @@ class RiskMarketDataTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Binance USD-M unavailable"):
                 risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT")
         fetch_okx.assert_not_called()
+
+    def test_dynamic_universe_keeps_native_symbols_and_rejects_okx_aliases(self):
+        con = sqlite3.connect(":memory:")
+        con.execute("""CREATE TABLE market_behavior_minute_features(
+            instrument TEXT, minute_end_timestamp_ms INTEGER,
+            eligible_for_learning INTEGER)""")
+        instant = int(datetime.now(timezone.utc).timestamp() * 1000)
+        con.executemany("INSERT INTO market_behavior_minute_features VALUES(?,?,1)", [
+            ("1000PEPEUSDT", instant), ("BTCUSDT", instant),
+            ("PEPE-USDT-SWAP", instant),
+        ])
+        self.assertEqual(risk_manager.behavior_risk_symbols(con),
+                         ("1000PEPEUSDT", "BTCUSDT"))
 
     @mock.patch.object(risk_manager.requests, "get")
     def test_okx_rows_are_normalized_and_only_closed_candles_are_used(self, get):
