@@ -9,6 +9,17 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
+    def test_heartbeat_requires_recent_quote_for_connected_status(self):
+        status = paper_realtime_worker.heartbeat_market_status
+        active = [("BTCUSDT", "USD_M_PERPETUAL")]
+        self.assertEqual(status(active, None, 10_000),
+                         ("DEGRADED", "NO_LIVE_QUOTES_YET"))
+        self.assertEqual(status(active, 7_999, 10_000),
+                         ("DEGRADED", "LIVE_QUOTES_STALE"))
+        self.assertEqual(status(active, 9_900, 10_000),
+                         ("CONNECTED", None))
+        self.assertEqual(status([], None, 10_000), ("IDLE", None))
+
     def test_market_state_payload_is_read_only_paper_telemetry(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "market-state.json"
