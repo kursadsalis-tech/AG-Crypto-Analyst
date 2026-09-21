@@ -253,7 +253,7 @@ async def run():
         position_management.initialize_open_positions(db, now())
         active = {tuple(row) for row in db.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
-            WHERE status='OPEN' ORDER BY symbol"""
+            WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
         latest = db.execute(
             "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
