@@ -77,6 +77,19 @@ def heartbeat_market_status(active_symbols, last_quote_received_ms, wall_clock_m
     return "CONNECTED", None
 
 
+def stale_quote_symbols(active_symbols, live_states, wall_clock_ms, max_age_ms=30_000):
+    """Return subscribed instruments without a recent valid executable quote."""
+    stale = []
+    for symbol, market_type in active_symbols:
+        stamp = live_states.get((symbol, market_type), {}).get("quote_timestamp_ms")
+        if (
+            stamp is None or wall_clock_ms - stamp > max_age_ms
+            or wall_clock_ms - stamp < -500
+        ):
+            stale.append((symbol, market_type))
+    return stale
+
+
 def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
@@ -206,7 +219,10 @@ async def run():
         }
 
     def live_state_snapshot():
-        return [live_states[key] for key in sorted(live_states)]
+        # Retired symbols must not remain indefinitely in live dashboard data.
+        active_keys = set(symbols())
+        return [live_states[key] for key in sorted(live_states)
+                if key in active_keys]
 
     def publish_live_state(state, observed_ms):
         nonlocal last_market_state_publish_at
@@ -271,17 +287,7 @@ async def run():
         )
         # A recent BTC quote must not conceal an ETH subscription stalled for
         # minutes. Allow quiet symbols 30 seconds; expose affected symbols.
-        stalled_symbols = []
-        for symbol, market_type in active:
-            quote_stamp = live_states.get((symbol, market_type), {}).get(
-                "quote_timestamp_ms"
-            )
-            if (
-                quote_stamp is None
-                or wall_clock_ms - quote_stamp > 30_000
-                or wall_clock_ms - quote_stamp < -500
-            ):
-                stalled_symbols.append((symbol, market_type))
+        stalled_symbols = stale_quote_symbols(active, live_states, wall_clock_ms)
         if status == "CONNECTED":
             status = feed_status
             if feed_error:
