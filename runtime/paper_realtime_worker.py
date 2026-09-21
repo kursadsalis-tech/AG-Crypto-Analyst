@@ -65,6 +65,18 @@ def _atomic_json_write(path, payload):
                 pass
 
 
+def heartbeat_market_status(active_symbols, last_quote_received_ms, wall_clock_ms):
+    """Report market freshness, not merely whether the Python process is alive."""
+    if not active_symbols:
+        return "IDLE", None
+    if last_quote_received_ms is None:
+        return "DEGRADED", "NO_LIVE_QUOTES_YET"
+    age_ms = wall_clock_ms - last_quote_received_ms
+    if age_ms < -500 or age_ms > realtime_market.MAX_EVENT_AGE_MS:
+        return "DEGRADED", "LIVE_QUOTES_STALE"
+    return "CONNECTED", None
+
+
 def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
@@ -158,6 +170,7 @@ async def run():
     universe_local = threading.local()
     stop_event = asyncio.Event()
     last_health_at = None
+    last_quote_received_ms = None
     last_selection_attempt_at = None
     live_states = {}
     last_market_state_publish_at = 0.0
@@ -442,6 +455,8 @@ async def run():
             last_health_at = observed_at
 
     async def on_state(state, observed_ms):
+        nonlocal last_quote_received_ms
+        last_quote_received_ms = observed_ms
         # True ingest hot path: publish/cache the newest state and return.
         # Decision/PAPER work is consumed separately and can never block the
         # websocket receiver or telemetry freshness.
@@ -515,11 +530,21 @@ async def run():
                 pass
 
     async def heartbeat():
-        # Liveness must not depend on receiving a market callback. A quiet or
-        # reconnecting stream can otherwise make a healthy worker look stale.
+        # Keep a process heartbeat even during reconnect, but never claim the
+        # market feed is CONNECTED based on process liveness alone.
         while not stop_event.is_set():
+            active = symbols()
+            wall_clock_ms = int(now().timestamp() * 1000)
+            status, reason = heartbeat_market_status(
+                active, last_quote_received_ms, wall_clock_ms,
+            )
             write_health(
-                "CONNECTED", active_symbols=symbols(), heartbeat=True,
+                status, error=reason, active_symbols=active, heartbeat=True,
+                last_quote_received_ms=last_quote_received_ms,
+                quote_receive_age_ms=(
+                    wall_clock_ms - last_quote_received_ms
+                    if last_quote_received_ms is not None else None
+                ),
             )
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=10)
