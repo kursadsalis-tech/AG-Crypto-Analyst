@@ -474,8 +474,11 @@ async def _binance_stream(
                             if flow_sink is not None:
                                 flow_sink.publish(state)
                                 continue
-                            if flow_cache is not None:
-                                flow_cache.apply_to(state, received_ms)
+                            # Keep the quote receiver lock-free. The trade-flow
+                            # cache is shared with a very hot raw-trade thread;
+                            # taking its threading.Lock for every bookTicker can
+                            # stall the main quote loop and recreate multi-second
+                            # quote lag. Merge flow only at bounded dispatch time.
                             _queue_latest_state(
                                 pending, dirty_order, dirty_symbols,
                                 state, received_ms,
@@ -532,11 +535,18 @@ async def _binance_stream(
                             and now_ms - stamp_ms > MAX_EVENT_AGE_MS
                         ):
                             continue
-                        if flow_cache is not None and (
-                            state.trade_timestamp_ms is None or
-                            now_ms - state.trade_timestamp_ms > MAX_EVENT_AGE_MS
-                        ):
-                            state.taker_imbalance = None
+                        if flow_cache is not None:
+                            # Merge the newest flow snapshot only here, at the
+                            # bounded dispatcher cadence, never in the hot quote
+                            # receiver. This keeps executable quote ingest free
+                            # of cross-thread lock contention.
+                            flow_cache.apply_to(state, now_ms)
+                            if (
+                                state.trade_timestamp_ms is None or
+                                now_ms - state.trade_timestamp_ms
+                                > MAX_EVENT_AGE_MS
+                            ):
+                                state.taker_imbalance = None
                         await on_state(state, observed_ms)
 
                 if health_callback:
