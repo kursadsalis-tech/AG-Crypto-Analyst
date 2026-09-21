@@ -18,11 +18,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import requests
+
 from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
-from data.okx_liquidation_channel import probe
-from data.okx_live_evidence import collect, fetch_json
-from data.okx_market_universe import build_universe
+from data.binance_liquidation_channel import probe
+from data.binance_live_evidence import collect
+from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
 from database.causal_evidence_store import evidence_for_closed_minute
@@ -31,11 +33,28 @@ from database.causal_evidence_store import evidence_for_closed_minute
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 
 
+def fetch_market_overview(path):
+    """Only allow the three public USD-M discovery endpoints."""
+    paths = frozenset({"exchangeInfo", "ticker/24hr", "ticker/bookTicker"})
+    if path not in paths:
+        raise ValueError("UNAPPROVED_BINANCE_DISCOVERY_PATH")
+    response = requests.get(
+        f"https://fapi.binance.com/fapi/v1/{path}",
+        timeout=5,
+        headers={"User-Agent": "AGCA-PAPER-BINANCE-OBSERVER/1"},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def refresh_market_route():
-    instruments = fetch_json("public/instruments", {"instType": "SWAP"})
-    tickers = fetch_json("market/tickers", {"instType": "SWAP"})
+    # The Binance exchangeInfo contract is authoritative for discovery and
+    # delist status. Other venues cannot mint valid Binance order symbols.
+    instruments = fetch_market_overview("exchangeInfo")
+    tickers = fetch_market_overview("ticker/24hr")
+    books = fetch_market_overview("ticker/bookTicker")
     snapshot_ms = int(time.time() * 1000)
-    universe = build_universe(instruments, tickers, snapshot_ms=snapshot_ms)
+    universe = build_universe(instruments, tickers, books, snapshot_ms=snapshot_ms)
     return universe, build_attention_route(universe, opportunity_slots=10)
 
 
@@ -51,9 +70,9 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-async def collect_minute(route, universe, contract_values, args, minute_end_ms):
+async def collect_minute(route, universe, args, minute_end_ms):
     duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
-    liquidation_task = asyncio.create_task(probe(duration, contract_values))
+    liquidation_task = asyncio.create_task(probe(duration))
     market_snapshots = []
     started = time.monotonic()
     for index in range(args.samples):
@@ -95,8 +114,8 @@ def main():
             parser.error("--route and --universe are required without --refresh-live-universe")
         route = json.loads(Path(args.route).read_text(encoding="utf-8"))
         universe = json.loads(Path(args.universe).read_text(encoding="utf-8"))
-    contract_values = {row["instrument"]: row.get("contract_value", 1.0)
-                       for row in universe.get("selected", [])}
+    if any(row.get("exchange") != "BINANCE_USD_M" for row in universe.get("selected", [])):
+        raise SystemExit("Safety gate: non-Binance universe cannot enter execution observer")
 
     required_span = (args.samples - 1) * args.cadence_seconds + 8
     now_ms = int(time.time() * 1000)
@@ -108,10 +127,11 @@ def main():
         minute_end_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
 
     bundles = asyncio.run(
-        collect_minute(route, universe, contract_values, args, minute_end_ms))
+        collect_minute(route, universe, args, minute_end_ms))
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    result["source_exchange"] = "BINANCE_USD_M"
     result["causal_external_evidence"] = (
         evidence_for_closed_minute(args.database, minute_end_ms)
         if args.database else {
@@ -125,7 +145,8 @@ def main():
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
-        "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
+        "liquidation_connection": "ONE_CONTINUOUS_BINANCE_USD_M_WEBSOCKET_FOR_MINUTE",
+        "liquidation_coverage": "AT_MOST_ONE_ORDER_PER_SYMBOL_PER_SECOND",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
     }
     if args.database:
@@ -136,7 +157,9 @@ def main():
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
         health = {
             "health_contract_version": HEALTH_CONTRACT_VERSION,
-            "status": "HEALTHY" if result["eligible_row_count"] == result["row_count"] else "DEGRADED",
+            "status": "HEALTHY" if (result["row_count"] > 0
+                      and result["eligible_row_count"] == result["row_count"]) else "DEGRADED",
+            "source_exchange": "BINANCE_USD_M",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "execution_mode": "PAPER_ONLY",
             "broad_scan_instrument_count": route["broad_scan_instrument_count"],
