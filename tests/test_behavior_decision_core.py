@@ -101,6 +101,30 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         result = core.evaluate(self.con, NOW)
         self.assertEqual(result["candidates"], [])
 
+    def test_stale_global_risk_snapshot_blocks_new_paper_entry(self):
+        self.add_history(days=1)
+        self.add_current()
+        stale = NOW - timedelta(minutes=31)
+        self.con.execute("UPDATE risk_policy_snapshots SET created_at=?",
+                         (stale.isoformat(),))
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["status"], "NO_ACTIONABLE_PATTERN")
+
+    def test_future_or_stale_asset_risk_cannot_size_paper_entry(self):
+        self.add_history(days=1)
+        self.add_current()
+        for at in (NOW - timedelta(hours=3), NOW + timedelta(minutes=2)):
+            with self.subTest(at=at):
+                self.con.execute("UPDATE asset_risk_snapshots SET as_of=?",
+                                 (at.isoformat(),))
+                self.assertEqual(core.evaluate(self.con, NOW)["candidates"], [])
+
+    def test_current_asset_risk_and_policy_remain_eligible(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.assertTrue(core.evaluate(self.con, NOW)["candidates"])
+
     def test_zero_trade_risk_policy_fails_closed(self):
         self.add_history(days=1)
         self.add_current()
