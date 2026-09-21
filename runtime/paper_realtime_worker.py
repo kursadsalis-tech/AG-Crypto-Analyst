@@ -266,12 +266,13 @@ async def run():
                    FROM paper_behavior_selection_runs
                    ORDER BY run_id DESC LIMIT 1"""
             ).fetchone()
+            brain_state, _ = latest_execution_state(state, observed_ms)
             write_brain_state({
                 "phase": "OPPORTUNITY_SCAN",
                 "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
-                "observed_symbol": state.symbol,
-                "observed_market_type": state.market_type,
-                "observed_price": state.last_price,
+                "observed_symbol": brain_state.symbol,
+                "observed_market_type": brain_state.market_type,
+                "observed_price": brain_state.last_price,
                 "monitored_symbols": len(symbols(work_con)),
                 "scan": ({
                     "core_status": latest_scan[0],
@@ -295,7 +296,10 @@ async def run():
                     if selected else "CONTINUE_SCANNING"
                 ),
             })
-            last_selection_attempt_at = observed_at
+            # Cadence is based on completion time, not the event that started
+            # a potentially slow scan. Otherwise a multi-second scan retriggers
+            # immediately and starves position/fill management.
+            last_selection_attempt_at = now()
 
         if (
             last_learning_at is None
@@ -303,7 +307,7 @@ async def run():
         ):
             trade_learning.run(work_con, FORWARD_COHORT, observed_at)
             strategy_allocator.rebalance(work_con, observed_at)
-            last_learning_at = observed_at
+            last_learning_at = now()
 
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
@@ -346,7 +350,7 @@ async def run():
             write_health(
                 "DEGRADED",
                 error="LIVE_SYMBOL_RULES_UNAVAILABLE",
-                symbol=state.symbol,
+                symbol=execution_state.symbol,
             )
             return
 
@@ -367,16 +371,16 @@ async def run():
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
         }:
             write_health(
-                "CONNECTED", symbol=state.symbol, last_action=result
+                "CONNECTED", symbol=execution_state.symbol, last_action=result
             )
-            last_health_at = observed_at
+            last_health_at = execution_at
         elif (
             last_health_at is None
             or (observed_at - last_health_at).total_seconds() >= 10
         ):
             write_health(
                 "CONNECTED",
-                symbol=state.symbol,
+                symbol=execution_state.symbol,
                 last_action={"status": "HOLD"},
             )
             last_health_at = observed_at
