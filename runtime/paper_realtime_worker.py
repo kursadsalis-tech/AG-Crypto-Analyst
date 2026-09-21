@@ -138,7 +138,11 @@ async def run():
     decision_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-paper-decision"
     )
+    universe_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="agca-symbol-universe"
+    )
     decision_local = threading.local()
+    universe_local = threading.local()
     stop_event = asyncio.Event()
     last_health_at = None
     last_selection_attempt_at = None
@@ -150,6 +154,8 @@ async def run():
     pending_decision_order = deque()
     pending_decision_keys = set()
     decision_wakeup = asyncio.Event()
+    symbol_cache_lock = threading.Lock()
+    cached_symbols = ()
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -195,16 +201,12 @@ async def run():
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
 
-    def symbols(connection=None):
-        db = connection or con
+    def load_symbols(db):
         position_management.initialize_open_positions(db, now())
         active = {tuple(row) for row in db.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status='OPEN' ORDER BY symbol"""
         ).fetchall()}
-        # Keep observing the latest completed behavior universe even when the
-        # portfolio is empty; otherwise no live event could ever trigger the
-        # next decision/entry.
         latest = db.execute(
             "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
         ).fetchone()[0]
@@ -215,13 +217,53 @@ async def run():
                 WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
                 (latest,),
             ).fetchall():
-                symbol = str(instrument).replace("-USDT-SWAP", "USDT").replace("-", "")
+                symbol = str(instrument).replace(
+                    "-USDT-SWAP", "USDT"
+                ).replace("-", "")
                 market_type = (
                     "USD_M_PERPETUAL"
                     if str(instrument).endswith("-SWAP") else "SPOT"
                 )
                 monitored.add((symbol, market_type))
-        return sorted(active | monitored)
+        return tuple(sorted(active | monitored))
+
+    def symbols():
+        # Pure in-memory hot-path read. No SQLite work is allowed here because
+        # Binance calls this from subscription/health tasks on the event loop.
+        with symbol_cache_lock:
+            return list(cached_symbols)
+
+    def universe_connection():
+        db = getattr(universe_local, "connection", None)
+        if db is None:
+            db = connect(DB_NAME, timeout=30)
+            ensure_tables(db)
+            position_management.ensure_tables(db)
+            universe_local.connection = db
+        return db
+
+    def refresh_symbol_cache_once():
+        nonlocal cached_symbols
+        refreshed = load_symbols(universe_connection())
+        with symbol_cache_lock:
+            cached_symbols = refreshed
+        return refreshed
+
+    async def refresh_symbol_cache():
+        while not stop_event.is_set():
+            try:
+                await loop.run_in_executor(
+                    universe_executor, refresh_symbol_cache_once
+                )
+            except Exception as exc:
+                write_health(
+                    "DEGRADED",
+                    error=f"SYMBOL_UNIVERSE_REFRESH_{type(exc).__name__}",
+                )
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
 
     def health(state, error):
         write_health(
@@ -273,7 +315,7 @@ async def run():
                 "observed_symbol": brain_state.symbol,
                 "observed_market_type": brain_state.market_type,
                 "observed_price": brain_state.last_price,
-                "monitored_symbols": len(symbols(work_con)),
+                "monitored_symbols": len(load_symbols(work_con)),
                 "scan": ({
                     "core_status": latest_scan[0],
                     "candidate_count": latest_scan[1],
@@ -470,6 +512,8 @@ async def run():
             except asyncio.TimeoutError:
                 pass
 
+    with symbol_cache_lock:
+        cached_symbols = load_symbols(con)
     write_health(
         "STARTING", active_symbols=symbols(),
     )
@@ -477,6 +521,7 @@ async def run():
         await asyncio.gather(
             realtime_market.stream(symbols, on_state, stop_event, health),
             decision_loop(),
+            refresh_symbol_cache(),
             maintenance(),
             heartbeat(),
         )
@@ -487,12 +532,22 @@ async def run():
                 db.close()
                 decision_local.connection = None
 
+        def close_universe_connection():
+            db = getattr(universe_local, "connection", None)
+            if db is not None:
+                db.close()
+                universe_local.connection = None
+
         try:
             await loop.run_in_executor(
                 decision_executor, close_decision_connection
             )
+            await loop.run_in_executor(
+                universe_executor, close_universe_connection
+            )
         finally:
             decision_executor.shutdown(wait=True)
+            universe_executor.shutdown(wait=True)
             con.close()
             write_health("STOPPED")
 
