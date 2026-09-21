@@ -6,10 +6,10 @@ from scripts.observer_deployment_readiness import REQUIRED_FILES, build_readines
 
 
 class ObserverDeploymentReadinessTests(unittest.TestCase):
-    def test_blocked_rest_observer_cannot_be_marked_deployable(self):
+    def test_vm_acceptance_is_required_after_rest_removal(self):
         result = build_readiness()
         self.assertFalse(result["ready_for_controlled_cloud_install"])
-        self.assertIn("BINANCE_DIRECT_REST_451_OBSERVER_NOT_DEPLOYABLE",
+        self.assertIn("BINANCE_WS_OI_VM_ACCEPTANCE_PENDING",
                       result["failures"])
         self.assertFalse(result["cloud_install_performed"])
         self.assertFalse(result["timers_started"])
