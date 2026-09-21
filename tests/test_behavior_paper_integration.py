@@ -260,6 +260,14 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "stop_reference_pct": 5.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
             "evidence_sha256": "8" * 64,
         })
+        # This test isolates stop-distance sizing, not portfolio/alt caps.
+        for candidate in (tight, wide):
+            candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+            candidate["risk_policy_limits"].update({
+                "max_total_exposure_pct": 100.0,
+                "max_alt_exposure_pct": 100.0,
+                "max_new_positions": 2,
+            })
         # Remove the exploratory base-margin ceiling so this test isolates
         # stop-distance risk sizing rather than conviction sizing.
         fake_tier = SimpleNamespace(
