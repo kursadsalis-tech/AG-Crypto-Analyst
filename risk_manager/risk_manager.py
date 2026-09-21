@@ -136,10 +136,11 @@ def behavior_risk_symbols(con, now=None):
     symbols = []
     for (instrument,) in instruments:
         value = str(instrument).upper()
-        if value.endswith("-USDT-SWAP"):
-            symbol = value[:-10].replace("-", "") + "USDT"
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
+        # Binance-native minute rows keep the exact exchangeInfo symbol.
+        # Historical OKX rows are NOT eligible to authorise Binance risk
+        # coverage by guessing another venue's contract identity.
+        if value.endswith("USDT") and "-" not in value and value not in symbols:
+            symbols.append(value)
     return tuple(symbols)
 
 
@@ -224,21 +225,17 @@ def fetch_okx_closed_1h_klines(symbol):
 
 
 def fetch_dynamic_closed_1h_klines(symbol):
-    """Use derivatives-native evidence for the dynamic OKX swap universe."""
-    try:
-        return fetch_closed_1h_klines(
-            symbol,
-            url=BINANCE_USD_M_KLINES_URL,
-            source_prefix="BINANCE_USD_M_KLINES",
-        )
-    except Exception as binance_exc:
-        try:
-            return fetch_okx_closed_1h_klines(symbol)
-        except Exception as okx_exc:
-            raise RuntimeError(
-                f"{symbol}: derivatives risk evidence unavailable; "
-                f"binance={binance_exc}; okx={okx_exc}"
-            ) from okx_exc
+    """Require same-venue Binance USD-M closed candles; fail closed on outage.
+
+    An OKX candle is not an executable Binance quote, nor proof that a
+    similarly spelled Binance perpetual exists. Never mask a Binance outage
+    using a different exchange's market evidence.
+    """
+    return fetch_closed_1h_klines(
+        symbol,
+        url=BINANCE_USD_M_KLINES_URL,
+        source_prefix="BINANCE_USD_M_KLINES",
+    )
 
 
 def candle_metrics(symbol, candles):
