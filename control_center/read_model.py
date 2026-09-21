@@ -400,8 +400,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     market_snapshot_age = (
         max(0.0, (now - market_at).total_seconds()) if market_at else None
     )
+    # A freshly rewritten JSON file is not proof of fresh exchange data.
+    # Require at least one recent quote. Quiet symbols remain independently
+    # classified by their own quote age; do not require all symbols to tick.
     market_feed_fresh = (
         market_snapshot_age is not None and market_snapshot_age <= 30.0
+        and market_fresh > 0
     )
     activity_ages = {}
     for name, stamp in activity.items():

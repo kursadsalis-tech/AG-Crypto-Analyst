@@ -65,6 +65,31 @@ def _atomic_json_write(path, payload):
                 pass
 
 
+def heartbeat_market_status(active_symbols, last_quote_received_ms, wall_clock_ms):
+    """Report market freshness, not merely whether the Python process is alive."""
+    if not active_symbols:
+        return "IDLE", None
+    if last_quote_received_ms is None:
+        return "DEGRADED", "NO_LIVE_QUOTES_YET"
+    age_ms = wall_clock_ms - last_quote_received_ms
+    if age_ms < -500 or age_ms > realtime_market.MAX_EVENT_AGE_MS:
+        return "DEGRADED", "LIVE_QUOTES_STALE"
+    return "CONNECTED", None
+
+
+def stale_quote_symbols(active_symbols, live_states, wall_clock_ms, max_age_ms=30_000):
+    """Return subscribed instruments without a recent valid executable quote."""
+    stale = []
+    for symbol, market_type in active_symbols:
+        stamp = live_states.get((symbol, market_type), {}).get("quote_timestamp_ms")
+        if (
+            stamp is None or wall_clock_ms - stamp > max_age_ms
+            or wall_clock_ms - stamp < -500
+        ):
+            stale.append((symbol, market_type))
+    return stale
+
+
 def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
@@ -158,6 +183,8 @@ async def run():
     universe_local = threading.local()
     stop_event = asyncio.Event()
     last_health_at = None
+    last_quote_received_ms = None
+    last_action_status = None
     last_selection_attempt_at = None
     live_states = {}
     last_market_state_publish_at = 0.0
@@ -192,7 +219,10 @@ async def run():
         }
 
     def live_state_snapshot():
-        return [live_states[key] for key in sorted(live_states)]
+        # Retired symbols must not remain indefinitely in live dashboard data.
+        active_keys = set(symbols())
+        return [live_states[key] for key in sorted(live_states)
+                if key in active_keys]
 
     def publish_live_state(state, observed_ms):
         nonlocal last_market_state_publish_at
@@ -247,6 +277,39 @@ async def run():
         with symbol_cache_lock:
             return list(cached_symbols)
 
+    def emit_health(status, **details):
+        """One canonical status contract for stream, decision and heartbeat."""
+        nonlocal last_action_status
+        active = symbols()
+        wall_clock_ms = int(now().timestamp() * 1000)
+        feed_status, feed_error = heartbeat_market_status(
+            active, last_quote_received_ms, wall_clock_ms,
+        )
+        # A recent BTC quote must not conceal an ETH subscription stalled for
+        # minutes. Allow quiet symbols 30 seconds; expose affected symbols.
+        stalled_symbols = stale_quote_symbols(active, live_states, wall_clock_ms)
+        if status == "CONNECTED":
+            status = feed_status
+            if feed_error:
+                details["error"] = feed_error
+            elif stalled_symbols:
+                status = "DEGRADED"
+                details["error"] = "LIVE_SYMBOL_QUOTES_STALE"
+        action = details.get("last_action")
+        if isinstance(action, dict) and action.get("status"):
+            last_action_status = str(action["status"])
+        details.update({
+            "active_symbols": active,
+            "stale_symbols": stalled_symbols,
+            "last_quote_received_ms": last_quote_received_ms,
+            "quote_receive_age_ms": (
+                wall_clock_ms - last_quote_received_ms
+                if last_quote_received_ms is not None else None
+            ),
+            "action": last_action_status,
+        })
+        write_health(status, **details)
+
     def universe_connection():
         db = getattr(universe_local, "connection", None)
         if db is None:
@@ -270,7 +333,7 @@ async def run():
                     universe_executor, refresh_symbol_cache_once
                 )
             except Exception as exc:
-                write_health(
+                emit_health(
                     "DEGRADED",
                     error=f"SYMBOL_UNIVERSE_REFRESH_{type(exc).__name__}",
                 )
@@ -280,7 +343,7 @@ async def run():
                 pass
 
     def health(state, error):
-        write_health(
+        emit_health(
             state, error=error, active_symbols=symbols(),
         )
 
@@ -378,7 +441,7 @@ async def run():
             or wall_clock_ms - execution_stamp_ms
             > realtime_market.MAX_EVENT_AGE_MS
         ):
-            write_health(
+            emit_health(
                 "DEGRADED",
                 error="LIVE_STATE_STALE_BEFORE_EXECUTION",
                 symbol=execution_state.symbol,
@@ -403,7 +466,7 @@ async def run():
             position_management.process_market_state(
                 work_con, execution_state, execution_at, None
             )
-            write_health(
+            emit_health(
                 "DEGRADED",
                 error="LIVE_SYMBOL_RULES_UNAVAILABLE",
                 symbol=execution_state.symbol,
@@ -426,7 +489,7 @@ async def run():
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
         }:
-            write_health(
+            emit_health(
                 "CONNECTED", symbol=execution_state.symbol, last_action=result
             )
             last_health_at = execution_at
@@ -434,7 +497,7 @@ async def run():
             last_health_at is None
             or (observed_at - last_health_at).total_seconds() >= 10
         ):
-            write_health(
+            emit_health(
                 "CONNECTED",
                 symbol=execution_state.symbol,
                 last_action={"status": "HOLD"},
@@ -442,6 +505,8 @@ async def run():
             last_health_at = observed_at
 
     async def on_state(state, observed_ms):
+        nonlocal last_quote_received_ms
+        last_quote_received_ms = observed_ms
         # True ingest hot path: publish/cache the newest state and return.
         # Decision/PAPER work is consumed separately and can never block the
         # websocket receiver or telemetry freshness.
@@ -508,19 +573,17 @@ async def run():
             try:
                 await asyncio.to_thread(maintenance_once)
             except Exception as exc:
-                write_health("DEGRADED", error=f"FUNDING_RECONCILIATION_{type(exc).__name__}")
+                emit_health("DEGRADED", error=f"FUNDING_RECONCILIATION_{type(exc).__name__}")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=60)
             except asyncio.TimeoutError:
                 pass
 
     async def heartbeat():
-        # Liveness must not depend on receiving a market callback. A quiet or
-        # reconnecting stream can otherwise make a healthy worker look stale.
+        # Report liveness independently; emit_health checks actual quote age
+        # and coverage before permitting a CONNECTED label.
         while not stop_event.is_set():
-            write_health(
-                "CONNECTED", active_symbols=symbols(), heartbeat=True,
-            )
+            emit_health("CONNECTED", heartbeat=True)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=10)
             except asyncio.TimeoutError:
@@ -528,7 +591,7 @@ async def run():
 
     with symbol_cache_lock:
         cached_symbols = load_symbols(con)
-    write_health(
+    emit_health(
         "STARTING", active_symbols=symbols(),
     )
     try:
@@ -563,7 +626,7 @@ async def run():
             decision_executor.shutdown(wait=True)
             universe_executor.shutdown(wait=True)
             con.close()
-            write_health("STOPPED")
+            emit_health("STOPPED")
 
 
 def main():
