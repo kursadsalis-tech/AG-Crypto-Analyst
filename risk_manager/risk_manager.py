@@ -16,6 +16,9 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from data.binance_risk_private_feeds import (
+    btc_independent_validation, spot_closed_hourly,
+)
 from data.truth_engine import (
     audited_validation,
     fetch_and_validate_btc_anchor,
@@ -23,7 +26,7 @@ from data.truth_engine import (
 )
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_USD_M_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
@@ -696,6 +699,7 @@ def main():
     created_at = iso(utcnow())
     assets = []
     source_errors = {}
+    private_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
     con = runtime_connect(DB_NAME)
     try:
         dynamic_symbols = behavior_risk_symbols(con)
@@ -704,7 +708,10 @@ def main():
                 con,
                 gate_name="RISK_REFERENCE_PRICE",
                 source="BINANCE_VS_COINGECKO:BTCUSD",
-                validator=fetch_and_validate_btc_anchor,
+                validator=(
+                    (lambda: btc_independent_validation(private_url))
+                    if private_url else fetch_and_validate_btc_anchor
+                ),
             )
         except Exception as exc:
             source_errors["CROSS_SOURCE_BTC"] = str(exc)
@@ -716,7 +723,8 @@ def main():
             candles = (
                 fetch_dynamic_closed_1h_klines(symbol)
                 if symbol in dynamic_symbols
-                else fetch_closed_1h_klines(symbol)
+                else spot_closed_hourly(private_url, symbol)
+                if private_url else fetch_closed_1h_klines(symbol)
             )
             metrics = candle_metrics(symbol, candles)
             assets.append(classify_asset_risk(metrics))
