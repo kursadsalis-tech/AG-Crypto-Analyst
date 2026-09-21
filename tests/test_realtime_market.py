@@ -274,81 +274,43 @@ class FlowIsolationTests(unittest.TestCase):
         cache.apply_to(quote, NOW)
         self.assertIsNone(quote.trade_timestamp_ms)
 
-    def test_trade_ingest_does_not_dispatch_and_quotes_survive_blocked_trade_loop(self):
-        main_thread = threading.get_ident()
-        flow_started = threading.Event()
-        release_flow = threading.Event()
-        seen, locations = [], []
-        subscriptions = []
+    def test_process_flow_sink_coalesces_latest_snapshot(self):
+        sink = realtime_market._ProcessFlowSink()
+        first = LiveState(
+            "BTCUSDT", "USD_M_PERPETUAL",
+            trade_timestamp_ms=NOW,
+            taker_imbalance=1,
+            trade_buy_notional=100,
+            trade_sell_notional=0,
+        )
+        sink.publish(first)
+        second = LiveState(
+            "BTCUSDT", "USD_M_PERPETUAL",
+            trade_timestamp_ms=NOW + 1,
+            taker_imbalance=-0.5,
+            trade_buy_notional=100,
+            trade_sell_notional=300,
+        )
+        sink.publish(second)
+        snapshot = sink.snapshot()
+        self.assertEqual(
+            snapshot[("BTCUSDT", "USD_M_PERPETUAL")],
+            (NOW + 1, -0.5, 100, 300),
+        )
 
-        class Socket:
-            def __init__(self):
-                self.channel = None
-                self.count = 0
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_):
-                return False
-
-            async def send(self, raw):
-                params = json.loads(raw).get("params", [])
-                subscriptions.extend(params)
-                if params:
-                    self.channel = params[0].split("@")[1]
-
-            async def recv(self):
-                locations.append((self.channel, threading.get_ident(), id(asyncio.get_running_loop())))
-                self.count += 1
-                if self.channel == "trade":
-                    if self.count > 200:
-                        flow_started.set()
-                        # Deliberately block only the trade loop. Quotes must
-                        # arrive before this is released by their callback.
-                        release_flow.wait(2)
-                        await asyncio.sleep(0.01)
-                    return json.dumps({"e": "trade", "s": "BTCUSDT", "E": NOW,
-                                       "p": "100", "q": "2", "m": False})
-                await asyncio.sleep(0.01)
-                return json.dumps({"e": "bookTicker", "s": "BTCUSDT", "E": NOW,
-                                   "b": "99", "B": "2", "a": "101", "A": "3"})
-
-        async def scenario():
-            stop = asyncio.Event()
-            started = time.monotonic()
-
-            async def on_state(state, _):
-                self.assertEqual(threading.get_ident(), main_thread)
-                self.assertEqual(state.quote_timestamp_ms, NOW)
-                if flow_started.is_set():
-                    seen.append(state)
-                    self.assertFalse(release_flow.is_set())
-                    self.assertLess(time.monotonic()-started, 1)
-                    release_flow.set()
-                    stop.set()
-
-            try:
-                await asyncio.wait_for(realtime_market.stream(
-                    lambda: ["BTCUSDT"], on_state, stop,
-                ), timeout=3)
-            finally:
-                release_flow.set()
-
-        with patch.object(realtime_market.websockets, "connect", side_effect=lambda *a, **k: Socket()), \
-                patch.object(realtime_market.time, "time", return_value=NOW/1000):
-            asyncio.run(scenario())
-        self.assertTrue(seen)
-        self.assertEqual(seen[-1].trade_timestamp_ms, NOW)
-        self.assertEqual(seen[-1].trade_buy_notional, 40000)
-        self.assertEqual(seen[-1].taker_imbalance, 1)
-        quotes = {(tid, loop) for channel, tid, loop in locations if channel == "bookTicker"}
-        trades = {(tid, loop) for channel, tid, loop in locations if channel == "trade"}
-        self.assertTrue(quotes and trades)
-        self.assertTrue(all(tid == main_thread for tid, _ in quotes))
-        self.assertTrue(all(tid != main_thread for tid, _ in trades))
-        self.assertTrue({loop for _, loop in quotes}.isdisjoint({loop for _, loop in trades}))
-        self.assertFalse(any(t.name == "agca-trade-flow" for t in threading.enumerate()))
+    def test_latest_flow_cache_accepts_process_batch(self):
+        cache = realtime_market.LatestFlowCache()
+        cache.set_symbols(["BTCUSDT"])
+        cache.update_batch({
+            ("BTCUSDT", "USD_M_PERPETUAL"): (NOW, 0.75, 700, 100),
+            ("ETHUSDT", "USD_M_PERPETUAL"): (NOW, -0.5, 100, 300),
+        })
+        quote = LiveState("BTCUSDT", quote_timestamp_ms=NOW)
+        cache.apply_to(quote, NOW)
+        self.assertEqual(quote.trade_timestamp_ms, NOW)
+        self.assertEqual(quote.taker_imbalance, 0.75)
+        self.assertEqual(quote.trade_buy_notional, 700)
+        self.assertEqual(quote.trade_sell_notional, 100)
 
     def test_flow_only_socket_never_calls_decision_callback(self):
         async def scenario():
@@ -429,17 +391,21 @@ class FlowIsolationTests(unittest.TestCase):
                 )
         asyncio.run(scenario())
 
-    def test_cancellation_stops_trade_thread(self):
-        async def scenario():
-            stop = asyncio.Event()
-            cache = realtime_market.LatestFlowCache()
-            task = asyncio.create_task(realtime_market._flow_thread(cache, stop))
-            await asyncio.sleep(0.02)
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await asyncio.wait_for(task, 1)
-        asyncio.run(scenario())
-        self.assertFalse(any(t.name == "agca-trade-flow" for t in threading.enumerate()))
+    def test_replace_queue_item_keeps_only_latest_value(self):
+        class FakeQueue:
+            def __init__(self):
+                self.items = []
+            def get_nowait(self):
+                if not self.items:
+                    raise realtime_market.queue.Empty
+                return self.items.pop(0)
+            def put_nowait(self, value):
+                self.items.append(value)
+
+        q = FakeQueue()
+        q.items.extend([1, 2])
+        realtime_market._replace_queue_item(q, 3)
+        self.assertEqual(q.items, [3])
 
 
 if __name__ == "__main__":
