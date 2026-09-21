@@ -57,6 +57,12 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                   if event["instrument"] == instrument]
         first_oi = instrument_samples[0]["open_interest"]["usd"]
         last_oi = instrument_samples[-1]["open_interest"]["usd"]
+        # Missing native Binance OI remains NULL in the report, not a
+        # fabricated flat positioning signal. Ineligible rows are not stored.
+        oi_change = (
+            last_oi - first_oi if first_oi is not None and last_oi is not None
+            else None
+        )
         first_mid = _mid_price(instrument_samples[0])
         last_mid = _mid_price(instrument_samples[-1])
         gates = {
@@ -86,7 +92,7 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
             "mid_price_last": last_mid,
             "open_interest_usd_first": first_oi,
             "open_interest_usd_last": last_oi,
-            "open_interest_usd_change": last_oi - first_oi,
+            "open_interest_usd_change": oi_change,
             "funding_rate_last": instrument_samples[-1]["funding"]["rate"],
             "long_liquidation_notional_usd_estimate": sum(
                 event["notional_usd_estimate"] for event in events
