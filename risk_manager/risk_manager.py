@@ -7,6 +7,8 @@ must obey. Missing data tightens or blocks risk; it never increases permission.
 from __future__ import annotations
 
 import json
+import os
+import re
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 import statistics
@@ -225,16 +227,56 @@ def fetch_okx_closed_1h_klines(symbol):
 
 
 def fetch_dynamic_closed_1h_klines(symbol):
-    """Require same-venue Binance USD-M closed candles; fail closed on outage.
+    """Same-venue risk candles through AGCA's existing private DB egress.
 
-    An OKX candle is not an executable Binance quote, nor proof that a
-    similarly spelled Binance perpetual exists. Never mask a Binance outage
-    using a different exchange's market evidence.
+    Actual GCE VM rejects direct fapi REST with HTTP 451; never mask its
+    failure with OKX candles or the dissimilar Binance spot contract. Only
+    recent CLOSED Binance USD-M 1h rows authorise dynamic risk coverage.
     """
-    return fetch_closed_1h_klines(
-        symbol,
-        url=BINANCE_USD_M_KLINES_URL,
-        source_prefix="BINANCE_USD_M_KLINES",
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{5,30}USDT", symbol):
+        raise RuntimeError("INVALID_BINANCE_USD_M_RISK_SYMBOL")
+    database_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
+    if not database_url:
+        raise RuntimeError("BINANCE_USD_M_PRIVATE_EGRESS_UNAVAILABLE")
+    from urllib.parse import urlencode
+    url = BINANCE_USD_M_KLINES_URL + "?" + urlencode({
+        "symbol": symbol, "interval": "1h", "limit": KLINE_LIMIT,
+    })
+    try:
+        import psycopg
+        with psycopg.connect(database_url, connect_timeout=5) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL statement_timeout = '20000ms'")
+                cursor.execute(
+                    "SELECT extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', %s)",
+                    ("15000",),
+                )
+                cursor.execute(
+                    "SELECT status, content_type, content FROM extensions.http_get(%s)",
+                    (url,),
+                )
+                result = cursor.fetchone()
+    except Exception as exc:
+        raise RuntimeError("BINANCE_USD_M_KLINES_PRIVATE_EGRESS_ERROR") from exc
+    if (not result or result[0] != 200 or
+            str(result[1] or "").split(";", 1)[0].lower() != "application/json"):
+        raise RuntimeError("BINANCE_USD_M_KLINES_HTTP_UNAVAILABLE")
+    try:
+        rows = json.loads(result[2])
+        if not isinstance(rows, list):
+            raise ValueError("expected kline array")
+        now_ms = int(time.time()*1000)
+        closed = [row for row in rows if isinstance(row, list)
+                  and len(row) >= 8 and int(row[6]) < now_ms]
+    except (ValueError, TypeError, IndexError, OverflowError) as exc:
+        raise RuntimeError("BINANCE_USD_M_KLINES_INVALID_RESPONSE") from exc
+    if len(closed) < MIN_CLOSED_CANDLES:
+        raise RuntimeError("BINANCE_USD_M_KLINES_INSUFFICIENT_CLOSED_CANDLES")
+    # Validate source and close-clock semantics; no symbol aliases.
+    return validate_closed_klines(
+        closed[-MIN_CLOSED_CANDLES:],
+        source=f"BINANCE_USD_M_KLINES_PRIVATE_EGRESS:{symbol}",
+        minimum_rows=MIN_CLOSED_CANDLES,
     )
 
 
@@ -673,7 +715,7 @@ def main():
         try:
             candles = (
                 fetch_dynamic_closed_1h_klines(symbol)
-                if symbol in dynamic_symbols and symbol not in SYMBOLS
+                if symbol in dynamic_symbols
                 else fetch_closed_1h_klines(symbol)
             )
             metrics = candle_metrics(symbol, candles)
