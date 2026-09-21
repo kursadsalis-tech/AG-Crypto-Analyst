@@ -41,6 +41,7 @@ class LiveState:
     market_timestamp_ms: int | None = None
     quote_timestamp_ms: int | None = None
     liquidity_timestamp_ms: int | None = None
+    trade_timestamp_ms: int | None = None
     quote_source: str | None = None
     bid_quote_volume: float | None = None
     ask_quote_volume: float | None = None
@@ -129,6 +130,7 @@ def apply_message(states: dict[str, LiveState], message: dict, received_ms: int)
                 state.trade_sell_notional += notional
             total = state.trade_buy_notional + state.trade_sell_notional
             state.taker_imbalance = ((state.trade_buy_notional - state.trade_sell_notional) / total if total else None)
+            state.trade_timestamp_ms = timestamp
         else:
             continue
         state.market_timestamp_ms = timestamp
@@ -184,22 +186,29 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
             state.trade_buy_notional += notional
         total = state.trade_buy_notional + state.trade_sell_notional
         state.taker_imbalance = ((state.trade_buy_notional - state.trade_sell_notional) / total if total else None)
+        state.trade_timestamp_ms = timestamp
     state.market_timestamp_ms = timestamp
     return [state]
 
 
-def binance_subscription_params(symbols, market_type="SPOT"):
-    """Timestamped Binance ticker/trade streams for executable PAPER markets."""
+def binance_subscription_params(symbols, market_type="SPOT", channels=None):
+    """Timestamped Binance streams for executable PAPER markets."""
     market_type_filter = market_type
     normalized = {
         (item, "USD_M_PERPETUAL") if isinstance(item, str) else tuple(item)
         for item in symbols
     }
+    if channels is None:
+        channels = (
+            ("ticker", "aggTrade")
+            if market_type_filter == "SPOT"
+            else ("bookTicker", "aggTrade")
+        )
     return [
         f"{symbol.lower()}@{channel}"
         for symbol, item_market_type in sorted(normalized)
         if item_market_type == market_type_filter
-        for channel in (("ticker", "aggTrade") if market_type_filter == "SPOT" else ("bookTicker", "trade"))
+        for channel in channels
     ]
 
 def _queue_latest_state(pending, order, queued, state, received_ms):
@@ -245,7 +254,8 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
             await asyncio.sleep(1)
             continue
         try:
-            states.clear()
+            if shared_states is None:
+                states.clear()
             async with websockets.connect(
                 WS_URL, ssl=context, open_timeout=10, ping_interval=20,
                 ping_timeout=10, max_queue=1024,
@@ -291,7 +301,10 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
             backoff = min(backoff * 2, 30)
 
 
-async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *, market_type="SPOT"):
+async def _binance_stream(
+    symbols, on_state, stop_event, health_callback=None, *,
+    market_type="SPOT", channels=None, shared_states=None,
+):
     """Keep Binance ingest independent from the heavier PAPER decision callback.
 
     The receiver task continuously drains websocket traffic and coalesces it to
@@ -301,9 +314,12 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
     queue of every book/trade tick.
     """
     context = ssl.create_default_context(cafile=certifi.where())
-    states, backoff = {}, 1
+    states = shared_states if shared_states is not None else {}
+    backoff = 1
     while not stop_event.is_set():
-        desired = binance_subscription_params(symbols(), market_type)
+        desired = binance_subscription_params(
+            symbols(), market_type, channels=channels
+        )
         if not desired:
             await asyncio.sleep(1)
             continue
@@ -368,7 +384,7 @@ async def _binance_stream(symbols, on_state, stop_event, health_callback=None, *
                     while not stop_event.is_set():
                         await asyncio.sleep(1.0)
                         desired_now = binance_subscription_params(
-                            symbols(), market_type
+                            symbols(), market_type, channels=channels
                         )
                         removed = sorted(set(active) - set(desired_now))
                         added = sorted(set(desired_now) - set(active))
@@ -436,8 +452,31 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
                 health_callback("IDLE", None)
             await asyncio.sleep(1)
 
+    spot_states = {}
+    swap_states = {}
     await asyncio.gather(
-        _binance_stream(spot_symbols, on_state, stop_event, health_callback, market_type="SPOT"),
-        _binance_stream(swap_symbols, on_state, stop_event, health_callback, market_type="USD_M_PERPETUAL"),
+        _binance_stream(
+            spot_symbols, on_state, stop_event, health_callback,
+            market_type="SPOT", channels=("ticker",),
+            shared_states=spot_states,
+        ),
+        _binance_stream(
+            spot_symbols, on_state, stop_event, health_callback,
+            market_type="SPOT", channels=("aggTrade",),
+            shared_states=spot_states,
+        ),
+        # Keep executable USD-M quotes on a dedicated socket so BTC/ETH trade
+        # bursts can never backlog the price feed used for fills/stops.
+        _binance_stream(
+            swap_symbols, on_state, stop_event, health_callback,
+            market_type="USD_M_PERPETUAL", channels=("bookTicker",),
+            shared_states=swap_states,
+        ),
+        # Flow remains live on an independent aggregate-trade socket.
+        _binance_stream(
+            swap_symbols, on_state, stop_event, health_callback,
+            market_type="USD_M_PERPETUAL", channels=("aggTrade",),
+            shared_states=swap_states,
+        ),
         idle_health(),
     )
