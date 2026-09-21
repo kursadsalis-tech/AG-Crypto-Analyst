@@ -460,6 +460,7 @@ def portfolio_snapshot(con, now=None):
     reserved = 0.0
     unrealized = 0.0
     gross_exposure = 0.0
+    gross_exposure_by_symbol = {}
     valuation_complete = True
     missing_marks = []
     for symbol, direction, entry, quantity, margin_basis in open_rows:
@@ -476,7 +477,11 @@ def portfolio_snapshot(con, now=None):
         mark, _ = mark_state
         qty = float(quantity)
         unrealized += directional_pnl(direction, float(entry), mark, qty)
-        gross_exposure += abs(qty * mark)
+        marked_gross = abs(qty * mark)
+        gross_exposure += marked_gross
+        gross_exposure_by_symbol[symbol] = (
+            gross_exposure_by_symbol.get(symbol, 0.0) + marked_gross
+        )
     initial, cash, realized, fees = map(float, portfolio[:4])
     equity = cash + reserved + unrealized
     return {
@@ -488,6 +493,7 @@ def portfolio_snapshot(con, now=None):
         "total_fees": fees,
         "equity": equity,
         "gross_exposure": gross_exposure,
+        "gross_exposure_by_symbol": dict(gross_exposure_by_symbol),
         "valuation_complete": valuation_complete,
         "missing_marks": tuple(missing_marks),
         "return_pct": (equity / initial - 1.0) * 100.0,
