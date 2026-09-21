@@ -152,12 +152,30 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual(state.liquidity_timestamp_ms, NOW)
         self.assertEqual(state.quote_source, "BINANCE_USD_M_WS_TICKER_BID_ASK")
 
+    def test_binance_usdm_book_ticker_and_trade_are_normalized(self):
+        states = {}
+        state = realtime_market.apply_binance_message(states, {
+            "e": "bookTicker", "s": "BTCUSDT", "E": NOW,
+            "b": "99", "B": "2", "a": "101", "A": "3",
+        }, NOW, market_type="USD_M_PERPETUAL")[0]
+        self.assertEqual(state.last_price, 100)
+        self.assertEqual(state.best_bid, 99)
+        self.assertEqual(state.best_ask, 101)
+        self.assertEqual((state.bid_quote_volume, state.ask_quote_volume), (198, 303))
+
+        state = realtime_market.apply_binance_message(states, {
+            "e": "trade", "s": "BTCUSDT", "E": NOW + 1,
+            "p": "100", "q": "2", "m": False,
+        }, NOW + 1, market_type="USD_M_PERPETUAL")[0]
+        self.assertEqual(state.trade_buy_notional, 200)
+        self.assertEqual(state.market_timestamp_ms, NOW + 1)
+
     def test_usdm_subscription_is_dynamic_and_does_not_include_spot(self):
         params = realtime_market.binance_subscription_params(
             [("SOLUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "SPOT")],
             "USD_M_PERPETUAL",
         )
-        self.assertEqual(params, ["solusdt@ticker", "solusdt@aggTrade"])
+        self.assertEqual(params, ["solusdt@bookTicker", "solusdt@trade"])
 
 
 if __name__ == "__main__":
