@@ -108,6 +108,7 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual(state.quote_timestamp_ms, NOW)
         self.assertEqual(state.liquidity_timestamp_ms, NOW)
         self.assertEqual(state.market_timestamp_ms, NOW+1000)
+        self.assertEqual(state.trade_timestamp_ms, NOW+1000)
 
     def test_incremental_depth_cannot_be_mistaken_for_best_book(self):
         states = {"DYNAMICUSDT": LiveState("DYNAMICUSDT", "SPOT", best_bid=99, best_ask=101,
@@ -165,18 +166,30 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual((state.bid_quote_volume, state.ask_quote_volume), (198, 303))
 
         state = realtime_market.apply_binance_message(states, {
-            "e": "trade", "s": "BTCUSDT", "E": NOW + 1,
+            "e": "aggTrade", "s": "BTCUSDT", "E": NOW + 1,
             "p": "100", "q": "2", "m": False,
         }, NOW + 1, market_type="USD_M_PERPETUAL")[0]
         self.assertEqual(state.trade_buy_notional, 200)
         self.assertEqual(state.market_timestamp_ms, NOW + 1)
+        self.assertEqual(state.trade_timestamp_ms, NOW + 1)
 
     def test_usdm_subscription_is_dynamic_and_does_not_include_spot(self):
         params = realtime_market.binance_subscription_params(
             [("SOLUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "SPOT")],
             "USD_M_PERPETUAL",
         )
-        self.assertEqual(params, ["solusdt@bookTicker", "solusdt@trade"])
+        self.assertEqual(params, ["solusdt@bookTicker", "solusdt@aggTrade"])
+
+    def test_usdm_quote_and_flow_channels_can_be_isolated(self):
+        symbols = [("BTCUSDT", "USD_M_PERPETUAL")]
+        quotes = realtime_market.binance_subscription_params(
+            symbols, "USD_M_PERPETUAL", channels=("bookTicker",)
+        )
+        flow = realtime_market.binance_subscription_params(
+            symbols, "USD_M_PERPETUAL", channels=("aggTrade",)
+        )
+        self.assertEqual(quotes, ["btcusdt@bookTicker"])
+        self.assertEqual(flow, ["btcusdt@aggTrade"])
 
 
     def test_latest_state_queue_coalesces_hot_symbol_and_snapshots_state(self):
