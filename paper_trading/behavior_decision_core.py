@@ -670,7 +670,8 @@ def _candidate_for_hypothesis(
     risk = evidence["risk"]
     return [{
         "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
-        "symbol": symbol, "instrument": instrument, "horizon": 4,
+        "symbol": symbol, "instrument": instrument,
+        "market_type": "USD_M_PERPETUAL", "horizon": 4,
         "direction": learned["direction"], "confidence": learned["calibrated_win_rate"],
         "expected_net_edge_pct": learned["calibrated_net_edge_pct"],
         "execution_size_multiplier": learned["execution_size_multiplier"],
