@@ -19,7 +19,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
-from paper_trading.execution_model import PAPER_MARKET, execute_paper, estimate_order_rules
+from paper_trading.execution_model import (
+    PAPER_MARKET, execute_paper, estimate_order_rules, simulated_fill,
+)
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
 from paper_trading.exchange_metadata import (
