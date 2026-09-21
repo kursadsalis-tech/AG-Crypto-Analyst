@@ -10,6 +10,7 @@ User=kursadsalis
 Group=kursadsalis
 WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
 EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
 Environment=HOME=/home/kursadsalis
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
 Environment=AGCA_REMOTE_MIRROR_INLINE=0
