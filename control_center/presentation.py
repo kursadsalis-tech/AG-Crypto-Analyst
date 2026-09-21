@@ -24,6 +24,7 @@ def operator_view(snapshot):
     """Translate the read model into concise Turkish operator language."""
     system = snapshot["system"]
     portfolio = snapshot["portfolio"]
+    feed_live = bool(system.get("market_feed_fresh"))
     positions = []
     for row in snapshot["positions"]:
         stale = row["market_status"] != "CANLI"
@@ -46,9 +47,15 @@ def operator_view(snapshot):
             "güncel_stop": _price(row.get("current_stop_price")),
             "anlık_sonuç": _money(row["unrealized_pnl"]),
             "son_fiyat": _age(row["freshness_seconds"]),
-            "durum": "GECİKMİŞ" if stale else "CANLI",
+            "durum": (
+                "SON QUOTE ESKİ" if stale and feed_live
+                else "VERİ GECİKİYOR" if stale
+                else "CANLI QUOTE"
+            ),
             "uyarı": (
-                "PİYASA VERİSİ GECİKMİŞ — ajan güncel fiyatı görmüyor olabilir"
+                "SON QUOTE ESKİ — global piyasa akışı canlı; bu sembolde son quote 5 sn eşiğini aştı"
+                if stale and feed_live
+                else "PİYASA VERİSİ GECİKİYOR — ajan güncel fiyatı görmüyor olabilir"
                 if stale else None
             ),
             "karar_gerekçesi": row["decision_reason"],
@@ -200,7 +207,13 @@ def operator_view(snapshot):
         "durum": health,
         "gerçek_çalışma_durumu": system.get("pipeline_state", "BİLİNMİYOR"),
         "çalışma_açıklaması": system.get("pipeline_explanation", "—"),
-        "izlenen_piyasa": f'{system.get("fresh_market_symbols", 0)}/{system.get("observed_symbols", 0)} canlı',
+        "izlenen_piyasa": (
+            f'{system.get("observed_symbols", 0)} sembol · akış canlı · '
+            f'{system.get("fresh_market_symbols", 0)} son quote ≤5 sn'
+            if feed_live
+            else f'{system.get("observed_symbols", 0)} sembol · akış güncel değil'
+        ),
+        "piyasa_akış_güncelliği": _age(system.get("market_snapshot_age_seconds")),
         "son_gerçek_iş": _age(system.get("latest_work_age_seconds")),
         "kanonik_tarama_yaşı": _age(system.get("brain_scan_age_seconds")),
         "kanonik_tarama_güncel": "EVET" if system.get("brain_scan_fresh") else "HAYIR",
@@ -250,7 +263,12 @@ def operator_view(snapshot):
             "ask": _price(row.get("best_ask")),
             "kaynak": row.get("quote_source") or "kaynak bilinmiyor",
             "güncellik": _age(row.get("freshness_seconds")),
-            "durum": row.get("market_status", "GECİKMİŞ"),
+            "durum": (
+                "CANLI QUOTE"
+                if row.get("market_status") == "CANLI"
+                else "SON QUOTE ESKİ" if feed_live
+                else "VERİ GECİKİYOR"
+            ),
             "book_imbalance": row.get("book_imbalance"),
             "taker_imbalance": row.get("taker_imbalance"),
             "görünür_likidite": row.get("visible_quote_volume"),

@@ -11,7 +11,9 @@ class ControlCenterPresentationTests(unittest.TestCase):
                 "open_positions": 1, "live_positions": 0,
                 "market_data_status": "GECİKMİŞ", "worker_healthy": True,
                 "worker_status": "CONNECTED", "heartbeat_age_seconds": 2,
-                "last_action": "HOLD",
+                "last_action": "HOLD", "market_feed_fresh": False,
+                "observed_symbols": 1, "fresh_market_symbols": 0,
+                "market_snapshot_age_seconds": 45,
             },
             "portfolio": {
                 "initial_capital": 10000, "cash": 8000,
@@ -47,7 +49,7 @@ class ControlCenterPresentationTests(unittest.TestCase):
         self.assertIn("piyasa verisi gecikmiş", view["durum"])
         position = view["açık_pozisyonlar"][0]
         self.assertEqual(position["piyasa"], "Binance USD-M")
-        self.assertEqual(position["durum"], "GECİKMİŞ")
+        self.assertEqual(position["durum"], "VERİ GECİKİYOR")
         self.assertIn("ajan güncel fiyatı görmüyor olabilir", position["uyarı"])
         self.assertEqual(position["son_fiyat"], "8.2 saniye önce")
         self.assertEqual(position["karar_akışı"]["karar"], "LONG — PAPER_OPPORTUNITY_POLICY")
@@ -61,7 +63,9 @@ class ControlCenterPresentationTests(unittest.TestCase):
                 "open_positions": 1, "live_positions": 1,
                 "market_data_status": "CANLI", "worker_healthy": True,
                 "worker_status": "CONNECTED", "heartbeat_age_seconds": 1,
-                "last_action": "HOLD",
+                "last_action": "HOLD", "market_feed_fresh": True,
+                "observed_symbols": 1, "fresh_market_symbols": 1,
+                "market_snapshot_age_seconds": 1,
             },
             "portfolio": {
                 "initial_capital": 10000, "cash": 9000,
@@ -95,6 +99,7 @@ class ControlCenterPresentationTests(unittest.TestCase):
         }]
         view = operator_view(snapshot)
         self.assertEqual(view["durum"], "Sistem çalışıyor — canlı piyasa verisi geliyor")
+        self.assertEqual(view["izlenen_piyasa"], "1 sembol · akış canlı · 1 son quote ≤5 sn")
         self.assertEqual(view["açık_pozisyonlar"][0]["son_fiyat"], "1 saniyeden kısa süre önce")
         self.assertIsNone(view["açık_pozisyonlar"][0]["uyarı"])
         self.assertEqual(view["açık_pozisyonlar"][0]["tp1_durumu"], "GERÇEKLEŞTİ")
@@ -103,6 +108,42 @@ class ControlCenterPresentationTests(unittest.TestCase):
             view["kapanan_işlemler"][0]["kapanış_nedeni"],
             "Koruyucu stop çalıştı",
         )
+
+
+    def test_operator_view_distinguishes_live_feed_from_quiet_symbol_quote(self):
+        snapshot = {
+            "system": {
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "open_positions": 0, "live_positions": 0,
+                "market_data_status": "POZİSYON_YOK", "worker_healthy": True,
+                "worker_status": "CONNECTED", "heartbeat_age_seconds": 1,
+                "last_action": "HOLD", "market_feed_fresh": True,
+                "observed_symbols": 2, "fresh_market_symbols": 1,
+                "market_snapshot_age_seconds": 1.2,
+            },
+            "portfolio": {
+                "initial_capital": 10000, "cash": 10000, "realized_pnl": 0,
+                "total_fees": 0, "unrealized_pnl": 0,
+            },
+            "positions": [],
+            "market": [
+                {"symbol":"BTCUSDT","market_type":"USD_M_PERPETUAL",
+                 "last_price":60000,"best_bid":59999,"best_ask":60001,
+                 "quote_source":"BINANCE_USD_M_WS_TICKER_BID_ASK",
+                 "freshness_seconds":1.0,"market_status":"CANLI"},
+                {"symbol":"UBUSDT","market_type":"USD_M_PERPETUAL",
+                 "last_price":0.12,"best_bid":0.119,"best_ask":0.121,
+                 "quote_source":"BINANCE_USD_M_WS_TICKER_BID_ASK",
+                 "freshness_seconds":20.0,"market_status":"GECİKMİŞ"},
+            ],
+            "risk": {"open_positions":0,"stale_positions":0,"positions":[]},
+            "learning": None,
+            "closed_positions": [],
+        }
+        view = operator_view(snapshot)
+        self.assertEqual(view["izlenen_piyasa"], "2 sembol · akış canlı · 1 son quote ≤5 sn")
+        self.assertEqual(view["piyasa"][0]["durum"], "CANLI QUOTE")
+        self.assertEqual(view["piyasa"][1]["durum"], "SON QUOTE ESKİ")
 
 
 if __name__ == "__main__":
