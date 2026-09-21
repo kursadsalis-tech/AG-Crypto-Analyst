@@ -19,6 +19,7 @@ import websockets
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
 BINANCE_USDM_WS_URL = "wss://fstream.binance.com/public/ws"
+BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/market/ws"
 MAX_EVENT_AGE_MS = 2_000
 BINANCE_DISPATCH_INTERVAL_SECONDS = 0.05
 BINANCE_DISPATCH_BATCH_MAX = 64
@@ -569,7 +570,9 @@ async def _binance_stream(
             if shared_states is None:
                 states.clear()
             async with websockets.connect(
-                BINANCE_SPOT_WS_URL if market_type == "SPOT" else BINANCE_USDM_WS_URL,
+                (BINANCE_SPOT_WS_URL if market_type == "SPOT"
+                 else BINANCE_USDM_TRADE_WS_URL if flow_sink is not None
+                 else BINANCE_USDM_WS_URL),
                 ssl=context,
                 open_timeout=10,
                 ping_interval=20,
