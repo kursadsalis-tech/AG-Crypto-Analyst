@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -143,6 +144,12 @@ async def run():
     last_selection_attempt_at = None
     live_states = {}
     last_market_state_publish_at = 0.0
+    latest_execution_states = {}
+    latest_execution_lock = threading.Lock()
+    pending_decision_states = {}
+    pending_decision_order = deque()
+    pending_decision_keys = set()
+    decision_wakeup = asyncio.Event()
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -230,6 +237,11 @@ async def run():
             decision_local.connection = db
         return db
 
+    def latest_execution_state(state, observed_ms):
+        key = (state.symbol, state.market_type)
+        with latest_execution_lock:
+            return latest_execution_states.get(key, (state, observed_ms))
+
     def process_state(state, observed_ms):
         """Run DB/decision/PAPER work off the websocket event loop."""
         nonlocal last_health_at, last_selection_attempt_at, last_learning_at
@@ -254,12 +266,13 @@ async def run():
                    FROM paper_behavior_selection_runs
                    ORDER BY run_id DESC LIMIT 1"""
             ).fetchone()
+            brain_state, _ = latest_execution_state(state, observed_ms)
             write_brain_state({
                 "phase": "OPPORTUNITY_SCAN",
                 "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
-                "observed_symbol": state.symbol,
-                "observed_market_type": state.market_type,
-                "observed_price": state.last_price,
+                "observed_symbol": brain_state.symbol,
+                "observed_market_type": brain_state.market_type,
+                "observed_price": brain_state.last_price,
                 "monitored_symbols": len(symbols(work_con)),
                 "scan": ({
                     "core_status": latest_scan[0],
@@ -283,7 +296,10 @@ async def run():
                     if selected else "CONTINUE_SCANNING"
                 ),
             })
-            last_selection_attempt_at = observed_at
+            # Cadence is based on completion time, not the event that started
+            # a potentially slow scan. Otherwise a multi-second scan retriggers
+            # immediately and starves position/fill management.
+            last_selection_attempt_at = now()
 
         if (
             last_learning_at is None
@@ -291,37 +307,62 @@ async def run():
         ):
             trade_learning.run(work_con, FORWARD_COHORT, observed_at)
             strategy_allocator.rebalance(work_con, observed_at)
-            last_learning_at = observed_at
+            last_learning_at = now()
+
+        # A scan can take seconds. Never fill/manage against the state that
+        # started that scan; refresh from the ingest cache immediately before
+        # any PAPER execution or position-management action.
+        execution_state, execution_observed_ms = latest_execution_state(
+            state, observed_ms
+        )
+        execution_stamp_ms = execution_state.market_timestamp_ms
+        wall_clock_ms = int(now().timestamp() * 1000)
+        if (
+            execution_stamp_ms is None
+            or wall_clock_ms - execution_stamp_ms
+            > realtime_market.MAX_EVENT_AGE_MS
+        ):
+            write_health(
+                "DEGRADED",
+                error="LIVE_STATE_STALE_BEFORE_EXECUTION",
+                symbol=execution_state.symbol,
+            )
+            return
+        execution_at = datetime.fromtimestamp(
+            execution_observed_ms / 1000, tz=timezone.utc
+        )
 
         live_filled, live_cancelled = fill_pending_from_live_state(
-            work_con, observed_at, state, metadata
+            work_con, execution_at, execution_state, metadata
         )
         if live_filled or live_cancelled:
             position_management.initialize_open_positions(
-                work_con, observed_at
+                work_con, execution_at
             )
 
-        rule = rules_for(metadata[state.market_type], state.symbol)
+        rule = rules_for(
+            metadata[execution_state.market_type], execution_state.symbol
+        )
         if rule is None:
             position_management.process_market_state(
-                work_con, state, observed_at, None
+                work_con, execution_state, execution_at, None
             )
             write_health(
                 "DEGRADED",
                 error="LIVE_SYMBOL_RULES_UNAVAILABLE",
-                symbol=state.symbol,
+                symbol=execution_state.symbol,
             )
             return
 
         result = position_management.process_market_state(
-            work_con, state, observed_at, rule
+            work_con, execution_state, execution_at, rule
         )
         if result.get("status") == "POSITION_CLOSED":
             reviews = experience_memory.review_closed_positions(
-                work_con, observed_at
+                work_con, execution_at
             )
             learning = trade_learning.run(
-                work_con, FORWARD_COHORT, observed_at
+                work_con, FORWARD_COHORT, execution_at
             )
             result["new_experience_reviews"] = reviews
             result["learning_status"] = learning["status"]
@@ -330,28 +371,63 @@ async def run():
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
         }:
             write_health(
-                "CONNECTED", symbol=state.symbol, last_action=result
+                "CONNECTED", symbol=execution_state.symbol, last_action=result
             )
-            last_health_at = observed_at
+            last_health_at = execution_at
         elif (
             last_health_at is None
             or (observed_at - last_health_at).total_seconds() >= 10
         ):
             write_health(
                 "CONNECTED",
-                symbol=state.symbol,
+                symbol=execution_state.symbol,
                 last_action={"status": "HOLD"},
             )
             last_health_at = observed_at
 
     async def on_state(state, observed_ms):
-        # Fast path: telemetry is updated immediately from the newest state.
-        # All synchronous SQLite/decision work is isolated in one worker thread,
-        # so websocket ingest remains free to keep consuming live events.
+        # True ingest hot path: publish/cache the newest state and return.
+        # Decision/PAPER work is consumed separately and can never block the
+        # websocket receiver or telemetry freshness.
         publish_live_state(state, observed_ms)
-        await loop.run_in_executor(
-            decision_executor, process_state, state, observed_ms
-        )
+        key = (state.symbol, state.market_type)
+        with latest_execution_lock:
+            latest_execution_states[key] = (state, observed_ms)
+        pending_decision_states[key] = (state, observed_ms)
+        if key not in pending_decision_keys:
+            pending_decision_order.append(key)
+            pending_decision_keys.add(key)
+        decision_wakeup.set()
+
+    async def decision_loop():
+        while not stop_event.is_set():
+            if not pending_decision_order:
+                decision_wakeup.clear()
+                try:
+                    await asyncio.wait_for(
+                        decision_wakeup.wait(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+            if not pending_decision_order:
+                continue
+            key = pending_decision_order.popleft()
+            pending_decision_keys.discard(key)
+            item = pending_decision_states.pop(key, None)
+            if item is None:
+                continue
+            state, observed_ms = item
+            stamp_ms = state.market_timestamp_ms
+            wall_clock_ms = int(now().timestamp() * 1000)
+            if (
+                stamp_ms is None
+                or wall_clock_ms - stamp_ms
+                > realtime_market.MAX_EVENT_AGE_MS
+            ):
+                continue
+            await loop.run_in_executor(
+                decision_executor, process_state, state, observed_ms
+            )
 
     def maintenance_once():
         maintenance_con = connect(DB_NAME, timeout=30)
@@ -400,6 +476,7 @@ async def run():
     try:
         await asyncio.gather(
             realtime_market.stream(symbols, on_state, stop_event, health),
+            decision_loop(),
             maintenance(),
             heartbeat(),
         )
