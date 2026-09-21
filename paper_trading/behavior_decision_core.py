@@ -377,7 +377,9 @@ def _latest_risk(con, now):
     if latest is None:
         return {}
     policy = con.execute("""
-        SELECT created_at,new_positions_allowed,risk_per_trade_pct
+        SELECT created_at,new_positions_allowed,risk_per_trade_pct,
+               max_total_exposure_pct,max_alt_exposure_pct,
+               max_single_position_pct,daily_loss_limit_pct,max_new_positions
         FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
@@ -399,10 +401,28 @@ def _latest_risk(con, now):
     # positive budget from the asset's maximum notional allocation.
     try:
         trade_risk_pct = float(policy[2])
-    except (TypeError, ValueError):
+        max_total_exposure_pct = float(policy[3])
+        max_alt_exposure_pct = float(policy[4])
+        max_single_position_pct = float(policy[5])
+        daily_loss_limit_pct = float(policy[6])
+        max_new_positions = int(policy[7])
+    except (TypeError, ValueError, OverflowError):
         return {}
-    if not math.isfinite(trade_risk_pct) or trade_risk_pct <= 0:
+    numeric_limits = (
+        trade_risk_pct, max_total_exposure_pct, max_alt_exposure_pct,
+        max_single_position_pct, daily_loss_limit_pct,
+    )
+    if (any(not math.isfinite(value) or value <= 0 for value in numeric_limits)
+            or max_new_positions <= 0):
         return {}
+    global_limits = {
+        "risk_per_trade_pct": trade_risk_pct,
+        "max_total_exposure_pct": max_total_exposure_pct,
+        "max_alt_exposure_pct": max_alt_exposure_pct,
+        "max_single_position_pct": max_single_position_pct,
+        "daily_loss_limit_pct": daily_loss_limit_pct,
+        "max_new_positions": max_new_positions,
+    }
     assets = {}
     for symbol, allowed, cap, price, as_of in con.execute("""
         SELECT symbol,new_position_allowed,max_position_pct,price,as_of
@@ -425,7 +445,7 @@ def _latest_risk(con, now):
         assets[symbol] = {
             "allowed": bool(allowed), "cap_pct": cap_value,
             "price": price_value, "risk_as_of": str(as_of),
-            "risk_per_trade_pct": trade_risk_pct,
+            **global_limits,
             "policy_created_at": str(policy[0]),
         }
     return assets
@@ -681,6 +701,13 @@ def _candidate_for_hypothesis(
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
         "risk_cap_pct": risk["cap_pct"],
         "risk_per_trade_pct": float(risk.get("risk_per_trade_pct") or 0.0),
+        "risk_policy_limits": {
+            key: risk[key] for key in (
+                "max_total_exposure_pct", "max_alt_exposure_pct",
+                "max_single_position_pct", "daily_loss_limit_pct",
+                "max_new_positions",
+            )
+        },
         "evidence": evidence,
         "evidence_sha256": digest,
     }]
