@@ -32,6 +32,8 @@ MIN_EXECUTION_TRADES_FOR_PROMOTION = 10
 MIN_EXECUTION_DAYS_FOR_PROMOTION = 3
 EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
+MAX_RISK_POLICY_AGE_SECONDS = 1800
+MAX_ASSET_RISK_AGE_SECONDS = 7200
 ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
 
@@ -370,7 +372,7 @@ def learned_patterns(con, now=None):
     }
 
 
-def _latest_risk(con):
+def _latest_risk(con, now):
     latest = con.execute("SELECT MAX(id) FROM risk_policy_snapshots").fetchone()[0]
     if latest is None:
         return {}
@@ -379,6 +381,18 @@ def _latest_risk(con):
         FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
+        return {}
+    # Unlike historical evidence, a past risk snapshot does not authorise
+    # a current position. The existing signal gate uses a 30-minute policy
+    # window; preserve the same limit in the PAPER behavior path.
+    try:
+        policy_at = datetime.fromisoformat(str(policy[0]).replace("Z", "+00:00"))
+        if policy_at.tzinfo is None:
+            return {}
+        policy_age = (now - policy_at.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return {}
+    if not -60 <= policy_age <= MAX_RISK_POLICY_AGE_SECONDS:
         return {}
     # The global per-trade risk limit is the authoritative sizing input.
     # Missing, zero or invalid policy limits fail closed; never infer a
@@ -389,14 +403,32 @@ def _latest_risk(con):
         return {}
     if not math.isfinite(trade_risk_pct) or trade_risk_pct <= 0:
         return {}
-    return {row[0]: {"allowed": bool(row[1]), "cap_pct": float(row[2]),
-                     "price": float(row[3]), "risk_as_of": str(row[4]),
-                     "risk_per_trade_pct": trade_risk_pct,
-                     "policy_created_at": str(policy[0])}
-            for row in con.execute("""
-                SELECT symbol,new_position_allowed,max_position_pct,price,as_of
-                FROM asset_risk_snapshots WHERE policy_snapshot_id=?
-            """, (latest,)).fetchall()}
+    assets = {}
+    for symbol, allowed, cap, price, as_of in con.execute("""
+        SELECT symbol,new_position_allowed,max_position_pct,price,as_of
+        FROM asset_risk_snapshots WHERE policy_snapshot_id=?
+    """, (latest,)).fetchall():
+        try:
+            asset_time = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+            if asset_time.tzinfo is None:
+                continue
+            age = (now - asset_time.astimezone(timezone.utc)).total_seconds()
+            cap_value, price_value = float(cap), float(price)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        # Closed 1h risk bars may be up to ~1 hour old; stale/future/missing
+        # asset references cannot be used to size a new PAPER position.
+        if (not -60 <= age <= MAX_ASSET_RISK_AGE_SECONDS
+                or not math.isfinite(cap_value) or cap_value <= 0
+                or not math.isfinite(price_value) or price_value <= 0):
+            continue
+        assets[symbol] = {
+            "allowed": bool(allowed), "cap_pct": cap_value,
+            "price": price_value, "risk_as_of": str(as_of),
+            "risk_per_trade_pct": trade_risk_pct,
+            "policy_created_at": str(policy[0]),
+        }
+    return assets
 
 
 def evaluate(con, now=None):
@@ -459,7 +491,7 @@ def evaluate(con, now=None):
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
-    risks = _latest_risk(con)
+    risks = _latest_risk(con, now)
     events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
         FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
         ORDER BY kind,event_id""", (latest,)).fetchall()
