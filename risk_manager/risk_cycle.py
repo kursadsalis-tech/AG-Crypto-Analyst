@@ -107,4 +107,9 @@ def main(force=False):
 
 
 if __name__ == "__main__":
-    main(force=True)
+    outcome = main(force=False)
+    # A fail-closed DATA_BLOCKED policy must be visible as a systemd failure,
+    # not a green timer service. It has already been persisted by the risk
+    # manager to deny new PAPER risk; no retry loop or limit relaxation.
+    if outcome["status"] in {"ERROR", "DATA_BLOCKED"}:
+        raise SystemExit(1)
