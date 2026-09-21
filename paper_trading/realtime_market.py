@@ -21,6 +21,7 @@ BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
 BINANCE_USDM_WS_URL = "wss://fstream.binance.com/ws"
 MAX_EVENT_AGE_MS = 2_000
 BINANCE_DISPATCH_INTERVAL_SECONDS = 0.05
+BINANCE_DISPATCH_BATCH_MAX = 64
 
 
 def instrument(symbol: str, market_type: str = "USD_M_PERPETUAL") -> str:
@@ -412,6 +413,16 @@ def _pop_latest_state(pending, order, queued):
     return None
 
 
+def _pop_latest_batch(pending, order, queued, limit=BINANCE_DISPATCH_BATCH_MAX):
+    """Drain distinct dirty instruments per tick; never throttle all to 20/s."""
+    batch = []
+    for _ in range(min(len(order), limit)):
+        item = _pop_latest_state(pending, order, queued)
+        if item is not None:
+            batch.append(item)
+    return batch
+
+
 
 def subscription_args(symbols):
     normalized = {
@@ -484,7 +495,7 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
 async def _binance_stream(
     symbols, on_state, stop_event, health_callback=None, *,
     market_type="SPOT", channels=None, shared_states=None, flow_cache=None,
-    flow_sink=None,
+    flow_sink=None, metrics=None,
 ):
     """Keep Binance ingest independent from the heavier PAPER decision callback.
 
@@ -552,6 +563,24 @@ async def _binance_stream(
                             continue
                         if flow_cache is not None and message.get("e") not in {"bookTicker", "24hrTicker"}:
                             continue
+                        if metrics is not None:
+                            metrics["received_total"] += 1
+                            metrics["last_received_ms"] = received_ms
+                            symbol = str(message.get("s") or "").upper()
+                            if symbol:
+                                metrics["received_by_symbol_ms"][symbol] = received_ms
+                            try:
+                                exchange_ms = int(message.get("E", 0))
+                            except (TypeError, ValueError):
+                                exchange_ms = 0
+                            if exchange_ms > 0:
+                                lag_ms = received_ms - exchange_ms
+                                metrics["last_receive_lag_ms"] = lag_ms
+                                metrics["max_receive_lag_ms"] = max(
+                                    metrics["max_receive_lag_ms"], lag_ms,
+                                )
+                                if lag_ms > MAX_EVENT_AGE_MS:
+                                    metrics["stale_received_total"] += 1
                         for state in apply_binance_message(
                             states, message, received_ms,
                             market_type=market_type,
@@ -568,6 +597,8 @@ async def _binance_stream(
                                 pending, dirty_order, dirty_symbols,
                                 state, received_ms,
                             )
+                            if metrics is not None:
+                                metrics["accepted_total"] += 1
                         messages_since_yield += 1
                         if messages_since_yield >= 32:
                             messages_since_yield = 0
@@ -604,35 +635,34 @@ async def _binance_stream(
                 async def dispatcher():
                     while not stop_event.is_set():
                         await asyncio.sleep(BINANCE_DISPATCH_INTERVAL_SECONDS)
-                        item = _pop_latest_state(
-                            pending, dirty_order, dirty_symbols
+                        batch = _pop_latest_batch(
+                            pending, dirty_order, dirty_symbols,
                         )
-                        if item is None:
-                            continue
-                        state, observed_ms = item
-                        now_ms = int(time.time() * 1000)
-                        stamp_ms = state.market_timestamp_ms
-                        # Fail closed: never hand an already stale market state
-                        # to PAPER execution. A fresh replacement, if received,
-                        # will be queued by receiver independently.
-                        if (
-                            stamp_ms is not None
-                            and now_ms - stamp_ms > MAX_EVENT_AGE_MS
-                        ):
-                            continue
-                        if flow_cache is not None:
-                            # Merge the newest flow snapshot only here, at the
-                            # bounded dispatcher cadence, never in the hot quote
-                            # receiver. This keeps executable quote ingest free
-                            # of cross-thread lock contention.
-                            flow_cache.apply_to(state, now_ms)
+                        for state, observed_ms in batch:
+                            now_ms = int(time.time() * 1000)
+                            stamp_ms = state.market_timestamp_ms
+                            # Fail closed: never hand an already stale market state
+                            # to PAPER execution. A fresh replacement, if received,
+                            # will be queued by receiver independently.
                             if (
-                                state.trade_timestamp_ms is None or
-                                now_ms - state.trade_timestamp_ms
-                                > MAX_EVENT_AGE_MS
+                                stamp_ms is not None
+                                and now_ms - stamp_ms > MAX_EVENT_AGE_MS
                             ):
-                                state.taker_imbalance = None
-                        await on_state(state, observed_ms)
+                                if metrics is not None:
+                                    metrics["stale_dispatch_total"] += 1
+                                continue
+                            if flow_cache is not None:
+                                # Merge flow only at dispatch, not in hot receiver.
+                                flow_cache.apply_to(state, now_ms)
+                                if (
+                                    state.trade_timestamp_ms is None or
+                                    now_ms - state.trade_timestamp_ms
+                                    > MAX_EVENT_AGE_MS
+                                ):
+                                    state.taker_imbalance = None
+                            await on_state(state, observed_ms)
+                            if metrics is not None:
+                                metrics["dispatched_total"] += 1
 
                 if health_callback:
                     health_callback("CONNECTED", None)
@@ -655,7 +685,18 @@ async def _binance_stream(
             backoff = min(backoff * 2, 30)
 
 
-async def stream(symbols, on_state, stop_event, health_callback=None):
+def new_quote_metrics():
+    """In-memory diagnostics only; no extra feed or execution authority."""
+    return {
+        "received_total": 0, "accepted_total": 0,
+        "stale_received_total": 0, "stale_dispatch_total": 0,
+        "dispatched_total": 0, "last_received_ms": None,
+        "last_receive_lag_ms": None, "max_receive_lag_ms": 0,
+        "received_by_symbol_ms": {},
+    }
+
+
+async def stream(symbols, on_state, stop_event, health_callback=None, quote_metrics=None):
     """Keep Binance executable quotes on this loop; isolate trade ingest."""
     def spot_symbols():
         return [item for item in symbols()
@@ -683,11 +724,14 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
         _binance_stream(
             spot_symbols, on_state, stop_event, health_callback,
             market_type="SPOT", channels=("ticker",), flow_cache=cache,
+            metrics=quote_metrics["SPOT"] if quote_metrics is not None else None,
         ),
         _binance_stream(
             swap_symbols, on_state, stop_event, health_callback,
             market_type="USD_M_PERPETUAL", channels=("bookTicker",),
             flow_cache=cache,
+            metrics=(quote_metrics["USD_M_PERPETUAL"]
+                     if quote_metrics is not None else None),
         ),
         _flow_process(cache, symbols, stop_event),
         refresh_flow_symbols(), idle_health(),

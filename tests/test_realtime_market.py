@@ -221,6 +221,34 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertFalse(order)
         self.assertFalse(queued)
 
+    def test_dispatch_batch_drains_distinct_symbols_without_twenty_per_second_cap(self):
+        pending, order, queued = {}, deque(), set()
+        for i in range(12):
+            state = LiveState(
+                f"COIN{i}USDT", "USD_M_PERPETUAL",
+                market_timestamp_ms=NOW, quote_timestamp_ms=NOW,
+            )
+            realtime_market._queue_latest_state(
+                pending, order, queued, state, NOW,
+            )
+        batch = realtime_market._pop_latest_batch(pending, order, queued)
+        self.assertEqual(len(batch), 12)
+        self.assertFalse(pending)
+        self.assertFalse(order)
+        self.assertFalse(queued)
+        # Bounded dispatch: a large universe cannot monopolize the receiver.
+        for i in range(70):
+            realtime_market._queue_latest_state(
+                pending, order, queued,
+                LiveState(f"COIN{i}USDT", market_timestamp_ms=NOW), NOW,
+            )
+        self.assertEqual(
+            len(realtime_market._pop_latest_batch(pending, order, queued)), 64,
+        )
+        self.assertEqual(
+            len(realtime_market._pop_latest_batch(pending, order, queued)), 6,
+        )
+
     def test_latest_state_queue_is_fair_across_symbols(self):
         pending, order, queued = {}, deque(), set()
         btc = LiveState(
@@ -349,6 +377,61 @@ class FlowIsolationTests(unittest.TestCase):
             quote = LiveState("BTCUSDT")
             cache.apply_to(quote, NOW)
             self.assertEqual(quote.trade_buy_notional, 20000)
+        asyncio.run(scenario())
+
+    def test_receiver_metrics_distinguish_stale_source_from_dispatch(self):
+        async def scenario():
+            stop = asyncio.Event()
+            metrics = realtime_market.new_quote_metrics()
+            cache = realtime_market.LatestFlowCache()
+            cache.set_symbols(["BTCUSDT"])
+            seen = []
+
+            class Socket:
+                count = 0
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *_):
+                    return False
+
+                async def send(self, _):
+                    pass
+
+                async def recv(self):
+                    self.count += 1
+                    if self.count > 2:
+                        await asyncio.sleep(0.12)
+                        stop.set()
+                        return "{}"
+                    timestamp = NOW - 3000 if self.count == 1 else NOW
+                    return json.dumps({
+                        "e": "bookTicker", "s": "BTCUSDT", "E": timestamp,
+                        "b": "99", "B": "2", "a": "101", "A": "3",
+                    })
+
+            async def on_state(state, _):
+                seen.append(state.symbol)
+
+            with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
+                    patch.object(realtime_market.time, "time", return_value=NOW/1000):
+                await realtime_market._binance_stream(
+                    cache.symbols, on_state, stop,
+                    market_type="USD_M_PERPETUAL",
+                    channels=("bookTicker",), flow_cache=cache,
+                    metrics=metrics,
+                )
+            self.assertEqual(seen, ["BTCUSDT"])
+            self.assertEqual(metrics["received_total"], 2)
+            self.assertEqual(metrics["accepted_total"], 1)
+            self.assertEqual(metrics["stale_received_total"], 1)
+            self.assertEqual(metrics["stale_dispatch_total"], 0)
+            self.assertEqual(metrics["dispatched_total"], 1)
+            self.assertEqual(metrics["received_by_symbol_ms"]["BTCUSDT"], NOW)
+            self.assertEqual(metrics["last_receive_lag_ms"], 0)
+            self.assertEqual(metrics["max_receive_lag_ms"], 3000)
+
         asyncio.run(scenario())
 
     def test_queued_quote_is_rejected_when_it_becomes_stale(self):
