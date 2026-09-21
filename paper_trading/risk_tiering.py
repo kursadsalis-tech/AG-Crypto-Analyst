@@ -84,14 +84,18 @@ def tier_for(candidate) -> RiskTier:
         4: 0.020,
         5: 0.020,
     }[int(leverage)]
+    explicit_market = str(candidate.get("market_type") or "").upper()
+    if explicit_market and explicit_market not in {"SPOT", "USD_M_PERPETUAL"}:
+        raise ValueError("UNSUPPORTED_CANDIDATE_MARKET_TYPE")
+    market_type = explicit_market or (
+        "SPOT" if leverage == 1.0 and candidate["direction"] == "LONG"
+        else "USD_M_PERPETUAL"
+    )
     return RiskTier(
         leverage=leverage,
         margin_fraction=margin_fraction,
         independent_signal_count=count,
         signal_sources=sources,
         tier=f"PAPER_RISK_TIER_{int(leverage)}",
-        market_type=(
-            "SPOT" if leverage == 1.0 and candidate["direction"] == "LONG"
-            else "USD_M_PERPETUAL"
-        ),
+        market_type=market_type,
     )
