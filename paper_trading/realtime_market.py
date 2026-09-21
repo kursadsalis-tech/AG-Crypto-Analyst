@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import multiprocessing as mp
+import queue
 import ssl
 import time
 import threading
@@ -244,6 +246,13 @@ class LatestFlowCache:
             if key in self._symbols:
                 self._latest[key] = snapshot
 
+    def update_batch(self, snapshots):
+        with self._lock:
+            allowed = set(self._symbols)
+            for key, snapshot in snapshots.items():
+                if key in allowed:
+                    self._latest[key] = snapshot
+
     def apply_to(self, state, now_ms):
         with self._lock:
             snapshot = self._latest.get((state.symbol, state.market_type))
@@ -257,18 +266,77 @@ class LatestFlowCache:
         state.trade_sell_notional = sell
 
 
-async def _flow_thread(cache, stop_event):
-    """Own all trade sockets/tasks in a dedicated thread and asyncio loop."""
-    loop = asyncio.new_event_loop()
-    stopped = threading.Event()
+
+class _ProcessFlowSink:
+    """Coalesce raw trade updates inside the isolated child process."""
+
+    def __init__(self):
+        self.latest = {}
+
+    def publish(self, state):
+        self.latest[(state.symbol, state.market_type)] = (
+            state.trade_timestamp_ms,
+            state.taker_imbalance,
+            state.trade_buy_notional,
+            state.trade_sell_notional,
+        )
+
+    def snapshot(self):
+        return dict(self.latest)
+
+
+def _replace_queue_item(target_queue, value):
+    try:
+        while True:
+            target_queue.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        target_queue.put_nowait(value)
+    except queue.Full:
+        pass
+
+
+def _flow_process_entry(symbol_queue, snapshot_queue, stopped):
+    """Run all raw-trade parsing in a separate Python process/GIL."""
+    current_symbols = []
+    sink = _ProcessFlowSink()
+
+    def symbols():
+        return list(current_symbols)
+
+    async def refresh_symbols():
+        nonlocal current_symbols
+        while not stopped.is_set():
+            newest = None
+            try:
+                while True:
+                    newest = symbol_queue.get_nowait()
+            except queue.Empty:
+                pass
+            if newest is not None:
+                current_symbols = list(newest)
+            await asyncio.sleep(0.05)
+
+    async def publish_snapshots():
+        while not stopped.is_set():
+            snapshot = sink.snapshot()
+            if snapshot:
+                _replace_queue_item(snapshot_queue, snapshot)
+            await asyncio.sleep(0.05)
 
     async def ingest():
         tasks = [asyncio.create_task(_binance_stream(
-            cache.symbols, None, stopped, market_type=market_type,
-            channels=channels, flow_sink=cache,
+            symbols, None, stopped, market_type=market_type,
+            channels=channels, flow_sink=sink,
         )) for market_type, channels in (
-            ("SPOT", ("aggTrade",)), ("USD_M_PERPETUAL", ("trade",)),
+            ("SPOT", ("aggTrade",)),
+            ("USD_M_PERPETUAL", ("trade",)),
         )]
+        tasks.extend((
+            asyncio.create_task(refresh_symbols()),
+            asyncio.create_task(publish_snapshots()),
+        ))
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -276,36 +344,53 @@ async def _flow_thread(cache, stop_event):
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    task = loop.create_task(ingest())
-    errors = []
+    asyncio.run(ingest())
 
-    def run():
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(task)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            loop.close()
 
-    thread = threading.Thread(target=run, name="agca-trade-flow", daemon=True)
-    thread.start()
+async def _flow_process(cache, symbols, stop_event):
+    """Isolate high-rate trade parsing from executable quote ingest."""
+    context = mp.get_context("spawn")
+    symbol_queue = context.Queue(maxsize=1)
+    snapshot_queue = context.Queue(maxsize=1)
+    stopped = context.Event()
+    process = context.Process(
+        target=_flow_process_entry,
+        args=(symbol_queue, snapshot_queue, stopped),
+        name="agca-trade-flow",
+        daemon=True,
+    )
+    _replace_queue_item(symbol_queue, tuple(symbols()))
+    process.start()
+    last_symbols = None
     try:
         while not stop_event.is_set():
-            if not thread.is_alive():
-                if errors:
-                    raise errors[0]
-                raise RuntimeError("trade flow thread stopped unexpectedly")
+            if not process.is_alive():
+                raise RuntimeError(
+                    f"trade flow process stopped unexpectedly exit={process.exitcode}"
+                )
+            current = tuple(symbols())
+            if current != last_symbols:
+                _replace_queue_item(symbol_queue, current)
+                last_symbols = current
+            newest = None
+            try:
+                while True:
+                    newest = snapshot_queue.get_nowait()
+            except queue.Empty:
+                pass
+            if newest:
+                cache.update_batch(newest)
             await asyncio.sleep(0.05)
     finally:
         stopped.set()
-        try:
-            loop.call_soon_threadsafe(task.cancel)
-        except RuntimeError:  # Thread already closed its loop.
-            pass
-        await asyncio.to_thread(thread.join)
+        await asyncio.to_thread(process.join, 3)
+        if process.is_alive():
+            process.terminate()
+            await asyncio.to_thread(process.join, 3)
+        for item_queue in (symbol_queue, snapshot_queue):
+            item_queue.close()
+            item_queue.join_thread()
+
 
 def _queue_latest_state(pending, order, queued, state, received_ms):
     """Coalesce a hot websocket stream to the newest immutable state per symbol."""
@@ -604,7 +689,8 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
             market_type="USD_M_PERPETUAL", channels=("bookTicker",),
             flow_cache=cache,
         ),
-        _flow_thread(cache, stop_event), refresh_flow_symbols(), idle_health(),
+        _flow_process(cache, symbols, stop_event),
+        refresh_flow_symbols(), idle_health(),
     )]
     try:
         await asyncio.gather(*tasks)
