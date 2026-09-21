@@ -5,6 +5,8 @@ import asyncio
 import json
 import os
 import signal
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,6 +134,10 @@ async def run():
     con = connect(DB_NAME, timeout=30)
     ensure_tables(con)
     position_management.ensure_tables(con)
+    decision_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="agca-paper-decision"
+    )
+    decision_local = threading.local()
     stop_event = asyncio.Event()
     last_health_at = None
     last_selection_attempt_at = None
@@ -182,21 +188,22 @@ async def run():
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
 
-    def symbols():
-        position_management.initialize_open_positions(con, now())
-        active = {tuple(row) for row in con.execute(
+    def symbols(connection=None):
+        db = connection or con
+        position_management.initialize_open_positions(db, now())
+        active = {tuple(row) for row in db.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status='OPEN' ORDER BY symbol"""
         ).fetchall()}
         # Keep observing the latest completed behavior universe even when the
         # portfolio is empty; otherwise no live event could ever trigger the
         # next decision/entry.
-        latest = con.execute(
+        latest = db.execute(
             "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
         ).fetchone()[0]
         monitored = set()
         if latest is not None:
-            for (instrument,) in con.execute(
+            for (instrument,) in db.execute(
                 """SELECT DISTINCT instrument FROM market_behavior_minute_features
                 WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
                 (latest,),
@@ -214,20 +221,33 @@ async def run():
             state, error=error, active_symbols=symbols(),
         )
 
-    async def on_state(state, observed_ms):
+    def decision_connection():
+        db = getattr(decision_local, "connection", None)
+        if db is None:
+            db = connect(DB_NAME, timeout=30)
+            ensure_tables(db)
+            position_management.ensure_tables(db)
+            decision_local.connection = db
+        return db
+
+    def process_state(state, observed_ms):
+        """Run DB/decision/PAPER work off the websocket event loop."""
         nonlocal last_health_at, last_selection_attempt_at, last_learning_at
-        observed_at = datetime.fromtimestamp(observed_ms / 1000, tz=timezone.utc)
-        publish_live_state(state, observed_ms)
-        # One authoritative live callback now drives decision -> PAPER entry ->
-        # open-position management. The decision core still consumes only
-        # completed causal minute evidence; the fill uses this exact live state.
-        if (last_selection_attempt_at is None or
-                (observed_at - last_selection_attempt_at).total_seconds() >= 1.0):
+        work_con = decision_connection()
+        observed_at = datetime.fromtimestamp(
+            observed_ms / 1000, tz=timezone.utc
+        )
+        # The decision core still consumes completed causal minute evidence;
+        # this exact latest normalized state is used for fill/management.
+        if (
+            last_selection_attempt_at is None
+            or (observed_at - last_selection_attempt_at).total_seconds() >= 1.0
+        ):
             selection_result = {}
             selected = select_new_positions(
-                con, observed_at, metadata, telemetry=selection_result
+                work_con, observed_at, metadata, telemetry=selection_result
             )
-            latest_scan = con.execute(
+            latest_scan = work_con.execute(
                 """SELECT core_status,candidate_count,selected_count,
                           active_position_count,capacity,available_exposure,
                           reason_counts_json
@@ -240,7 +260,7 @@ async def run():
                 "observed_symbol": state.symbol,
                 "observed_market_type": state.market_type,
                 "observed_price": state.last_price,
-                "monitored_symbols": len(symbols()),
+                "monitored_symbols": len(symbols(work_con)),
                 "scan": ({
                     "core_status": latest_scan[0],
                     "candidate_count": latest_scan[1],
@@ -252,50 +272,86 @@ async def run():
                 } if latest_scan else None),
                 "candidates": selection_result.get("candidates", []),
                 "open_positions": selection_result.get("open_positions", []),
-                "portfolio_capacity": selection_result.get("portfolio_capacity", {}),
-                "rejection_reasons": selection_result.get("rejection_reasons", {}),
+                "portfolio_capacity": selection_result.get(
+                    "portfolio_capacity", {}
+                ),
+                "rejection_reasons": selection_result.get(
+                    "rejection_reasons", {}
+                ),
                 "decision": (
-                    "NEW_POSITION_SELECTED" if selected else "CONTINUE_SCANNING"
+                    "NEW_POSITION_SELECTED"
+                    if selected else "CONTINUE_SCANNING"
                 ),
             })
             last_selection_attempt_at = observed_at
-        # Learning is part of the live lifecycle, not a separate research job.
-        # It remains PAPER-only and evidence-gated; challengers get no real-order
-        # authority and cannot silently mutate the active policy.
-        if (last_learning_at is None or
-                (observed_at - last_learning_at).total_seconds() >= 60.0):
-            learning = trade_learning.run(con, FORWARD_COHORT, observed_at)
-            strategy_allocator.rebalance(con, observed_at)
+
+        if (
+            last_learning_at is None
+            or (observed_at - last_learning_at).total_seconds() >= 60.0
+        ):
+            trade_learning.run(work_con, FORWARD_COHORT, observed_at)
+            strategy_allocator.rebalance(work_con, observed_at)
             last_learning_at = observed_at
+
         live_filled, live_cancelled = fill_pending_from_live_state(
-            con, observed_at, state, metadata
+            work_con, observed_at, state, metadata
         )
         if live_filled or live_cancelled:
-            position_management.initialize_open_positions(con, observed_at)
+            position_management.initialize_open_positions(
+                work_con, observed_at
+            )
+
         rule = rules_for(metadata[state.market_type], state.symbol)
         if rule is None:
-            # Missing exchange rules must still reach the position manager so an
-            # open position records durable fail-closed exit evidence; a health
-            # message alone is not sufficient audit state.
-            position_management.process_market_state(con, state, observed_at, None)
-            write_health("DEGRADED", error="LIVE_SYMBOL_RULES_UNAVAILABLE",
-                         symbol=state.symbol)
+            position_management.process_market_state(
+                work_con, state, observed_at, None
+            )
+            write_health(
+                "DEGRADED",
+                error="LIVE_SYMBOL_RULES_UNAVAILABLE",
+                symbol=state.symbol,
+            )
             return
+
         result = position_management.process_market_state(
-            con, state, observed_at, rule,
+            work_con, state, observed_at, rule
         )
         if result.get("status") == "POSITION_CLOSED":
-            reviews = experience_memory.review_closed_positions(con, observed_at)
-            learning = trade_learning.run(con, FORWARD_COHORT, observed_at)
+            reviews = experience_memory.review_closed_positions(
+                work_con, observed_at
+            )
+            learning = trade_learning.run(
+                work_con, FORWARD_COHORT, observed_at
+            )
             result["new_experience_reviews"] = reviews
             result["learning_status"] = learning["status"]
-        if result.get("status") not in {"HOLD", "NO_PRICE", "NO_OPEN_POSITION",
-                                         "DUPLICATE_OR_OLD_EVENT"}:
-            write_health("CONNECTED", symbol=state.symbol, last_action=result)
+
+        if result.get("status") not in {
+            "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
+        }:
+            write_health(
+                "CONNECTED", symbol=state.symbol, last_action=result
+            )
             last_health_at = observed_at
-        elif last_health_at is None or (observed_at - last_health_at).total_seconds() >= 10:
-            write_health("CONNECTED", symbol=state.symbol, last_action={"status": "HOLD"})
+        elif (
+            last_health_at is None
+            or (observed_at - last_health_at).total_seconds() >= 10
+        ):
+            write_health(
+                "CONNECTED",
+                symbol=state.symbol,
+                last_action={"status": "HOLD"},
+            )
             last_health_at = observed_at
+
+    async def on_state(state, observed_ms):
+        # Fast path: telemetry is updated immediately from the newest state.
+        # All synchronous SQLite/decision work is isolated in one worker thread,
+        # so websocket ingest remains free to keep consuming live events.
+        publish_live_state(state, observed_ms)
+        await loop.run_in_executor(
+            decision_executor, process_state, state, observed_ms
+        )
 
     def maintenance_once():
         maintenance_con = connect(DB_NAME, timeout=30)
@@ -348,8 +404,20 @@ async def run():
             heartbeat(),
         )
     finally:
-        con.close()
-        write_health("STOPPED")
+        def close_decision_connection():
+            db = getattr(decision_local, "connection", None)
+            if db is not None:
+                db.close()
+                decision_local.connection = None
+
+        try:
+            await loop.run_in_executor(
+                decision_executor, close_decision_connection
+            )
+        finally:
+            decision_executor.shutdown(wait=True)
+            con.close()
+            write_health("STOPPED")
 
 
 def main():
