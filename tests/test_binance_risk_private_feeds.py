@@ -58,7 +58,8 @@ class PrivateRiskReferenceTests(unittest.TestCase):
                       fetch.call_args.args[1])
 
     def test_no_reference_evidence_source_is_labeled_as_usdm(self):
-        self.assertIn("SPOT", feeds.SPOT_KLINES_URL.upper())
+        self.assertIn("/api/v3/klines", feeds.SPOT_KLINES_URL)
+        self.assertNotIn("/fapi/", feeds.SPOT_KLINES_URL)
         self.assertEqual(risk.DB_NAME, os.getenv("AGCA_DATABASE_PATH", "crypto_data.db"))
 
 
