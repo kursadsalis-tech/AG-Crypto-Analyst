@@ -138,13 +138,13 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
     """Normalize Binance ticker and aggregate-trade events for PAPER execution."""
     event = message.get("e")
     symbol = str(message.get("s") or "").upper()
-    if event not in {"24hrTicker", "depthUpdate", "aggTrade"} or not symbol:
+    if event not in {"24hrTicker", "bookTicker", "depthUpdate", "aggTrade", "trade"} or not symbol:
         return []
     timestamp = int(message.get("E", 0))
     if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
         return []
     state = states.setdefault(symbol, LiveState(symbol, market_type))
-    if event == "24hrTicker":
+    if event in {"24hrTicker", "bookTicker"}:
         if state.quote_timestamp_ms is not None and timestamp < state.quote_timestamp_ms:
             return []
         state.best_bid = state.best_ask = None
@@ -153,7 +153,12 @@ def apply_binance_message(states: dict[str, LiveState], message: dict, received_
         state.liquidity_timestamp_ms = None
         state.quote_timestamp_ms = timestamp
         state.quote_source = "BINANCE_SPOT_WS_TICKER_BID_ASK" if market_type == "SPOT" else "BINANCE_USD_M_WS_TICKER_BID_ASK"
-        state.last_price = _positive(message["c"])
+        if event == "24hrTicker":
+            state.last_price = _positive(message["c"])
+        else:
+            bid = _quote_number(message.get("b"))
+            ask = _quote_number(message.get("a"))
+            state.last_price = (bid + ask) / 2 if bid is not None and ask is not None else state.last_price
         state.best_bid = _quote_number(message.get("b"))
         state.best_ask = _quote_number(message.get("a"))
         bid_value = _side_notional(state.best_bid, message.get("B"))
@@ -192,7 +197,7 @@ def binance_subscription_params(symbols, market_type="SPOT"):
         f"{symbol.lower()}@{channel}"
         for symbol, item_market_type in sorted(normalized)
         if item_market_type == market_type_filter
-        for channel in ("ticker", "aggTrade")
+        for channel in (("ticker", "aggTrade") if market_type_filter == "SPOT" else ("bookTicker", "trade"))
     ]
 
 
