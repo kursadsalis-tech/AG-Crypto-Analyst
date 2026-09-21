@@ -19,7 +19,9 @@ import websockets
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
 BINANCE_USDM_WS_URL = "wss://fstream.binance.com/public/ws"
-BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/market/ws"
+# Preserve the existing raw-trade flow socket until its channel is validated on
+# Binance's new market endpoint; quote migration must not silently remove flow.
+BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/ws"
 MAX_EVENT_AGE_MS = 2_000
 BINANCE_DISPATCH_INTERVAL_SECONDS = 0.05
 BINANCE_DISPATCH_BATCH_MAX = 64
