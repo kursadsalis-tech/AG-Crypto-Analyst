@@ -415,7 +415,9 @@ class FlowIsolationTests(unittest.TestCase):
                 seen.append(state.symbol)
 
             with patch.object(realtime_market.websockets, "connect", return_value=Socket()), \
-                    patch.object(realtime_market.time, "time", return_value=NOW/1000):
+                    patch.object(realtime_market.time, "time", return_value=NOW/1000), \
+                    patch.object(realtime_market.asyncio, "wait_for",
+                                 side_effect=AssertionError("per-frame wait_for task")):
                 await realtime_market._binance_stream(
                     cache.symbols, on_state, stop,
                     market_type="USD_M_PERPETUAL",
