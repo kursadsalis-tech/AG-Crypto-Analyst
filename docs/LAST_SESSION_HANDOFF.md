@@ -1,3 +1,25 @@
+# 2026-09-21 — Atomic realtime JSON writer race fix
+
+Current priority supersedes the historical instructions below.
+Base: main `b0348cd`; branch: `fix/atomic-json-write`.
+Canonical repository: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+Isolated worktree: `/Users/elifzilan/Documents/AG-Crypto-Analyst-worktrees/atomic-json-write`.
+Pre-existing canonical checkout changes were preserved.
+
+`_atomic_json_write` now creates a unique temporary file in the destination
+folder, writes the same JSON format with mode 0600, closes it, then atomically
+replaces the destination. Best-effort cleanup preserves the original exception.
+No PAPER_ONLY, trading, decision, or execution-authority behavior changed.
+
+Validation: 364 local tests passed. The synchronized eight-writer regression
+fails against b0348cd with FileNotFoundError and passes with this fix, verifying
+complete final JSON, mode 0600, and no leftover temporary files. An injected
+replace failure preserves the existing destination and cleans up the temp file.
+CI must be green on the final PR head before merge. No VM deployment was made;
+after merge, deployment and fresh worker health remain operational acceptance.
+
+--- Historical session records ---
+
 # 2026-09-21 — PR #25 quote freshness regression: flow thread isolation
 
 Current work supersedes the historical next-session priorities below.
