@@ -49,6 +49,10 @@ REQUIRED_FILES = (
     "data/binance_liquidation_channel.py",
     "data/binance_live_evidence.py",
     "data/binance_market_universe.py",
+    "data/binance_ws_market_universe.py",
+    "data/binance_ws_live_evidence.py",
+    "data/binance_ws_market_collector.py",
+    "data/binance_oi_postgres.py",
     "data/rolling_behavior_window.py",
     "paper_trading/governance.py",
     "requirements-runtime.txt",
@@ -103,6 +107,11 @@ def build_readiness(root=PROJECT_ROOT):
     if ("from data.binance_live_evidence import collect" in collector
             or 'fetch_market_overview("exchangeInfo")' in collector):
         failures.append("BINANCE_DIRECT_REST_451_OBSERVER_NOT_DEPLOYABLE")
+    elif "from data.binance_ws_market_collector import BinanceWsMinuteCollector" in collector:
+        # Offline tests only prove source-level invariants. Do not permit the
+        # systemd service to replace the old live worker before observing
+        # a full read-only minute and its OI request budget on the actual VM.
+        failures.append("BINANCE_WS_OI_VM_ACCEPTANCE_PENDING")
 
     requirements_path = root / "requirements-runtime.txt"
     requirements = (
