@@ -21,20 +21,16 @@ class RiskMarketDataTests(unittest.TestCase):
             source_prefix="BINANCE_USD_M_KLINES",
         )
 
-    def test_dynamic_symbol_falls_back_to_okx_swap(self):
-        expected = object()
+    def test_binance_outage_does_not_substitute_okx_swap(self):
         with mock.patch.object(
-            risk_manager,
-            "fetch_closed_1h_klines",
-            side_effect=RuntimeError("not on Binance USD-M"),
+            risk_manager, "fetch_closed_1h_klines",
+            side_effect=RuntimeError("Binance USD-M unavailable"),
         ), mock.patch.object(
-            risk_manager, "fetch_okx_closed_1h_klines", return_value=expected
+            risk_manager, "fetch_okx_closed_1h_klines"
         ) as fetch_okx:
-            self.assertIs(
-                risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT"),
-                expected,
-            )
-        fetch_okx.assert_called_once_with("NEWUSDT")
+            with self.assertRaisesRegex(RuntimeError, "Binance USD-M unavailable"):
+                risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT")
+        fetch_okx.assert_not_called()
 
     @mock.patch.object(risk_manager.requests, "get")
     def test_okx_rows_are_normalized_and_only_closed_candles_are_used(self, get):
