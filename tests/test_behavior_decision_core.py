@@ -37,7 +37,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 event_id TEXT,available_at TEXT,direction TEXT
             );
             CREATE TABLE risk_policy_snapshots(
-                id INTEGER PRIMARY KEY,created_at TEXT,new_positions_allowed INTEGER
+                id INTEGER PRIMARY KEY,created_at TEXT,
+                new_positions_allowed INTEGER,risk_per_trade_pct REAL
             );
             CREATE TABLE asset_risk_snapshots(
                 policy_snapshot_id INTEGER,symbol TEXT,new_position_allowed INTEGER,
@@ -48,7 +49,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 decision_source TEXT,status TEXT,evidence_eligible INTEGER,
                 net_pnl REAL,notional REAL,exit_time TEXT,direction TEXT
             );
-            INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1);
+            INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1,0.75);
             INSERT INTO asset_risk_snapshots VALUES(
                 1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00'
             );
@@ -83,10 +84,20 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         result = core.evaluate(self.con, NOW)
         self.assertEqual(result["status"], "ACTIONABLE")
         self.assertEqual(result["candidates"][0]["experiment_tier"], "EXPLORATORY_LEARNING")
+        # Actual policy budget must reach the PAPER position sizing path.
+        self.assertEqual(result["candidates"][0]["risk_per_trade_pct"], 0.75)
+        self.assertEqual(result["candidates"][0]["evidence"]["risk"]["risk_per_trade_pct"], 0.75)
         pattern = result["review"]["patterns"][0]
         self.assertTrue(pattern["exploration_eligible"])
         self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
+
+    def test_zero_trade_risk_policy_fails_closed(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute("UPDATE risk_policy_snapshots SET risk_per_trade_pct=0")
+        result = core.evaluate(self.con, NOW)
+        self.assertFalse(result["candidates"])
 
     def test_news_hypothesis_can_stand_without_current_flow_confluence(self):
         self.add_history(count=5, days=1)
