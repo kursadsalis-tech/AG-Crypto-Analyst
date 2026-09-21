@@ -202,7 +202,7 @@ def binance_subscription_params(symbols, market_type="SPOT", channels=None):
         channels = (
             ("ticker", "aggTrade")
             if market_type_filter == "SPOT"
-            else ("bookTicker", "aggTrade")
+            else ("bookTicker", "trade")
         )
     return [
         f"{symbol.lower()}@{channel}"
@@ -472,10 +472,12 @@ async def stream(symbols, on_state, stop_event, health_callback=None):
             market_type="USD_M_PERPETUAL", channels=("bookTicker",),
             shared_states=swap_states,
         ),
-        # Flow remains live on an independent aggregate-trade socket.
+        # Flow remains live on an independent raw-trade socket. This is kept
+        # separate from executable quotes so high trade volume cannot backlog
+        # the price feed used for fills/stops.
         _binance_stream(
             swap_symbols, on_state, stop_event, health_callback,
-            market_type="USD_M_PERPETUAL", channels=("aggTrade",),
+            market_type="USD_M_PERPETUAL", channels=("trade",),
             shared_states=swap_states,
         ),
         idle_health(),
