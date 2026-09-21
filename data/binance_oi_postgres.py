@@ -16,7 +16,8 @@ from urllib.parse import urlencode
 
 OI_URL = "https://fapi.binance.com/fapi/v1/openInterest"
 NATIVE = re.compile(r"^[A-Z0-9]{5,30}$")
-MAX_BATCH = 12
+MAX_BATCH = 6
+MAX_BATCH_WALL_MS = 20_000
 MAX_OI_AGE_MS = 15_000
 MAX_NETWORK_RTT_MS = 12_000
 
@@ -46,7 +47,7 @@ def validate_response(response, *, symbol, received_ms, rtt_ms):
             "source_exchange": "BINANCE_USD_M", "source": "FAPI_OPEN_INTEREST_VIA_EXISTING_SUPABASE_EGRESS"}
 
 
-def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=15,
+def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=3,
                 now_ms=None):
     """One bounded DB connection, one fixed unauthenticated GET per exact symbol.
 
@@ -67,6 +68,7 @@ def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=15,
     import psycopg
     timeout_ms = int(timeout_seconds*1000)
     results = {}
+    batch_started = time.monotonic()
     # Do not reveal remote DSN, headers, response bodies, or connection errors.
     try:
         with psycopg.connect(database_url, connect_timeout=max(1, int(timeout_seconds)),
@@ -78,6 +80,8 @@ def fetch_batch(database_url, symbols, allowed_symbols, *, timeout_seconds=15,
                 cursor.execute("SELECT extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', %s)",
                                (str(timeout_ms),))
                 for symbol in ordered:
+                    if (time.monotonic()-batch_started)*1000 > MAX_BATCH_WALL_MS:
+                        raise BinanceOIError("OI_BATCH_WALL_BUDGET_EXCEEDED")
                     url = OI_URL + "?" + urlencode({"symbol": symbol})
                     start = time.monotonic()
                     cursor.execute("SELECT status, content_type, content FROM extensions.http_get(%s)",
