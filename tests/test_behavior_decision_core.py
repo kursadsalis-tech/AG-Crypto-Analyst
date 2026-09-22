@@ -270,7 +270,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.add_current()
         newer = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
         self.con.execute(
-            "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ("BTC-USDT-SWAP", "BINANCE", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
              25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
         )
