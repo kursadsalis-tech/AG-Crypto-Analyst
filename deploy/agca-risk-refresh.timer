@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AGCA risk context every 15 minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=true
+Unit=agca-risk-refresh.service
+
+[Install]
+WantedBy=timers.target
