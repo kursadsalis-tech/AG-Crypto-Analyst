@@ -122,6 +122,11 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
             text,
         )
 
+    def test_realtime_worker_requires_multiskill_technical_planning(self):
+        text=(ROOT/"runtime/paper_realtime_worker.py").read_text(encoding="utf-8")
+        self.assertIn("technical_planning=True", text)
+        self.assertIn("select_new_positions(", text)
+
     def test_realtime_worker_remains_paper_only(self):
         text=(ROOT/"deploy/agca-paper-realtime-worker.service").read_text(encoding="utf-8")
         self.assertIn("AGCA_EXECUTION_MODE=PAPER_ONLY",text)
