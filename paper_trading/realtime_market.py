@@ -441,9 +441,14 @@ async def _flow_process(cache, symbols, stop_event):
         if process.is_alive():
             process.terminate()
             await asyncio.to_thread(process.join, 3)
+        if process.is_alive():
+            process.kill()
+            await asyncio.to_thread(process.join, 1)
         for item_queue in (symbol_queue, snapshot_queue):
+            # These are disposable live snapshots, not durable execution data.
+            # A stopped consumer cannot drain a blocked queue feeder.
+            item_queue.cancel_join_thread()
             item_queue.close()
-            item_queue.join_thread()
 
 
 def _queue_latest_state(pending, order, queued, state, received_ms):
@@ -577,6 +582,7 @@ async def _binance_stream(
                  else BINANCE_USDM_WS_URL),
                 ssl=context,
                 open_timeout=10,
+                close_timeout=2,
                 ping_interval=20,
                 ping_timeout=10,
                 max_queue=1024,

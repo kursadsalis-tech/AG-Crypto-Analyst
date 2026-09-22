@@ -190,6 +190,62 @@ class PositionManagementTests(unittest.TestCase):
             "SELECT funding_cost FROM paper_agent_positions"
         ).fetchone()[0], .5)
 
+    def test_funding_releases_writer_before_next_network_call(self):
+        import tempfile
+        from pathlib import Path
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        process_market_state(self.con, self.live(98, 2),
+                             ENTRY + timedelta(seconds=2), self.rules)
+        for table in ("paper_agent_positions", "paper_position_management"):
+            columns = [r[1] for r in self.con.execute(f"PRAGMA table_info({table})")]
+            values = list(self.con.execute(f"SELECT * FROM {table}").fetchone())
+            values[columns.index("position_id")] = 2
+            self.con.execute(
+                f"INSERT INTO {table} VALUES({','.join('?' for _ in values)})", values)
+        self.con.execute("""INSERT INTO paper_funding_reconciliation_segments(
+            position_id,start_at,end_at,direction,quantity,status)
+            SELECT 2,start_at,end_at,direction,quantity,'PENDING'
+            FROM paper_funding_reconciliation_segments WHERE position_id=1""")
+        self.con.commit()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(str(Path(tmp) / "runtime.db"))
+            self.con.backup(db)
+            writer = sqlite3.connect(str(Path(tmp) / "runtime.db"), timeout=.05)
+            calls = []
+            def loader(**kwargs):
+                calls.append(kwargs)
+                # A competing observer/decision writer must be able to commit
+                # while each remote funding request is in progress.
+                writer.execute("UPDATE asset_risk_snapshots SET volatility_stop_reference_pct=2")
+                writer.commit()
+                return []
+            try:
+                result = reconcile_pending_funding(db, loader, ENTRY + timedelta(hours=3))
+                self.assertEqual(result, {"resolved": 2, "blocked": 0})
+                self.assertEqual(len(calls), 2)
+                self.assertFalse(db.in_transaction)
+            finally:
+                writer.close()
+                db.close()
+
+    def test_shutdown_during_funding_leaves_unapplied_segments_pending(self):
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        process_market_state(self.con, self.live(98, 2),
+                             ENTRY + timedelta(seconds=2), self.rules)
+        stopped = False
+        def loader(**kwargs):
+            nonlocal stopped
+            stopped = True
+            return []
+        before = self.con.execute("SELECT cash FROM paper_agent_portfolio").fetchone()
+        result = reconcile_pending_funding(
+            self.con, loader, ENTRY + timedelta(hours=3),
+            stop_requested=lambda: stopped)
+        self.assertEqual(result["resolved"], 0)
+        self.assertEqual(self.con.execute(
+            "SELECT status FROM paper_funding_reconciliation_segments").fetchone(), ("PENDING",))
+        self.assertEqual(self.con.execute("SELECT cash FROM paper_agent_portfolio").fetchone(), before)
+
     def test_short_timeout_closes_one_exact_quantity_step(self):
         self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',
             entry_price=80000,quantity=.001,notional=80,entry_fee=.04,

@@ -45,12 +45,32 @@ WORKER_DB_TIMEOUT_SECONDS = max(
 )
 
 
-def worker_connect():
+def worker_connect(stop_requested=None):
     db = connect(DB_NAME, timeout=WORKER_DB_TIMEOUT_SECONDS)
     db.execute(
         f"PRAGMA busy_timeout={int(WORKER_DB_TIMEOUT_SECONDS * 1000)}"
     )
+    if stop_requested is not None:
+        db.set_progress_handler(lambda: int(stop_requested.is_set()), 1000)
     return db
+
+
+async def run_until_stopped(stop_event, *coroutines):
+    """Cancel idle sockets/backoff immediately when the service receives TERM."""
+    tasks = [asyncio.create_task(coro) for coro in coroutines]
+    stopped = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            [*tasks, stopped], return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            if task is not stopped:
+                task.result()
+    finally:
+        stop_event.set()
+        for task in [*tasks, stopped]:
+            task.cancel()
+        await asyncio.gather(*tasks, stopped, return_exceptions=True)
 
 
 def now():
@@ -182,7 +202,8 @@ async def run():
             "SPOT", max_age_seconds=max_metadata_age,
         ),
     }
-    con = worker_connect()
+    shutdown_requested = threading.Event()
+    con = worker_connect(shutdown_requested)
     ensure_tables(con)
     position_management.ensure_tables(con)
     decision_executor = ThreadPoolExecutor(
@@ -260,8 +281,12 @@ async def run():
 
     last_selection_attempt_at = None
     loop = asyncio.get_running_loop()
+    def request_stop():
+        shutdown_requested.set()
+        stop_event.set()
+
     for name in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(name, stop_event.set)
+        loop.add_signal_handler(name, request_stop)
 
     def load_symbols(db):
         position_management.initialize_open_positions(db, now())
@@ -355,7 +380,7 @@ async def run():
     def universe_connection():
         db = getattr(universe_local, "connection", None)
         if db is None:
-            db = worker_connect()
+            db = worker_connect(shutdown_requested)
             ensure_tables(db)
             position_management.ensure_tables(db)
             universe_local.connection = db
@@ -406,7 +431,7 @@ async def run():
     def decision_connection():
         db = getattr(decision_local, "connection", None)
         if db is None:
-            db = worker_connect()
+            db = worker_connect(shutdown_requested)
             ensure_tables(db)
             position_management.ensure_tables(db)
             decision_local.connection = db
@@ -553,7 +578,7 @@ async def run():
         """Run non-authoritative learning off the execution path."""
         db = None
         try:
-            db = worker_connect()
+            db = worker_connect(shutdown_requested)
             trade_learning.run(db, FORWARD_COHORT, now())
             strategy_allocator.rebalance(db, now())
             return None
@@ -647,16 +672,17 @@ async def run():
                 emit_health("DEGRADED", error=decision_error)
 
     def maintenance_once():
-        maintenance_con = worker_connect()
+        maintenance_con = worker_connect(shutdown_requested)
         try:
-            ensure_tables(maintenance_con)
+            # Startup already installed the schema; do not repeat DDL/backfill
+            # in the recurring funding path.
             reconciled = position_management.reconcile_pending_funding(
                 maintenance_con,
                 lambda **kwargs: fetch_funding_history_via_postgres(
                     database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
                     timeout_seconds=5, **kwargs,
                 ),
-                now(),
+                now(), stop_requested=shutdown_requested.is_set,
             )
             if reconciled["resolved"]:
                 experience_memory.review_closed_positions(maintenance_con, now())
@@ -714,7 +740,8 @@ async def run():
         "STARTING", active_symbols=symbols(),
     )
     try:
-        await asyncio.gather(
+        await run_until_stopped(
+            stop_event,
             realtime_market.stream(
                 symbols, on_state, stop_event, health, quote_metrics=quote_metrics,
             ),
@@ -725,6 +752,8 @@ async def run():
             heartbeat(),
         )
     finally:
+        request_stop()
+
         def close_decision_connection():
             db = getattr(decision_local, "connection", None)
             if db is not None:

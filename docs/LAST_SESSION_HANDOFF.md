@@ -1,3 +1,48 @@
+# 2026-09-22 — PR #36 SQLite contention and shutdown recovery
+
+Current priority supersedes historical instructions below. Canonical repository:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst`; isolated Git worktree
+`.worktrees/pr36-worker-lock`, branch `fix/pr36-worker-lock`, base PR head
+`fdf59356e017944b0676d9ba2004348b7f5ffff8`. Existing checkout changes preserved.
+
+Directly inspected actual production systemd unit, ExecStart, environment-file
+references, database path, source HEAD and incident journal. Unit matches the
+tracked service: PAPER_ONLY, inline mirror off, Restart=always, 20-second stop.
+At 2026-09-22 03:16:43 Istanbul (00:16:43 UTC), the learning review INSERT raised
+SQLite OperationalError, escaped decision_loop and caused restart. The later
+stop exceeded 20 seconds and killed parent/flow child. Journal does not identify
+the other writer or the exact blocked stack at SIGTERM; those are not proven.
+Production HEAD remains `51919bf06239ee4ebb6ea06942ebfd01249981fe`;
+worker failed/stopped, observer/risk timers active. No production mutation.
+
+Existing PR head already fixes simulated_fill import, stale pending recovery,
+shorter SQLite waits and learning exception containment. This follow-up fixes:
+- funding reconciliation holding a writer lock across the NEXT position's
+  network fetch; complete each position's atomic accounting before that fetch;
+- recurring maintenance unnecessarily repeating startup schema/backfill;
+- shutdown waiting for idle sockets/reconnect backoff and continuing funding
+  batches: cancel tasks, interrupt SQL with a stop flag, preserve pending costs;
+- unbounded disposable flow queue feeder join after its consumer stops; bound
+  WebSocket closure and add a child kill fallback. Durable DB records preserved.
+
+Validation: 454/454 local Python 3.12 tests pass (16.646s), diff check clean.
+The real two-connection funding regression fails on baseline with database is
+locked and passes on the patch. A subprocess test sends actual SIGTERM during
+SQL maintenance plus idle feed; clean exit/STOPPED/no surviving worker threads
+are verified within an 8-second ceiling. Tests also cover cancellation cleanup,
+rollback and pending funding preservation. Initial three mirror test failures
+were caused by forcing inline mirror off in the TEST environment; normal CI
+configuration passes. Final current-head GitHub CI remains required before
+operator recovery.
+
+Next: after green CI, fast-forward the existing service checkout to the exact
+PR head and restart only the PAPER realtime worker. Do not rerun cutover,
+installers or migrations; do not touch `.cutover_stamp`, merge PR, reset
+positions, change risk gates or enable real orders. Live recovery is pending;
+offline success does not establish production health. Keep observer/risk timers.
+
+--- Historical session records ---
+
 # 2026-09-21 — Atomic realtime JSON writer race fix
 
 Current priority supersedes the historical instructions below.
