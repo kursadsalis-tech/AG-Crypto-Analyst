@@ -784,6 +784,83 @@ def _validated_stop_geometry(row):
     return raw_stop_pct, min(5.0, max(0.5, raw_stop_pct))
 
 
+def _setup_fingerprint(symbol, direction, evidence):
+    """Stable setup identity that ignores minute/event ids but keeps material evidence."""
+    evidence = evidence or {}
+    learned = evidence.get("learned_pattern") or {}
+    event = evidence.get("event") or {}
+    sources = set()
+    primary = str(evidence.get("primary_signal_source") or "").upper()
+    if primary:
+        sources.add(primary)
+    for signal in evidence.get("directional_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        source = str(signal.get("source") or "").upper()
+        signal_direction = str(signal.get("direction") or "").upper()
+        if source and signal_direction == str(direction).upper():
+            sources.add(source)
+    pattern_key = str(learned.get("flow_pattern") or "")
+    event_kind = str(event.get("kind") or "")
+    hypothesis_scope = str(evidence.get("hypothesis_scope") or "")
+    if not pattern_key or not event_kind:
+        return None
+    return (
+        str(symbol).upper(), str(direction).upper(), primary,
+        hypothesis_scope, event_kind, pattern_key, tuple(sorted(sources)),
+    )
+
+
+def _adverse_same_setup_reentry_blocked(con, row):
+    """Block churn after an adverse exit until the setup materially changes or resets 1R."""
+    current_fingerprint = _setup_fingerprint(
+        row.get("symbol"), row.get("direction"), row.get("evidence")
+    )
+    if current_fingerprint is None:
+        return False
+    previous = con.execute("""
+        SELECT p.exit_price,p.close_reason,t.thesis_json
+        FROM paper_agent_positions p
+        JOIN paper_agent_decision_theses t USING(position_id)
+        WHERE p.symbol=? AND p.direction=? AND p.status='CLOSED'
+        ORDER BY p.exit_time DESC,p.position_id DESC LIMIT 1
+    """, (row["symbol"], row["direction"])).fetchone()
+    if not previous:
+        return False
+    exit_price, close_reason, thesis_json = previous
+    reason = str(close_reason or "")
+    adverse_exit = (
+        reason in {"PROTECTIVE_STOP", "THESIS_INVALIDATED"}
+        or reason.endswith("_LIQUIDATION")
+    )
+    if not adverse_exit:
+        return False
+    try:
+        thesis = json.loads(thesis_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    previous_fingerprint = _setup_fingerprint(
+        thesis.get("symbol"), thesis.get("direction"), thesis.get("evidence_used")
+    )
+    if previous_fingerprint != current_fingerprint:
+        return False
+    stop_geometry = _validated_stop_geometry(row)
+    try:
+        current_price = float(row["current_price"])
+        previous_exit_price = float(exit_price)
+    except (KeyError, TypeError, ValueError):
+        return True
+    if (
+        stop_geometry is None
+        or not math.isfinite(current_price) or current_price <= 0
+        or not math.isfinite(previous_exit_price) or previous_exit_price <= 0
+    ):
+        return True
+    _, effective_stop_pct = stop_geometry
+    reset_move_pct = abs(current_price / previous_exit_price - 1.0) * 100.0
+    return reset_move_pct < effective_stop_pct
+
+
 def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con, now)
@@ -984,6 +1061,13 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         if row["symbol"] in active_symbols:
             reject("SYMBOL_ALREADY_ACTIVE")
             candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "SYMBOL_ALREADY_ACTIVE"}
+            continue
+        if _adverse_same_setup_reentry_blocked(con, row):
+            reason_code = "ADVERSE_SAME_SETUP_REENTRY_WITHOUT_1R_RESET"
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ", "reason": reason_code,
+            }
             continue
         tier = risk_tiering.tier_for(row)
         base_margin = (
