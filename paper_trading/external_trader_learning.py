@@ -235,9 +235,10 @@ def ingest_trade(con, payload, first_observed_at=None, *, commit=True, ensure=Tr
     }
 
 
-def run_review(con, now=None):
+def run_review(con, now=None, *, ensure_schema=True):
     """Assess evidence sufficiency; never create a trade or mutate policy."""
-    ensure_tables(con)
+    if ensure_schema:
+        ensure_tables(con)
     now = now or datetime.now(timezone.utc)
     trader_count = con.execute("""
         SELECT count(DISTINCT exchange || ':' || source_trader_id)
