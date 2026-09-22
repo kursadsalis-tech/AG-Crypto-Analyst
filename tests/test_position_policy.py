@@ -25,6 +25,40 @@ class PositionPolicyTests(unittest.TestCase):
         self.assertEqual((result.action, result.close_fraction), ("REDUCE", 0.25))
         self.assertGreater(result.stop_price, 100)
 
+    def test_technical_stop_and_targets_override_legacy_r_multiples(self):
+        state = initialize(
+            "LONG", 100, 2,
+            stop_price=98.5, tp1_price=101.2, tp2_price=103.4,
+        )
+        self.assertAlmostEqual(state.stop_price, 98.5)
+        self.assertAlmostEqual(state.stop_distance_pct, 1.5)
+        before = evaluate(
+            state, 101.0, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(before.action, "HOLD")
+        first = evaluate(
+            state, 101.2, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(
+            (first.action, first.reason),
+            ("REDUCE", "TAKE_PROFIT_TECHNICAL_1"),
+        )
+        after_first = PositionState(**{
+            **state.__dict__,
+            "tp1_done": True,
+            "stop_price": first.stop_price,
+        })
+        second = evaluate(
+            after_first, 103.4, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(
+            (second.action, second.reason),
+            ("REDUCE", "TAKE_PROFIT_TECHNICAL_2"),
+        )
+
     def test_three_opposing_events_invalidate_thesis(self):
         state = initialize("SHORT", 100, 2)
         for expected in (1, 2):
