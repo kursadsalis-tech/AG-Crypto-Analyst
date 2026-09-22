@@ -102,15 +102,65 @@ lagging by a few minutes at the acceptance checkpoint, so remote-mirror freshnes
 must be treated as a separate operational concern rather than proof of runtime
 failure.
 
+## P1 shadow technical-context acceptance
+
+P1 research-gate implementation was live-accepted on 2026-09-23 without granting
+technical analysis any trade authority.
+
+Implemented contract:
+- existing closed 1h risk candles are reused; no additional exchange request is
+  made for technical context;
+- the existing advanced 1h feature pack is computed causally;
+- completed 4h structural context is aggregated from the same 1h candles;
+- only the latest context per symbol is stored in local SQLite;
+- the context is not in the Supabase runtime mirror;
+- a fresh context may be frozen into an already-selected PAPER thesis only as
+  observed evidence;
+- technical context is not a direction, ranking, confidence, sizing or stop
+  input in V1.
+
+Live resource/latency evidence from the canonical VM:
+- 23 technical contexts in one risk refresh;
+- total technical compute: 119.863 ms;
+- latest-cache aggregate at the checkpoint: 25 symbols / 124.826 ms;
+- maximum per-symbol compute in that cache: 22.353 ms;
+- the work runs in the 15-minute support risk cycle, not the realtime decision
+  hot path.
+
+Operational defects found while accepting P1 were also closed:
+- the legacy `agca-binance-risk-refresh.timer` was retired/masked because its
+  old code path could recreate a deployment-local `crypto_data.db`;
+- the canonical risk refresh now uses `AGCA_DATABASE_PATH` and a support-only
+  timer;
+- behavior decisions fail closed if risk policy is older than 30 minutes;
+- transient SQLite writer contention gets a 30-second busy timeout rather than
+  being mislabeled immediately as a BTC cross-source data failure.
+
+Final runtime evidence:
+- canonical worker/process SHA:
+  `22debf3daa5f6d242aa4e3aecc1e73a12f531fe0`;
+- worker health: `CONNECTED`;
+- stale subscribed symbols: none;
+- latest risk snapshot: `NORMAL`, `new_positions_allowed=1`,
+  `source_errors={}`;
+- canonical risk timer: active;
+- legacy Binance risk timer: masked;
+- deployment-local `crypto_data.db`: absent.
+
+P1 does not authorize technical signals. The next gate is natural forward PAPER
+evidence: compare frozen shadow technical context with realized net-after-cost
+trade outcomes before considering any bounded challenger or authority change.
+
 ## Current priorities
 
 1. Verify the first natural post-P0 selections use the intended stop evidence,
    venue, fee contract and re-entry/suspension gates.
+2. Collect natural PAPER trades with frozen P1 shadow technical context and
+   evaluate whether alignment/structure adds forward net-after-cost information.
+   Do not grant technical direction/confidence/sizing/stop authority from
+   historical fit or a small forward sample.
 3. Audit opportunity discovery so the lightweight broad market universe is not
    collapsed into the small deep-analysis slot set.
-3. Reuse existing causal technical and multi-timeframe capabilities in the active
-   decision path only after latency/resource benchmarks prove they do not damage
-   realtime operation; 4h evidence is context, not automatic direction authority.
 4. Extend learning from underperformance detection toward bounded challenger
    generation/evaluation without creating a second live decision authority.
 5. Keep high-frequency raw evidence in memory/local compact storage by default;
