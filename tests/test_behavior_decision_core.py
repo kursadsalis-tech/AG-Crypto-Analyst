@@ -108,6 +108,24 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(missed[0], "RISK_COVERAGE_MISSING")
 
+    def test_stale_risk_policy_fails_closed(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE risk_policy_snapshots SET created_at=?",
+            ((NOW - timedelta(minutes=31)).isoformat(),),
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        missed = self.con.execute(
+            "SELECT rejection_reason FROM paper_behavior_missed_opportunities"
+        ).fetchone()
+        self.assertEqual(missed[0], "RISK_COVERAGE_MISSING")
+        self.assertEqual(
+            result["review"]["risk_freshness_gate"]["maximum_policy_age_seconds"],
+            1800,
+        )
+
     def test_zero_trade_risk_policy_fails_closed(self):
         self.add_history(days=1)
         self.add_current()

@@ -32,6 +32,7 @@ MIN_EXECUTION_TRADES_FOR_PROMOTION = 10
 MIN_EXECUTION_DAYS_FOR_PROMOTION = 3
 MIN_EXECUTION_TRADES_FOR_SUSPENSION = 10
 MIN_EXECUTION_DAYS_FOR_SUSPENSION = 3
+MAX_RISK_POLICY_AGE_SECONDS = 30 * 60
 EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
 ROUND_TRIP_FEE_PCT = 0.20
@@ -381,7 +382,7 @@ def learned_patterns(con, now=None):
     }
 
 
-def _latest_risk(con):
+def _latest_risk(con, now=None):
     latest = con.execute("SELECT MAX(id) FROM risk_policy_snapshots").fetchone()[0]
     if latest is None:
         return {}
@@ -390,6 +391,17 @@ def _latest_risk(con):
         FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
+        return {}
+    now = now or datetime.now(timezone.utc)
+    try:
+        policy_time = datetime.fromisoformat(str(policy[0]).replace("Z", "+00:00"))
+        if policy_time.tzinfo is None:
+            policy_time = policy_time.replace(tzinfo=timezone.utc)
+        policy_time = policy_time.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return {}
+    age_seconds = (now - policy_time).total_seconds()
+    if age_seconds < -60.0 or age_seconds > MAX_RISK_POLICY_AGE_SECONDS:
         return {}
     # The global per-trade risk limit is the authoritative sizing input.
     # Missing, zero or invalid policy limits fail closed; never infer a
@@ -475,6 +487,10 @@ def evaluate(con, now=None):
             "suspend_when_calibrated_net_edge_pct_lte": 0.0,
             "small_losing_sample_is_hard_veto": False,
         },
+        "risk_freshness_gate": {
+            "maximum_policy_age_seconds": MAX_RISK_POLICY_AGE_SECONDS,
+            "stale_policy_is_fail_closed": True,
+        },
         "unified_forecast_used": False, "real_orders": False,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -509,7 +525,7 @@ def evaluate(con, now=None):
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
-    risks = _latest_risk(con)
+    risks = _latest_risk(con, now)
     events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
         FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
         ORDER BY kind,event_id""", (latest,)).fetchall()

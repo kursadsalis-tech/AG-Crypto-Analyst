@@ -7,6 +7,7 @@ must obey. Missing data tightens or blocks risk; it never increases permission.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 import statistics
@@ -21,7 +22,7 @@ from data.truth_engine import (
 )
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_USD_M_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"

@@ -91,6 +91,26 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         self.assertIn(("ETHUSDT", "USD_M_PERPETUAL"), symbols)
         self.assertNotIn(("BTCUSDT", "SPOT"), symbols)
 
+    def test_risk_refresh_is_support_only_and_uses_canonical_database(self):
+        service=(ROOT/"deploy/agca-risk-refresh.service").read_text(encoding="utf-8")
+        timer=(ROOT/"deploy/agca-risk-refresh.timer").read_text(encoding="utf-8")
+        installer=(ROOT/"deploy/install_gce_free_worker.sh").read_text(encoding="utf-8")
+        self.assertIn("-m risk_manager.risk_cycle", service)
+        self.assertIn("AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db", service)
+        self.assertIn("AGCA_EXECUTION_MODE=PAPER_ONLY", service)
+        self.assertIn("AGCA_REMOTE_MIRROR_INLINE=0", service)
+        self.assertIn("OnUnitActiveSec=15min", timer)
+        self.assertIn("agca-risk-refresh.service", installer)
+        self.assertIn("agca-risk-refresh.timer", installer)
+        self.assertNotIn("runtime.paper_realtime_worker", service)
+
+    def test_risk_manager_database_path_is_environment_bound(self):
+        text=(ROOT/"risk_manager/risk_manager.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")',
+            text,
+        )
+
     def test_realtime_worker_remains_paper_only(self):
         text=(ROOT/"deploy/agca-paper-realtime-worker.service").read_text(encoding="utf-8")
         self.assertIn("AGCA_EXECUTION_MODE=PAPER_ONLY",text)
