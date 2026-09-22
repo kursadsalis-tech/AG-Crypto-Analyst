@@ -125,6 +125,31 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(first["candidates"][0]["decision_id"],
                          second["candidates"][0]["decision_id"])
 
+    def test_live_event_that_ages_during_evaluation_fails_closed(self):
+        self.add_live_history()
+        patterns = core.learned_patterns(self.con, NOW)
+        risks = core._latest_risk(self.con, NOW)
+        ticks = iter([NOW, NOW + timedelta(seconds=3)])
+        result = core.evaluate_live(
+            self.con, NOW, self.live_context(),
+            patterns=patterns, risks=risks,
+            freshness_now=lambda: next(ticks),
+        )
+        self.assertEqual(result["status"], "LIVE_STATE_STALE")
+        self.assertEqual(result["candidates"], [])
+
+    def test_live_precomputed_patterns_preserve_candidate_semantics(self):
+        self.add_live_history()
+        patterns = core.learned_patterns(self.con, NOW)
+        risks = core._latest_risk(self.con, NOW)
+        result = core.evaluate_live(
+            self.con, NOW, self.live_context(),
+            patterns=patterns, risks=risks,
+            freshness_now=lambda: NOW,
+        )
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertTrue(result["candidates"])
+
     def test_promotion_thresholds_do_not_block_small_paper_learning_experiment(self):
         self.add_history(days=1)
         self.add_current()
