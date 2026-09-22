@@ -305,11 +305,12 @@ def funding_cost(notional: float, held_hours: float) -> float:
 
 
 def estimate_order_rules(*, reference_price, requested_notional, side, symbol,
-                         quantity_step, price_tick, min_notional):
+                         quantity_step, price_tick, min_notional,
+                         market_type="USD_M_PERPETUAL"):
     """Preserve the selection filter's estimate; never return an executable fill."""
     fill, reason = _paper_fill(
         OrderIntent(symbol, side, requested_notional),
-        MarketSnapshot(reference_price, None),
+        MarketSnapshot(reference_price, None, market_type=market_type),
         ExecutionRules(quantity_step, price_tick, min_notional, False),
         reference_price, estimate=True,
     )
