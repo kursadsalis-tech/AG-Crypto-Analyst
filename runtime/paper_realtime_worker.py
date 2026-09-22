@@ -25,8 +25,7 @@ from paper_trading.exchange_metadata import (
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import (
-    behavior_decision_core, continuous_improvement, experience_memory,
-    external_trader_learning, external_trader_rationale, position_management,
+    behavior_decision_core, experience_memory, position_management,
     realtime_market, strategy_allocator, trade_learning,
 )
 
@@ -320,15 +319,6 @@ async def run():
     con = worker_connect(shutdown_requested)
     ensure_tables(con)
     position_management.ensure_tables(con)
-    # Install research/learning schema once at service startup. Repeating DDL
-    # from the background learning thread adds avoidable SQLite schema-lock
-    # contention against the live PAPER writer.
-    trade_learning.ensure_tables(con)
-    external_trader_learning.ensure_tables(con)
-    external_trader_rationale.ensure_tables(con)
-    continuous_improvement.ensure_tables(con)
-    strategy_allocator.ensure_tables(con)
-    con.commit()
     decision_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-paper-decision"
     )
@@ -366,6 +356,7 @@ async def run():
     # Startup and lightweight test DBs must not require research-history tables.
     cached_patterns = {}
     cached_patterns_at = 0.0
+    learning_schema_ready = False
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -808,19 +799,24 @@ async def run():
 
         Learning may wait longer for a transient SQLite writer because it runs
         on its own thread and has no execution authority. Live decisions keep
-        their shorter timeout and never depend on this work.
+        their shorter timeout and never depend on this work. Learning schema
+        installation also stays here so schema contention can never restart the
+        canonical live worker.
         """
+        nonlocal learning_schema_ready
         db = None
         try:
             db = worker_connect(
                 shutdown_requested, timeout_seconds=LEARNING_DB_TIMEOUT_SECONDS
             )
+            install_schema = not learning_schema_ready
             trade_learning.run(
-                db, FORWARD_COHORT, now(), ensure_schema=False
+                db, FORWARD_COHORT, now(), ensure_schema=install_schema
             )
             strategy_allocator.rebalance(
-                db, now(), ensure_schema=False
+                db, now(), ensure_schema=install_schema
             )
+            learning_schema_ready = True
             return None
         except sqlite3.OperationalError as exc:
             if db is not None:
