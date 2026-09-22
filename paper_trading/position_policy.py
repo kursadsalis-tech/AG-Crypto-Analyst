@@ -23,6 +23,8 @@ class PositionState:
     stop_distance_pct: float
     stop_price: float
     best_price: float
+    tp1_price: float | None = None
+    tp2_price: float | None = None
     tp1_done: bool = False
     tp2_done: bool = False
     opposing_events: int = 0
@@ -43,14 +45,46 @@ def _validate(direction, price):
         raise ValueError("invalid PAPER position state")
 
 
-def initialize(direction: str, entry_price: float, stop_reference_pct: float):
+def initialize(
+    direction: str, entry_price: float, stop_reference_pct: float,
+    *, stop_price: float | None = None, tp1_price: float | None = None,
+    tp2_price: float | None = None,
+):
     _validate(direction, entry_price)
-    distance = min(MAX_STOP_PCT, max(MIN_STOP_PCT, float(stop_reference_pct)))
-    multiplier = 1.0 - distance / 100.0 if direction == "LONG" else 1.0 + distance / 100.0
+    entry_price = float(entry_price)
+    if stop_price is None:
+        distance = min(MAX_STOP_PCT, max(MIN_STOP_PCT, float(stop_reference_pct)))
+        multiplier = 1.0 - distance / 100.0 if direction == "LONG" else 1.0 + distance / 100.0
+        resolved_stop = entry_price * multiplier
+    else:
+        resolved_stop = float(stop_price)
+        if direction == "LONG":
+            if not 0 < resolved_stop < entry_price:
+                raise ValueError("invalid LONG technical stop")
+            distance = 100.0 * (entry_price - resolved_stop) / entry_price
+        else:
+            if resolved_stop <= entry_price:
+                raise ValueError("invalid SHORT technical stop")
+            distance = 100.0 * (resolved_stop - entry_price) / entry_price
+        if not MIN_STOP_PCT <= distance <= MAX_STOP_PCT:
+            raise ValueError("technical stop outside PAPER risk envelope")
+
+    if tp1_price is not None:
+        tp1_price = float(tp1_price)
+    if tp2_price is not None:
+        tp2_price = float(tp2_price)
+    if tp1_price is not None or tp2_price is not None:
+        if tp1_price is None or tp2_price is None:
+            raise ValueError("technical targets must be paired")
+        if direction == "LONG" and not (entry_price < tp1_price < tp2_price):
+            raise ValueError("invalid LONG technical targets")
+        if direction == "SHORT" and not (entry_price > tp1_price > tp2_price):
+            raise ValueError("invalid SHORT technical targets")
+
     return PositionState(
-        direction=direction, entry_price=float(entry_price), remaining_fraction=1.0,
-        stop_distance_pct=distance, stop_price=float(entry_price) * multiplier,
-        best_price=float(entry_price),
+        direction=direction, entry_price=entry_price, remaining_fraction=1.0,
+        stop_distance_pct=distance, stop_price=resolved_stop,
+        best_price=entry_price, tp1_price=tp1_price, tp2_price=tp2_price,
     )
 
 
@@ -80,14 +114,49 @@ def evaluate(state: PositionState, price: float, *, thesis_supported: bool | Non
                         best, opposing)
 
     risk = state.stop_distance_pct
-    if not state.tp2_done and state.tp1_done and favorable >= TP2_R * risk:
+    technical_tp2_hit = (
+        state.tp2_price is not None
+        and state.tp1_done
+        and not state.tp2_done
+        and (
+            price >= state.tp2_price
+            if state.direction == "LONG" else price <= state.tp2_price
+        )
+    )
+    if technical_tp2_hit:
+        trail = price * (1.0 - TRAIL_R * risk / 100.0) if state.direction == "LONG" \
+            else price * (1.0 + TRAIL_R * risk / 100.0)
+        tightened = max(state.stop_price, trail) if state.direction == "LONG" \
+            else min(state.stop_price, trail)
+        return Decision("REDUCE", min(TP2_FRACTION, state.remaining_fraction),
+                        "TAKE_PROFIT_TECHNICAL_2", tightened, best, opposing)
+    if (
+        state.tp2_price is None
+        and not state.tp2_done and state.tp1_done
+        and favorable >= TP2_R * risk
+    ):
         trail = price * (1.0 - TRAIL_R * risk / 100.0) if state.direction == "LONG" \
             else price * (1.0 + TRAIL_R * risk / 100.0)
         tightened = max(state.stop_price, trail) if state.direction == "LONG" \
             else min(state.stop_price, trail)
         return Decision("REDUCE", min(TP2_FRACTION, state.remaining_fraction),
                         "TAKE_PROFIT_2R", tightened, best, opposing)
-    if not state.tp1_done and favorable >= TP1_R * risk:
+    technical_tp1_hit = (
+        state.tp1_price is not None
+        and not state.tp1_done
+        and (
+            price >= state.tp1_price
+            if state.direction == "LONG" else price <= state.tp1_price
+        )
+    )
+    if technical_tp1_hit:
+        breakeven = state.entry_price * (1.0 + round_trip_cost_pct / 100.0) \
+            if state.direction == "LONG" else state.entry_price * (1.0 - round_trip_cost_pct / 100.0)
+        tightened = max(state.stop_price, breakeven) if state.direction == "LONG" \
+            else min(state.stop_price, breakeven)
+        return Decision("REDUCE", min(TP1_FRACTION, state.remaining_fraction),
+                        "TAKE_PROFIT_TECHNICAL_1", tightened, best, opposing)
+    if state.tp1_price is None and not state.tp1_done and favorable >= TP1_R * risk:
         breakeven = state.entry_price * (1.0 + round_trip_cost_pct / 100.0) \
             if state.direction == "LONG" else state.entry_price * (1.0 - round_trip_cost_pct / 100.0)
         tightened = max(state.stop_price, breakeven) if state.direction == "LONG" \
