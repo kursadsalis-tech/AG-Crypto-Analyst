@@ -17,7 +17,7 @@ from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_a
 
 DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 ATTESTATION_VERSION = "AGCA_RUNTIME_ATTESTATION_V4_PROCESS_BOUND_PAPER"
-MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
+MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
 SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
 
@@ -166,6 +166,7 @@ def market_behavior_health(now=None, path=None):
         "age_seconds": None, "minute_end_timestamp_ms": None,
         "row_count": 0, "eligible_row_count": 0, "report_sha256": None,
         "raw_market_payloads_persisted": None,
+        "market_data_provider": None,
         "may_send_real_orders": False,
     }
     if not path.is_file():
@@ -187,6 +188,7 @@ def market_behavior_health(now=None, path=None):
             raw.get("health_contract_version") == MARKET_BEHAVIOR_HEALTH_VERSION
             and raw.get("execution_mode") == "PAPER_ONLY"
             and raw.get("may_send_real_orders") is False
+            and raw.get("market_data_provider") == "BINANCE"
             and raw.get("raw_market_payloads_persisted") is False
             and isinstance(raw.get("report_sha256"), str)
             and len(raw["report_sha256"]) == 64
@@ -203,6 +205,7 @@ def market_behavior_health(now=None, path=None):
             "eligible_row_count": int(raw.get("eligible_row_count") or 0),
             "report_sha256": raw.get("report_sha256"),
             "raw_market_payloads_persisted": raw.get("raw_market_payloads_persisted"),
+            "market_data_provider": raw.get("market_data_provider"),
             "may_send_real_orders": bool(raw.get("may_send_real_orders", False)),
         }
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):

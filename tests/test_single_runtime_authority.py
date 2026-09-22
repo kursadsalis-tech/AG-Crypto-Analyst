@@ -71,7 +71,8 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
                     symbol TEXT,market_type TEXT,status TEXT
                 );
                 CREATE TABLE market_behavior_minute_features(
-                    instrument TEXT,minute_end_timestamp_ms INTEGER,
+                    instrument TEXT,market_data_provider TEXT,
+                    minute_end_timestamp_ms INTEGER,
                     eligible_for_learning INTEGER
                 );
                 INSERT INTO paper_agent_positions VALUES(
@@ -81,7 +82,7 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
                     'BTCUSDT','SPOT','CLOSED'
                 );
                 INSERT INTO market_behavior_minute_features VALUES(
-                    'ETH-USDT-SWAP',1000,1
+                    'ETH-USDT-SWAP','BINANCE',1000,1
                 );
             """)
             symbols = set(paper_realtime_worker.subscription_symbols(con))
@@ -101,6 +102,25 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         active = installer.split("active_timers=(", 1)[1].split(")", 1)[0]
         self.assertNotIn("agca-binance-risk-refresh.service", canonical)
         self.assertNotIn("agca-binance-risk-refresh.timer", active)
+
+    def test_noncanonical_copy_trader_runtime_is_retired(self):
+        installer=(ROOT/"deploy/install_gce_free_worker.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "agca-okx-copy-trader-collector.service "
+            "agca-okx-copy-trader-collector.timer",
+            installer,
+        )
+        canonical=installer.split("canonical_units=(",1)[1].split(")",1)[0]
+        active=installer.split("active_timers=(",1)[1].split(")",1)[0]
+        self.assertNotIn("agca-okx-copy-trader-collector.service", canonical)
+        self.assertNotIn("agca-okx-copy-trader-collector.timer", active)
+
+    def test_behavior_observer_service_declares_canonical_binance_source(self):
+        service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3", service)
+        self.assertNotIn("AGCA_OKX_REQUEST_TIMEOUT_SECONDS", service)
 
     def test_risk_refresh_is_support_only_and_uses_canonical_database(self):
         service=(ROOT/"deploy/agca-risk-refresh.service").read_text(encoding="utf-8")

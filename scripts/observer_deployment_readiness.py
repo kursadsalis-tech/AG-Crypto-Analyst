@@ -46,9 +46,9 @@ REQUIRED_FILES = (
     "data/causal_minute_evidence.py",
     "data/federal_reserve_exact_events.py",
     "data/live_behavior_evidence_bundle.py",
-    "data/okx_liquidation_channel.py",
-    "data/okx_live_evidence.py",
-    "data/okx_market_universe.py",
+    "data/binance_liquidation_channel.py",
+    "data/binance_live_evidence.py",
+    "data/binance_market_universe.py",
     "data/rolling_behavior_window.py",
     "paper_trading/governance.py",
     "requirements-runtime.txt",
@@ -126,6 +126,26 @@ def build_readiness(root=PROJECT_ROOT):
         f"HEALTH_VERSION_MISMATCH:{name}"
         for name, passed in health_versions.items() if not passed
     )
+    behavior_service = services.get(
+        "agca-market-behavior-observer.service", {}
+    )
+    behavior_service_path = root / "deploy/agca-market-behavior-observer.service"
+    behavior_service_text = (
+        behavior_service_path.read_text(encoding="utf-8")
+        if behavior_service_path.is_file() else ""
+    )
+    canonical_provider = {
+        "behavior_service_binance_timeout": (
+            "AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3" in behavior_service_text
+        ),
+        "behavior_service_no_alternate_timeout": (
+            "AGCA_OKX_REQUEST_TIMEOUT_SECONDS" not in behavior_service_text
+        ),
+    }
+    failures.extend(
+        f"CANONICAL_PROVIDER_CONTRACT:{name}"
+        for name, passed in canonical_provider.items() if not passed
+    )
     authority = authority_contract()
     authority_safe = (
         authority["execution_mode"] == "PAPER_ONLY"
@@ -136,13 +156,14 @@ def build_readiness(root=PROJECT_ROOT):
     if not authority_safe:
         failures.append("GOVERNANCE_AUTHORITY_EXPANDED")
     return {
-        "contract_version": "OBSERVER_DEPLOYMENT_READINESS_V1",
+        "contract_version": "OBSERVER_DEPLOYMENT_READINESS_V2_BINANCE_CANONICAL",
         "project_root": str(root),
         "required_file_sha256": hashes,
         "service_contracts": services,
         "runtime_dependencies_declared": dependencies,
         "local_only_tables": local_only,
         "health_contract_versions": health_versions,
+        "canonical_market_provider": canonical_provider,
         "paper_authority_safe": authority_safe,
         "failure_count": len(failures), "failures": failures,
         "ready_for_controlled_cloud_install": not failures,

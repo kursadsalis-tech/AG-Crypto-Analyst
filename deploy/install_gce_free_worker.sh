@@ -58,11 +58,13 @@ retired=(
   agca-derivatives-snapshot.service agca-derivatives-snapshot.timer
   agca-risk-snapshot.service agca-risk-snapshot.timer
   agca-binance-risk-refresh.service agca-binance-risk-refresh.timer
+  agca-okx-copy-trader-collector.service agca-okx-copy-trader-collector.timer
   agca-hourly-forecast.service agca-hourly-forecast.timer
   agca-live-cycle.service agca-live-cycle.timer
 )
 for unit in "${retired[@]}"; do
   sudo systemctl disable --now "$unit" 2>/dev/null || true
+  sudo rm -f "/etc/systemd/system/$unit"
   sudo systemctl mask "$unit" 2>/dev/null || true
 done
 
@@ -78,8 +80,6 @@ canonical_units=(
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.service
   agca-market-behavior-observer.timer
-  agca-okx-copy-trader-collector.service
-  agca-okx-copy-trader-collector.timer
   agca-remote-mirror-drain.service
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.service
@@ -106,7 +106,6 @@ active_timers=(
   agca-risk-refresh.timer
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.timer
-  agca-okx-copy-trader-collector.timer
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.timer
 )

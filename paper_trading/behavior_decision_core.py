@@ -504,14 +504,25 @@ def evaluate(con, now=None):
          else "COLLECTING_TESTABLE_HYPOTHESES"),
         review_json, int(bool(exploration_patterns)),
     ))
+    feature_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(market_behavior_minute_features)"
+    )}
+    if "market_data_provider" not in feature_columns:
+        con.commit()
+        return {
+            "status": "NO_CANONICAL_BEHAVIOR_PROVENANCE",
+            "candidates": [], "review": review,
+        }
     latest_behavior = con.execute("""SELECT MAX(minute_end_timestamp_ms)
         FROM market_behavior_minute_features
-        WHERE eligible_for_learning=1 AND minute_end_timestamp_ms<=?""",
+        WHERE market_data_provider='BINANCE'
+          AND eligible_for_learning=1 AND minute_end_timestamp_ms<=?""",
         (int(now.timestamp() * 1000),)).fetchone()[0]
     latest_external = con.execute("""
         SELECT MAX(m.minute_end_timestamp_ms)
         FROM market_behavior_minute_features m
-        WHERE m.eligible_for_learning=1 AND m.minute_end_timestamp_ms<=?
+        WHERE m.market_data_provider='BINANCE'
+          AND m.eligible_for_learning=1 AND m.minute_end_timestamp_ms<=?
           AND EXISTS (SELECT 1 FROM causal_minute_external_evidence e
               WHERE e.minute_end_timestamp_ms=m.minute_end_timestamp_ms)
     """, (int(now.timestamp() * 1000),)).fetchone()[0]
@@ -534,9 +545,6 @@ def evaluate(con, now=None):
         "MARKET_STRUCTURE", "[]", f"market_structure:{latest}",
         iso(evidence_end), "OBSERVED",
     ))
-    feature_columns = {row[1] for row in con.execute(
-        "PRAGMA table_info(market_behavior_minute_features)"
-    )}
     mid_first_expr = "mid_price_first" if "mid_price_first" in feature_columns else "NULL"
     rows = con.execute(f"""SELECT instrument,book_imbalance_20_mean,
         taker_imbalance_snapshot_mean,spread_bps_mean,mid_price_last,
@@ -544,7 +552,8 @@ def evaluate(con, now=None):
         long_liquidation_notional_usd_estimate,
         short_liquidation_notional_usd_estimate,liquidation_event_count,
         quality_gates_json,{mid_first_expr} FROM market_behavior_minute_features
-        WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1 ORDER BY instrument
+        WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
+          AND eligible_for_learning=1 ORDER BY instrument
     """, (latest,)).fetchall()
     candidates = []
     for raw in rows:

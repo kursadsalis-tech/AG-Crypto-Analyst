@@ -20,22 +20,30 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
-from data.okx_liquidation_channel import probe
-from data.okx_live_evidence import collect, fetch_json
-from data.okx_market_universe import build_universe
+from data.binance_liquidation_channel import probe
+from data.binance_live_evidence import collect, fetch_json
+from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
 from database.causal_evidence_store import evidence_for_closed_minute
 
 
-HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
+HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 
 
 def refresh_market_route():
-    instruments = fetch_json("public/instruments", {"instType": "SWAP"})
-    tickers = fetch_json("market/tickers", {"instType": "SWAP"})
+    exchange_info = fetch_json("/fapi/v1/exchangeInfo")
+    tickers = fetch_json("/fapi/v1/ticker/24hr")
+    books = fetch_json("/fapi/v1/ticker/bookTicker")
+    if any(
+        isinstance(payload, dict) and payload.get("_transport_error")
+        for payload in (exchange_info, tickers, books)
+    ):
+        raise RuntimeError("Binance market universe transport unavailable")
     snapshot_ms = int(time.time() * 1000)
-    universe = build_universe(instruments, tickers, snapshot_ms=snapshot_ms)
+    universe = build_universe(
+        exchange_info, tickers, books, snapshot_ms=snapshot_ms
+    )
     return universe, build_attention_route(universe, opportunity_slots=10)
 
 
@@ -112,6 +120,7 @@ def main():
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    result["market_data_provider"] = "BINANCE"
     result["causal_external_evidence"] = (
         evidence_for_closed_minute(args.database, minute_end_ms)
         if args.database else {
@@ -125,6 +134,7 @@ def main():
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
+        "market_data_provider": "BINANCE",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
     }
@@ -139,6 +149,7 @@ def main():
             "status": "HEALTHY" if result["eligible_row_count"] == result["row_count"] else "DEGRADED",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "execution_mode": "PAPER_ONLY",
+            "market_data_provider": "BINANCE",
             "broad_scan_instrument_count": route["broad_scan_instrument_count"],
             "deep_stream_instrument_count": route["deep_stream_instrument_count"],
             "row_count": result["row_count"],
