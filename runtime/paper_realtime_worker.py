@@ -247,8 +247,10 @@ async def run():
     symbol_cache_lock = threading.Lock()
     cached_symbols = ()
     pattern_cache_lock = threading.Lock()
-    cached_patterns = behavior_decision_core.learned_patterns(con, now())
-    cached_patterns_at = time.monotonic()
+    # Fail closed until the background refresher has loaded learned patterns.
+    # Startup and lightweight test DBs must not require research-history tables.
+    cached_patterns = {}
+    cached_patterns_at = 0.0
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -435,7 +437,11 @@ async def run():
             refreshed = load_symbols(db)
             refreshed_patterns = None
             current = time.monotonic()
-            if current - cached_patterns_at >= 30.0:
+            has_learning_history = db.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='behavior_event_forward_outcomes'"
+            ).fetchone()
+            if has_learning_history and current - cached_patterns_at >= 30.0:
                 refreshed_patterns = behavior_decision_core.learned_patterns(db, now())
         except Exception:
             db = getattr(universe_local, "connection", None)
