@@ -952,6 +952,7 @@ def select_new_positions(
     # as selection, so a tiny high-% setup cannot crowd out a larger opportunity
     # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
     ranked_candidates = []
+    preselection_outcomes = {}
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
@@ -965,7 +966,8 @@ def select_new_positions(
             except (requests.RequestException, ValueError) as exc:
                 reason_code = "TECHNICAL_TRADE_PLAN_UNAVAILABLE"
                 reject(reason_code)
-                candidate_outcomes[outcome_key] = {
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
                     "status": "REDDEDİLDİ",
                     "reason": reason_code,
                     "detail": type(exc).__name__,
@@ -974,7 +976,8 @@ def select_new_positions(
             if not bool(technical_plan["risk"]["risk_compatible"]):
                 reason_code = "TECHNICAL_STOP_EXCEEDS_RISK_ENVELOPE"
                 reject(reason_code)
-                candidate_outcomes[outcome_key] = {
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
                     "status": "REDDEDİLDİ", "reason": reason_code,
                 }
                 continue
@@ -988,11 +991,20 @@ def select_new_positions(
             * technical_size_multiplier
         )
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        stop_geometry = _validated_stop_geometry(row)
-        if stop_geometry is None:
-            reject("STOP_REFERENCE_MISSING_OR_INVALID")
-            continue
-        raw_stop_pct, effective_stop_pct = stop_geometry
+        if technical_plan is not None:
+            raw_stop_pct = float(technical_plan["risk"]["stop_distance_pct"])
+            effective_stop_pct = raw_stop_pct
+        else:
+            stop_geometry = _validated_stop_geometry(row)
+            if stop_geometry is None:
+                reject("STOP_REFERENCE_MISSING_OR_INVALID")
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
+                    "status": "REDDEDİLDİ",
+                    "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
+                }
+                continue
+            raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
@@ -1101,6 +1113,7 @@ def select_new_positions(
             "status": "DEĞERLENDİRİLİYOR", "reason": None
         } for _, _, row in ranked_candidates
     }
+    candidate_outcomes.update(preselection_outcomes)
 
     for _, _, row in ranked_candidates:
         outcome_key = (row["symbol"], row["direction"], row["horizon"])
@@ -1127,9 +1140,15 @@ def select_new_positions(
             continue
         tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
+        technical_plan = row.get("technical_trade_plan")
+        technical_size_multiplier = (
+            float(technical_plan.get("quality_multiplier") or 1.0)
+            if technical_plan is not None else 1.0
+        )
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
+            * technical_size_multiplier
         )
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
