@@ -92,7 +92,10 @@ def main(force=False):
                 f"coverage={result['coverage_count']}/{result['coverage_total']} | "
                 f"market_stress={result['market_stress_count']} | "
                 f"asset_blocks={result['asset_block_count']} | "
-                f"source_errors={len(source_errors)}"
+                f"source_errors={len(source_errors)} | "
+                f"technical_contexts={result.get('technical_context_count', 0)} | "
+                f"technical_ms={result.get('technical_context_compute_ms', 0.0):.3f} | "
+                f"technical_errors={len(result.get('technical_context_errors') or {})}"
             )
             save_state(con, status, message, now if status == "SUCCESS" else None)
             print(f"Risk Manager cycle: {status} | {message}")
