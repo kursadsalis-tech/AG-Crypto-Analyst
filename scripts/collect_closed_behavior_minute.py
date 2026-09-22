@@ -11,6 +11,7 @@ import os
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,7 +25,8 @@ from data.binance_liquidation_channel import probe
 from data.binance_live_evidence import collect, fetch_json
 from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
-from database.market_behavior_store import persist_closed_minute
+from database.market_behavior_store import ensure_table, persist_closed_minute
+from database.runtime_store import connect as runtime_connect
 from database.causal_evidence_store import evidence_for_closed_minute
 
 
@@ -32,17 +34,31 @@ HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 
 
 def refresh_market_route():
-    exchange_info = fetch_json("/fapi/v1/exchangeInfo")
-    tickers = fetch_json("/fapi/v1/ticker/24hr")
-    books = fetch_json("/fapi/v1/ticker/bookTicker")
-    if any(
-        isinstance(payload, dict) and payload.get("_transport_error")
-        for payload in (exchange_info, tickers, books)
-    ):
-        raise RuntimeError("Binance market universe transport unavailable")
+    requests_to_make = {
+        "exchange_info": ("/fapi/v1/exchangeInfo", None),
+        "tickers": ("/fapi/v1/ticker/24hr", None),
+        "books": ("/fapi/v1/ticker/bookTicker", None),
+    }
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            name: pool.submit(fetch_json, path, params)
+            for name, (path, params) in requests_to_make.items()
+        }
+        payloads = {name: future.result() for name, future in futures.items()}
+    errors = {
+        name: payload
+        for name, payload in payloads.items()
+        if isinstance(payload, dict) and payload.get("_transport_error")
+    }
+    if errors:
+        raise RuntimeError(
+            "Binance market universe transport unavailable: "
+            + json.dumps(errors, sort_keys=True, separators=(",", ":"))
+        )
     snapshot_ms = int(time.time() * 1000)
     universe = build_universe(
-        exchange_info, tickers, books, snapshot_ms=snapshot_ms
+        payloads["exchange_info"], payloads["tickers"], payloads["books"],
+        snapshot_ms=snapshot_ms,
     )
     return universe, build_attention_route(universe, opportunity_slots=10)
 
@@ -72,6 +88,35 @@ async def collect_minute(route, universe, contract_values, args, minute_end_ms):
     return [build_bundle(market, liquidations) for market in market_snapshots]
 
 
+def write_failure_health(path, error):
+    if not path:
+        return
+    health = {
+        "health_contract_version": HEALTH_CONTRACT_VERSION,
+        "status": "DATA_UNAVAILABLE",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "execution_mode": "PAPER_ONLY",
+        "market_data_provider": "BINANCE",
+        "raw_market_payloads_persisted": False,
+        "may_send_real_orders": False,
+        "error": str(error),
+    }
+    canonical = json.dumps(
+        health, sort_keys=True, separators=(",", ":")
+    ).encode()
+    health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
+    write_json_atomic(path, health)
+
+
+def migrate_behavior_schema(database_path):
+    if not database_path:
+        return
+    with runtime_connect(database_path, timeout=30) as connection:
+        connection.execute("PRAGMA busy_timeout=30000")
+        ensure_table(connection)
+        connection.commit()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--route")
@@ -87,6 +132,7 @@ def main():
     args = parser.parse_args()
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
+    migrate_behavior_schema(args.database)
     lock_handle = None
     if args.lock_file:
         lock_path = Path(args.lock_file)
@@ -97,7 +143,11 @@ def main():
         except BlockingIOError as exc:
             raise SystemExit("Another market behavior observer owns the lock") from exc
     if args.refresh_live_universe:
-        universe, route = refresh_market_route()
+        try:
+            universe, route = refresh_market_route()
+        except Exception as exc:
+            write_failure_health(args.health_output, exc)
+            raise
     else:
         if not args.route or not args.universe:
             parser.error("--route and --universe are required without --refresh-live-universe")
