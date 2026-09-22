@@ -543,7 +543,7 @@ def fill_pending(con, now, exchange_metadata=None):
     """).fetchall()
     filled = 0
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type) in rows:
+         market_type, thesis_json) in rows:
         planned = parse_time(planned_entry_time)
         metadata = (
             exchange_metadata.get(market_type)
@@ -1809,11 +1809,12 @@ if __name__ == "__main__":
 def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
     """Fill pending PAPER entries only from the authoritative live state callback."""
     rows = con.execute("""
-        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
-               market_type
-        FROM paper_agent_positions
-        WHERE status='PENDING_ENTRY' AND symbol=? AND market_type=?
-        ORDER BY selected_at,position_id
+        SELECT p.position_id,p.symbol,p.planned_entry_time,p.notional,p.direction,
+               p.leverage,p.market_type,t.thesis_json
+        FROM paper_agent_positions p
+        LEFT JOIN paper_agent_decision_theses t USING(position_id)
+        WHERE p.status='PENDING_ENTRY' AND p.symbol=? AND p.market_type=?
+        ORDER BY p.selected_at,p.position_id
     """, (live.symbol, live.market_type)).fetchall()
     filled = cancelled = 0
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
@@ -1850,6 +1851,30 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         side_quote_volume = (
             live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
         )
+        technical_plan = None
+        if thesis_json:
+            try:
+                technical_plan = (
+                    json.loads(thesis_json or "{}").get("technical_trade_plan")
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                technical_plan = None
+        if technical_plan is not None:
+            entry = technical_plan.get("entry") or {}
+            try:
+                entry_low = float(entry["low"])
+                entry_high = float(entry["high"])
+                live_entry_price = float(executable_price)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (
+                math.isfinite(live_entry_price)
+                and entry_low <= live_entry_price <= entry_high
+            ):
+                # The opportunity stays PENDING inside the existing bounded
+                # observation window. Price must come to the technical entry
+                # zone; the agent does not chase the market.
+                continue
         fill = simulated_fill(
             reference_price=float(executable_price) if executable_price is not None else 0.0,
             requested_notional=float(notional), side=side,
