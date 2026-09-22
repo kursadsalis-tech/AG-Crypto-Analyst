@@ -14,8 +14,8 @@ from pathlib import Path
 
 from database.runtime_store import connect
 from paper_trading.crypto_profit_agent import (
-    DB_NAME, FORWARD_COHORT, ensure_tables, fill_pending_from_live_state,
-    select_new_positions,
+    DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
+    fill_pending_from_live_state, select_new_positions,
 )
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
@@ -617,6 +617,7 @@ async def run():
             except asyncio.TimeoutError:
                 pass
 
+    expired_on_startup = cancel_expired_pending_entries(con, now())
     with symbol_cache_lock:
         cached_symbols = load_symbols(con)
     emit_health(
