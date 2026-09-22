@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -12,6 +13,30 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
+    def test_market_observation_does_not_require_fresh_risk_permission(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute(
+                "CREATE TABLE asset_risk_snapshots("
+                "policy_snapshot_id INTEGER, symbol TEXT)"
+            )
+            con.executemany(
+                "INSERT INTO asset_risk_snapshots VALUES(?,?)",
+                [(7, "BTCUSDT"), (7, "ETHUSDT"), (7, "DELISTEDUSDT")],
+            )
+            metadata = SimpleNamespace(
+                symbols={"BTCUSDT": object(), "ETHUSDT": object()}
+            )
+            self.assertEqual(
+                paper_realtime_worker.latest_monitoring_symbols(con, metadata),
+                (
+                    ("BTCUSDT", "USD_M_PERPETUAL"),
+                    ("ETHUSDT", "USD_M_PERPETUAL"),
+                ),
+            )
+        finally:
+            con.close()
+
     def test_websocket_ingest_does_not_wait_for_slow_decision_database_work(self):
         started = threading.Event()
         callback_latency = []
