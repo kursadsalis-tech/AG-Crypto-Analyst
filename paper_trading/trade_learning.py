@@ -282,6 +282,10 @@ def technical_shadow_review(con, validation_cohort):
         if net_return is None:
             continue
         thesis = review.get("frozen_thesis") or {}
+        # Once a technical trade plan is an active execution input, this trade
+        # no longer belongs in the earlier shadow-only cohort.
+        if thesis.get("technical_trade_plan") is not None:
+            continue
         technical = thesis.get("technical_context_observed")
         if not isinstance(technical, dict):
             continue
