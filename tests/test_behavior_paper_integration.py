@@ -533,6 +533,48 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "OPEN",
         )
 
+    def test_live_usdm_pending_entry_reaches_simulated_fill_and_opens(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 12,
+            "symbol": "BTCUSDT",
+            "instrument": "BTCUSDT",
+            "market_type": "USD_M_PERPETUAL",
+            "evidence_sha256": "a" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW,
+                    exchange_metadata={"USD_M_PERPETUAL": object()},
+                ),
+                1,
+            )
+        ms = int(NOW.timestamp() * 1000)
+        live = SimpleNamespace(
+            symbol="BTCUSDT", market_type="USD_M_PERPETUAL",
+            market_timestamp_ms=ms, last_price=100.0,
+            visible_quote_volume=1_000_000.0,
+            best_bid=99.9, best_ask=100.1,
+            book_imbalance=0.1, taker_imbalance=0.1,
+            ask_quote_volume=500_000.0, bid_quote_volume=500_000.0,
+            quote_timestamp_ms=ms, liquidity_timestamp_ms=ms,
+            quote_source="TEST_BINANCE_USDM_BOOK",
+        )
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW, live,
+            exchange_metadata={"USD_M_PERPETUAL": object()},
+        )
+        self.assertEqual((filled, cancelled), (1, 0))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,market_type FROM paper_agent_positions"
+            ).fetchone(),
+            ("OPEN", "USD_M_PERPETUAL"),
+        )
+
     def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 10, "symbol": "UNIUSDT",
