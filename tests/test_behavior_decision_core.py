@@ -23,7 +23,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 ,event_id TEXT
             );
             CREATE TABLE market_behavior_minute_features(
-                instrument TEXT,minute_end_timestamp_ms INTEGER,
+                instrument TEXT,market_data_provider TEXT,
+                minute_end_timestamp_ms INTEGER,
                 eligible_for_learning INTEGER,book_imbalance_20_mean REAL,
                 taker_imbalance_snapshot_mean REAL,spread_bps_mean REAL,
                 mid_price_last REAL,open_interest_usd_first REAL,
@@ -69,8 +70,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
     def add_current(self):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
         self.con.execute(
-            "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("BTC-USDT-SWAP", minute, 1, .25, .35, 1.0, 100.0, 1_000_000,
+            "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("BTC-USDT-SWAP", "BINANCE", minute, 1, .25, .35, 1.0, 100.0, 1_000_000,
              25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
         )
         self.con.execute(
@@ -259,7 +260,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         newer = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
         self.con.execute(
             "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("BTC-USDT-SWAP", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
+            ("BTC-USDT-SWAP", "BINANCE", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
              25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
         )
         result = core.evaluate(self.con, NOW)
