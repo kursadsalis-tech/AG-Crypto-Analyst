@@ -13,6 +13,18 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
+    def test_worker_connection_timeout_can_be_extended_for_background_learning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.db"
+            with patch.object(paper_realtime_worker, "DB_NAME", str(path)):
+                db = paper_realtime_worker.worker_connect(timeout_seconds=.25)
+                try:
+                    self.assertEqual(
+                        db.execute("PRAGMA busy_timeout").fetchone()[0], 250
+                    )
+                finally:
+                    db.close()
+
     def test_dynamic_attention_route_not_legacy_risk_basket_drives_monitoring(self):
         con = sqlite3.connect(":memory:")
         try:
