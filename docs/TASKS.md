@@ -31,8 +31,14 @@ schedulers and research-for-research's-sake are not product objectives.
   deployed git source identity.
 - [x] P0-5: unify selection and simulated fills under one venue-specific PAPER
   taker-fee contract.
-- [ ] Deploy P0 canonical `main` to `agca-runtime` and verify fresh attestation
-  source SHA, clean checkout, worker/market health and `PAPER_ONLY`.
+- [x] Deploy P0 canonical `main` to `agca-runtime` and verify process-bound
+  source SHA, clean checkout, CONNECTED worker health, `PAPER_ONLY` and
+  real-order authority disabled.
+- [x] Fix deployment self-update re-exec, process-bound source attestation and
+  stale realtime pending-entry housekeeping discovered during live acceptance.
+- [ ] Observe Supabase mirror freshness until the canonical cancellation/attestation
+  updates catch up; SQLite remains authoritative and mirror lag must not block
+  trading hot-path behavior.
 - [ ] Verify natural post-deployment trades exercise the corrected stop, venue,
   fee, negative-expectancy and re-entry contracts before adding decision-path
   complexity.

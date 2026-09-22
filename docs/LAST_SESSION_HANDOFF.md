@@ -1,3 +1,34 @@
+# 2026-09-23 — P0 live acceptance complete
+
+P0 live acceptance is complete on canonical VM `agca-runtime`.
+
+Accepted runtime evidence:
+- canonical checkout and worker process source:
+  `483a8b5d9c818cf60d5f717665d14e124b8be69b`
+- worker health: `CONNECTED`
+- execution mode: `PAPER_ONLY`
+- real orders: disabled
+- worker checkout dirty state: false
+- process CWD: `/home/kursadsalis/AG-Crypto-Analyst-cloud`
+- zombie IOSTUSDT SPOT pending intent was cancelled by realtime housekeeping
+- no failed systemd units were observed; canonical timers were active
+
+Three operational defects were discovered and fixed during acceptance rather than
+papered over: installer self-update could continue executing stale script text,
+checkout SHA could masquerade as running-process SHA, and realtime pending intents
+could survive indefinitely when no market callback arrived.
+
+Supabase mirror state lagged canonical SQLite by a few minutes at the acceptance
+checkpoint. Canonical SQLite remains authoritative; mirror freshness is a
+separate operational item and must not be confused with runtime health.
+
+Next product step: P1 research gate. Inventory and benchmark the existing causal
+technical/multi-timeframe feature infrastructure, then design the smallest
+candidate-only integration that improves decision context without making 4h a
+direction authority or adding material hot-path latency/cloud cost.
+
+---
+
 # 2026-09-22 — P0 execution/economics correctness checkpoint
 
 Canonical `main` now contains the five mandatory P0 repairs discovered from

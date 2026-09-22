@@ -82,25 +82,38 @@ real-order authority:
 5. selection, risk sizing, reservation and simulated fills share one
    venue-specific taker-fee contract.
 
-This is a repository/CI validation checkpoint, not a claim that the external VM
-has already deployed this commit or that live profitability improved. Fresh
-cloud attestation and controlled PAPER acceptance are still required.
+P0 live acceptance was completed on 2026-09-22/23 after two operational defects
+found during deployment were also fixed: the installer now re-execs after its own
+git update, cloud attestation is bound to the running worker process source (not
+checkout state alone), and realtime housekeeping expires stale pending entries
+without waiting for a market callback.
+
+Canonical VM evidence at acceptance:
+- checkout/process SHA: `483a8b5d9c818cf60d5f717665d14e124b8be69b`
+- realtime worker: `CONNECTED`
+- execution mode: `PAPER_ONLY`
+- real-order authority: false
+- tracked checkout dirty state: false
+- stale IOSTUSDT SPOT pending entry was cancelled by runtime housekeeping
+- no failed systemd units were observed and canonical timers were active
+
+The local SQLite database remains authoritative. The Supabase mirror was still
+lagging by a few minutes at the acceptance checkpoint, so remote-mirror freshness
+must be treated as a separate operational concern rather than proof of runtime
+failure.
 
 ## Current priorities
 
-1. Deploy the P0 `main` checkpoint to the canonical VM with rollback protection
-   and verify a fresh attestation reports the exact deployed git SHA, clean
-   checkout, `PAPER_ONLY`, current realtime worker and canonical database.
-2. Verify the first natural post-P0 selections use the intended stop evidence,
+1. Verify the first natural post-P0 selections use the intended stop evidence,
    venue, fee contract and re-entry/suspension gates.
 3. Audit opportunity discovery so the lightweight broad market universe is not
    collapsed into the small deep-analysis slot set.
-4. Reuse existing causal technical and multi-timeframe capabilities in the active
+3. Reuse existing causal technical and multi-timeframe capabilities in the active
    decision path only after latency/resource benchmarks prove they do not damage
    realtime operation; 4h evidence is context, not automatic direction authority.
-5. Extend learning from underperformance detection toward bounded challenger
+4. Extend learning from underperformance detection toward bounded challenger
    generation/evaluation without creating a second live decision authority.
-6. Keep high-frequency raw evidence in memory/local compact storage by default;
+5. Keep high-frequency raw evidence in memory/local compact storage by default;
    do not expand Supabase/cloud cost without measured product benefit.
 
 ## Explicit non-claims
