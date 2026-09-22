@@ -55,6 +55,14 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         self.assertEqual(source["git_sha"], "e" * 40)
         self.assertFalse(source["git_dirty"])
 
+    def test_realtime_worker_expires_pending_before_subscription_refresh(self):
+        text=(ROOT/"runtime/paper_realtime_worker.py").read_text(encoding="utf-8")
+        cleanup='cancel_expired_pending_entries(db, observed_at)'
+        subscribe='return subscription_symbols(db)'
+        self.assertIn(cleanup, text)
+        self.assertIn(subscribe, text)
+        self.assertLess(text.index(cleanup), text.index(subscribe))
+
     def test_pending_spot_entry_is_part_of_realtime_subscription_universe(self):
         con = sqlite3.connect(":memory:")
         try:
