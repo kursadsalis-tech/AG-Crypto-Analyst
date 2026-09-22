@@ -37,11 +37,16 @@ class LiveControlStateTests(unittest.TestCase):
                 report.write_text(json.dumps({
                     "source_exchange": "BINANCE_USD_M",
                     "universe_coverage": {"deep_stream_instrument_count": 4},
+                    "dynamic_attention_route": {
+                        "deep_stream_instruments": [
+                            "BTCUSDT", "ETHUSDT", "DOGEUSDT", "TAOUSDT"
+                        ],
+                    },
                     "rows": [
+                        {"instrument": "ARKMUSDT"},
+                        {"instrument": "BIOUSDT"},
+                        {"instrument": "ILVUSDT"},
                         {"instrument": "BTCUSDT"},
-                        {"instrument": "ETHUSDT"},
-                        {"instrument": "DOGEUSDT"},
-                        {"instrument": "TAOUSDT"},
                     ],
                 }))
                 self.assertEqual(
