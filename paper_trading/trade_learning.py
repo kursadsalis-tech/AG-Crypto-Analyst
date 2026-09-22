@@ -216,9 +216,10 @@ def discover_patterns(groups):
     )
 
 
-def run(con, validation_cohort, now=None):
+def run(con, validation_cohort, now=None, *, ensure_schema=True):
     now = now or datetime.now(timezone.utc)
-    ensure_tables(con)
+    if ensure_schema:
+        ensure_tables(con)
     rows = load_closed(con, validation_cohort)
     groups = grouped_metrics(rows)
     patterns = discover_patterns(groups)
@@ -272,11 +273,17 @@ def run(con, validation_cohort, now=None):
                   score["trades"], score["weeks"],
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
     con.commit()
-    external_research = external_trader_learning.run_review(con, now)
-    external_research["rationale_review"] = (
-        external_trader_rationale.review_available_closed_contexts(con, now)
+    external_research = external_trader_learning.run_review(
+        con, now, ensure_schema=ensure_schema
     )
-    improvement = continuous_improvement.run(con, now)
+    external_research["rationale_review"] = (
+        external_trader_rationale.review_available_closed_contexts(
+            con, now, ensure_schema=ensure_schema
+        )
+    )
+    improvement = continuous_improvement.run(
+        con, now, ensure_schema=ensure_schema
+    )
     return {
         "status": status, "closed": len(rows), "weeks": weeks,
         "patterns": patterns, "promotion_allowed": False,
