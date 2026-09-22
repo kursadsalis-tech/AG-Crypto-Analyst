@@ -4,6 +4,24 @@ from control_center.presentation import operator_view
 
 
 class ControlCenterPresentationTests(unittest.TestCase):
+    def test_live_decision_latency_chain_is_visible(self):
+        snapshot = {
+            "system": {"execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                       "open_positions": 0, "market_data_status": "CANLI"},
+            "portfolio": {"initial_capital": 10000, "cash": 10000,
+                          "realized_pnl": 0, "unrealized_pnl": 0},
+            "positions": [], "closed_positions": [],
+            "brain": {"observed_event_ms": 10000,
+                      "context_window_start_ms": 5000,
+                      "decision_time_ms": 10120},
+            "brain_timeline": [{"observed_event_ms": 10000,
+                                "context_window_start_ms": 5000,
+                                "decision_time_ms": 10120}],
+        }
+        view = operator_view(snapshot)
+        self.assertIn("120 ms", view["ajan_beyni"]["gecikme_zinciri"])
+        self.assertIn("120 ms", view["düşünce_akışı"][0]["gecikme_zinciri"])
+
     def test_operator_view_is_human_readable_and_warns_on_stale_price(self):
         snapshot = {
             "system": {

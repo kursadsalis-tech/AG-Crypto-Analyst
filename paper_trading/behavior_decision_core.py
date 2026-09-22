@@ -451,6 +451,70 @@ def _latest_risk(con, now):
     return assets
 
 
+def evaluate_live(con, now, context):
+    """Evaluate one fresh WebSocket state using causal rolling observations.
+
+    Historical outcomes teach the existing core its patterns; a completed
+    minute feature never authorises or times this live decision.
+    """
+    ensure_tables(con)
+    observed_ms = int(context.get("observed_event_ms") or 0)
+    quote_ms = int(context.get("quote_ms") or 0)
+    now_ms = int(now.timestamp() * 1000)
+    if (not -500 <= now_ms - observed_ms <= 2000
+            or not -500 <= now_ms - quote_ms <= 2000):
+        return {"status": "LIVE_STATE_STALE", "candidates": []}
+    symbol = str(context.get("symbol") or "")
+    if (not symbol.endswith("USDT") or "-" in symbol
+            or context.get("market_type") != "USD_M_PERPETUAL"):
+        return {"status": "INVALID_LIVE_SYMBOL", "candidates": []}
+    try:
+        mid = float(context["mid"])
+        book = float(context["book_imbalance"])
+        taker = float(context["taker_imbalance"])
+        spread = float(context["spread_bps"])
+        move = float(context["move_5s_pct"])
+    except (KeyError, ValueError, TypeError):
+        return {"status": "LIVE_CONTEXT_INCOMPLETE", "candidates": []}
+    if (not all(math.isfinite(x) for x in (mid, book, taker, spread, move))
+            or mid <= 0 or spread < 0 or spread > 20):
+        return {"status": "LIVE_CONTEXT_INVALID", "candidates": []}
+    flow_pattern = _flow_pattern(book, taker)
+    price_pattern = _price_pattern(move, spread)
+    patterns = learned_patterns(con, now)
+    risks = _latest_risk(con, now)
+    risk = risks.get(symbol)
+    candidates = []
+    # A 5-second evidence bucket prevents repeated decisions on each quote.
+    bucket_ms = observed_ms - observed_ms % 5000
+    for kind, pattern in (("MARKET_STRUCTURE", flow_pattern),
+                          ("PRICE_ACTION", price_pattern)):
+        if not pattern:
+            continue
+        learned = patterns.get((kind, pattern))
+        if not learned or not learned["exploration_eligible"]:
+            continue
+        candidates.extend(_candidate_for_hypothesis(
+            con=con, now=now, latest=bucket_ms, instrument=symbol,
+            symbol=symbol, pattern=pattern, kind=kind, symbols_json="[]",
+            event_id=f"live:{kind}:{symbol}:{bucket_ms}",
+            available_at=iso(datetime.fromtimestamp(observed_ms / 1000, timezone.utc)),
+            event_direction="OBSERVED", learned=learned,
+            event_only=False, risk=risk, mid=mid, book=book, taker=taker,
+            spread=spread, oi_first=1.0, oi_change=0.0, funding=0.0,
+            long_liq=0.0, short_liq=0.0, liq_count=0,
+            quality_json=json.dumps({"source": "BINANCE_LIVE_WS",
+                                     "observed_event_ms": observed_ms,
+                                     "window_start_ms": context.get("window_start_ms"),
+                                     "decision_at": iso(now)}),
+            live_context=context,
+        ))
+    con.commit()
+    candidates.sort(key=lambda x: (x["expected_net_edge_pct"], x["confidence"]), reverse=True)
+    return {"status": "ACTIONABLE" if candidates else "NO_ACTIONABLE_LIVE_PATTERN",
+            "candidates": candidates}
+
+
 def evaluate(con, now=None):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
@@ -592,7 +656,7 @@ def _candidate_for_hypothesis(
     *, con, now, latest, instrument, symbol, pattern, kind, symbols_json,
     event_id, available_at, event_direction, learned, event_only, risk, mid,
     book, taker, spread, oi_first, oi_change, funding, long_liq, short_liq,
-    liq_count, quality_json,
+    liq_count, quality_json, live_context=None,
 ):
     """Persist one immutable single-source or confluence PAPER hypothesis."""
     hypothesis_pattern = "ANY_FLOW" if event_only else pattern
@@ -658,6 +722,16 @@ def _candidate_for_hypothesis(
         "risk": risk, "capabilities_used": capabilities,
         "unified_forecast_used": False, "real_orders": False,
     }
+    if live_context is not None:
+        evidence["live_context"] = live_context
+        evidence["capabilities_used"] = [
+            "LIVE_QUOTE", "ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST", "RISK_GATE"
+        ]
+        evidence["market_behavior"].update({
+            "open_interest_change_pct": None, "funding_rate": None,
+            "long_liquidation_usd": None, "short_liquidation_usd": None,
+            "liquidation_events": None,
+        })
     digest = hashlib.sha256(json.dumps(
         evidence, sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
