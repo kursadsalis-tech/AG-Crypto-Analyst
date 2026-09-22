@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -67,6 +68,43 @@ class PositionManagementTests(unittest.TestCase):
         row = self.con.execute("SELECT current_stop_price,remaining_quantity FROM paper_position_management").fetchone()
         self.assertEqual(row, (98.0, 10.0))
         self.assertEqual(self.con.execute("SELECT real_order_allowed FROM paper_position_events").fetchone()[0], 0)
+
+    def test_frozen_technical_plan_controls_stop_and_profit_targets(self):
+        self.con.execute("""
+            CREATE TABLE paper_agent_decision_theses(
+                position_id INTEGER PRIMARY KEY, thesis_json TEXT NOT NULL
+            )
+        """)
+        thesis = {
+            "technical_trade_plan": {"version": "TEST_TECH_PLAN"},
+            "execution_risk": {
+                "planned_stop_distance_pct": 1.5,
+                "planned_stop_price": 98.5,
+                "planned_tp1_price": 101.2,
+                "planned_tp2_price": 103.4,
+            },
+        }
+        self.con.execute(
+            "INSERT INTO paper_agent_decision_theses VALUES(?,?)",
+            (1, json.dumps(thesis)),
+        )
+        result = initialize_open_positions(
+            self.con, ENTRY + timedelta(seconds=1)
+        )
+        self.assertEqual(result, {"initialized": 1, "blocked": []})
+        row = self.con.execute("""
+            SELECT current_stop_price,tp1_price,tp2_price
+            FROM paper_position_management
+        """).fetchone()
+        self.assertEqual(row, (98.5, 101.2, 103.4))
+        reduced = process_market_state(
+            self.con, self.live(101.2, 2),
+            ENTRY + timedelta(seconds=2), self.rules,
+        )
+        self.assertEqual(
+            (reduced["status"], reduced["reason"]),
+            ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
+        )
 
     def test_one_r_reduces_and_stop_can_close_remainder(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
