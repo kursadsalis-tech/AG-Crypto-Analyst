@@ -23,9 +23,17 @@ git diff --quiet && git diff --cached --quiet || {
   echo "Refusing deployment with local git changes" >&2
   exit 5
 }
-git fetch origin main
-git checkout main
-git pull --ff-only origin main
+
+# The installer updates this checkout. If this file changes during git pull,
+# continuing in the already-running shell can execute a stale mixture of the
+# pre-update and post-update script. Re-exec exactly once from the refreshed
+# checkout before any deployment action.
+if [[ "${AGCA_DEPLOY_REEXEC:-0}" != "1" ]]; then
+  git fetch origin main
+  git checkout main
+  git pull --ff-only origin main
+  exec env AGCA_DEPLOY_REEXEC=1 bash "$DEPLOY/deploy/install_gce_free_worker.sh"
+fi
 
 if [[ ! -x .venv/bin/python ]]; then
   python3.12 -m venv .venv
