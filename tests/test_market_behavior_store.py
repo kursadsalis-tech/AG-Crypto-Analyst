@@ -23,7 +23,12 @@ def report(end, instrument="AAA"):
         "short_liquidation_notional_usd_estimate": 0, "liquidation_event_count": 0,
         "quality_gates": {"ok": True}, "eligible_for_learning": True,
     }
-    return {"minute_is_closed": True, "minute_end_timestamp_ms": end, "rows": [row]}
+    return {
+        "minute_is_closed": True,
+        "market_data_provider": "BINANCE",
+        "minute_end_timestamp_ms": end,
+        "rows": [row],
+    }
 
 
 class MarketBehaviorStoreTests(unittest.TestCase):
@@ -34,7 +39,11 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             persist_closed_minute(path, report(100_000))
             with sqlite3.connect(path) as connection:
                 count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+                provider = connection.execute(
+                    f"SELECT market_data_provider FROM {TABLE}"
+                ).fetchone()[0]
             self.assertEqual(count, 1)
+            self.assertEqual(provider, "BINANCE")
             self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
 
     def test_retention_prunes_old_rows(self):
