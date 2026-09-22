@@ -16,6 +16,7 @@ def ensure_table(connection):
     connection.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE} (
             instrument TEXT NOT NULL,
+            market_data_provider TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
             minute_end_timestamp_ms INTEGER NOT NULL,
             minute_start_timestamp_ms INTEGER NOT NULL,
             sample_count INTEGER NOT NULL,
@@ -47,6 +48,12 @@ def ensure_table(connection):
     existing_columns = {
         row[1] for row in connection.execute(f"PRAGMA table_info({TABLE})").fetchall()
     }
+    if "market_data_provider" not in existing_columns:
+        connection.execute(
+            f"ALTER TABLE {TABLE} ADD COLUMN market_data_provider "
+            "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'"
+        )
+        existing_columns.add("market_data_provider")
     for column in ("mid_price_first", "mid_price_last"):
         if column not in existing_columns:
             connection.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} REAL")
@@ -82,7 +89,8 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
         for row in report.get("rows", []):
             connection.execute(f"""
                 INSERT INTO {TABLE} (
-                    instrument,minute_end_timestamp_ms,minute_start_timestamp_ms,
+                    instrument,market_data_provider,minute_end_timestamp_ms,
+                    minute_start_timestamp_ms,
                     sample_count,max_sample_gap_ms,book_imbalance_20_mean,
                     book_imbalance_20_last,taker_imbalance_snapshot_mean,
                     taker_imbalance_snapshot_last,spread_bps_mean,
@@ -92,8 +100,9 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     long_liquidation_notional_usd_estimate,
                     short_liquidation_notional_usd_estimate,liquidation_event_count,
                     quality_gates_json,eligible_for_learning,created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(instrument,minute_end_timestamp_ms) DO UPDATE SET
+                    market_data_provider=excluded.market_data_provider,
                     sample_count=excluded.sample_count,
                     max_sample_gap_ms=excluded.max_sample_gap_ms,
                     book_imbalance_20_mean=excluded.book_imbalance_20_mean,
@@ -114,7 +123,8 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     eligible_for_learning=excluded.eligible_for_learning,
                     created_at=excluded.created_at
             """, (
-                row["instrument"], minute_end, row["minute_start_timestamp_ms"],
+                row["instrument"], str(report.get("market_data_provider") or "LEGACY_UNKNOWN"),
+                minute_end, row["minute_start_timestamp_ms"],
                 row["sample_count"], row["max_sample_gap_ms"],
                 row["book_imbalance_20_mean"], row["book_imbalance_20_last"],
                 row["taker_imbalance_snapshot_mean"], row["taker_imbalance_snapshot_last"],
