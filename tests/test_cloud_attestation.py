@@ -181,9 +181,10 @@ class CloudAttestationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "health.json")
             health = {
-                "health_contract_version": "AGCA_MARKET_BEHAVIOR_HEALTH_V1",
+                "health_contract_version": "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL",
                 "status": "HEALTHY", "completed_at": now.isoformat(),
-                "execution_mode": "PAPER_ONLY", "row_count": 12,
+                "execution_mode": "PAPER_ONLY", "market_data_provider": "BINANCE",
+                "row_count": 12,
                 "eligible_row_count": 12, "minute_end_timestamp_ms": 1,
                 "report_sha256": "a" * 64,
                 "raw_market_payloads_persisted": False,
@@ -201,6 +202,7 @@ class CloudAttestationTests(unittest.TestCase):
         observer = payload["market_behavior_observer"]
         self.assertEqual(observer["state"], "CURRENT")
         self.assertEqual(observer["eligible_row_count"], 12)
+        self.assertEqual(observer["market_data_provider"], "BINANCE")
         self.assertFalse(observer["may_send_real_orders"])
 
     def test_tampered_market_behavior_health_is_invalid(self):
@@ -210,7 +212,8 @@ class CloudAttestationTests(unittest.TestCase):
             health = {
                 "health_contract_version": "AGCA_MARKET_BEHAVIOR_HEALTH_V1",
                 "status": "HEALTHY", "completed_at": now.isoformat(),
-                "execution_mode": "PAPER_ONLY", "row_count": 12,
+                "execution_mode": "PAPER_ONLY", "market_data_provider": "BINANCE",
+                "row_count": 12,
                 "eligible_row_count": 12, "minute_end_timestamp_ms": 1,
                 "report_sha256": "a" * 64,
                 "raw_market_payloads_persisted": False,
