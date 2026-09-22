@@ -71,6 +71,8 @@ canonical_units=(
   agca-paper-realtime-health-monitor.timer
   agca-exchange-metadata-refresh.service
   agca-exchange-metadata-refresh.timer
+  agca-risk-refresh.service
+  agca-risk-refresh.timer
   agca-exact-macro-observer.service
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.service
@@ -100,6 +102,7 @@ sudo systemctl disable --now agca-sqlite-integrity-check.timer 2>/dev/null || tr
 active_timers=(
   agca-paper-realtime-health-monitor.timer
   agca-exchange-metadata-refresh.timer
+  agca-risk-refresh.timer
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.timer
   agca-okx-copy-trader-collector.timer
