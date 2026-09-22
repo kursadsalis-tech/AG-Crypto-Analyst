@@ -164,6 +164,22 @@ def dynamic_monitoring_symbols(db, usdm_metadata, report_path=DYNAMIC_BEHAVIOR_R
         report = json.loads(Path(report_path).read_text(encoding="utf-8"))
         coverage = report.get("universe_coverage") or {}
         expected = int(coverage.get("deep_stream_instrument_count") or 0)
+        route = report.get("dynamic_attention_route") or {}
+        route_symbols = route.get("deep_stream_instruments") or []
+        if (
+            report.get("source_exchange") == "BINANCE_USD_M"
+            and 0 < expected <= MAX_DYNAMIC_MONITORING_SYMBOLS
+            and len(route_symbols) == expected
+        ):
+            validated = _validated_monitoring_rows(
+                [{"instrument": symbol} for symbol in route_symbols],
+                usdm_metadata,
+            )
+            if len(validated) == expected:
+                return validated
+        # Backward-compatible bridge while the observer rotates from the
+        # previous report schema. It is removed from authority as soon as the
+        # explicit route field is present on the next closed-minute report.
         rows = report.get("rows") or []
         if (
             report.get("source_exchange") == "BINANCE_USD_M"
