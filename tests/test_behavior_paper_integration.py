@@ -368,6 +368,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
 
     def test_selection_uses_same_venue_fee_contract_as_execution(self):
         candidate = self.candidate()
+        candidate["risk_cap_pct"] = 100.0
         fake_tier = SimpleNamespace(
             margin_fraction=1.0, leverage=1.0, market_type="SPOT",
             tier="TEST", independent_signal_count=1, signal_sources=("TEST",),
