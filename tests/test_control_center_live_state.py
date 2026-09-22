@@ -1,5 +1,8 @@
+import asyncio
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +12,56 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
+    def test_websocket_ingest_does_not_wait_for_slow_decision_database_work(self):
+        started = threading.Event()
+        callback_latency = []
+        def schema(db):
+            db.execute("CREATE TABLE IF NOT EXISTS paper_agent_positions("
+                       "symbol TEXT,market_type TEXT,status TEXT)")
+            db.commit()
+        def slow_management(*_):
+            started.set()
+            time.sleep(.2)
+            return {"status": "HOLD"}
+        async def feed(_symbols, on_state, stop, _health, **_kwargs):
+            from paper_trading.realtime_market import LiveState
+            stamp = int(time.time() * 1000)
+            state = LiveState("BTCUSDT", market_timestamp_ms=stamp,
+                              quote_timestamp_ms=stamp, last_price=100,
+                              best_bid=99.9, best_ask=100.1)
+            await on_state(state, stamp)
+            assert await asyncio.to_thread(started.wait, 1)
+            before = time.monotonic()
+            await on_state(state, stamp)
+            callback_latency.append(time.monotonic() - before)
+            stop.set()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(paper_realtime_worker, "DB_NAME", str(root / "test.db")), \
+                    patch.object(paper_realtime_worker, "HEALTH_PATH", root / "health.json"), \
+                    patch.object(paper_realtime_worker, "BRAIN_STATE_PATH", root / "brain.json"), \
+                    patch.object(paper_realtime_worker, "BRAIN_TIMELINE_PATH", root / "timeline.json"), \
+                    patch.object(paper_realtime_worker, "MARKET_STATE_PATH", root / "market.json"), \
+                    patch.object(paper_realtime_worker, "validate_agent_authority"), \
+                    patch.object(paper_realtime_worker, "load_cache", return_value=None), \
+                    patch.object(paper_realtime_worker, "ensure_tables", side_effect=schema), \
+                    patch.object(paper_realtime_worker.position_management, "ensure_tables"), \
+                    patch.object(paper_realtime_worker.position_management,
+                                 "initialize_open_positions"), \
+                    patch.object(paper_realtime_worker, "cancel_expired_pending_entries",
+                                 return_value=0), \
+                    patch.object(paper_realtime_worker, "fill_pending_from_live_state",
+                                 return_value=(0, 0)), \
+                    patch.object(paper_realtime_worker, "rules_for", return_value=object()), \
+                    patch.object(paper_realtime_worker.position_management,
+                                 "process_market_state", side_effect=slow_management), \
+                    patch.object(paper_realtime_worker.position_management,
+                                 "reconcile_pending_funding", return_value={"resolved": 0}), \
+                    patch.object(paper_realtime_worker.realtime_market, "stream", side_effect=feed):
+                asyncio.run(paper_realtime_worker.run())
+        self.assertEqual(len(callback_latency), 1)
+        self.assertLess(callback_latency[0], .15)
+
     def test_heartbeat_requires_recent_quote_for_connected_status(self):
         status = paper_realtime_worker.heartbeat_market_status
         active = [("BTCUSDT", "USD_M_PERPETUAL")]

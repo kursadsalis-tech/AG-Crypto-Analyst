@@ -16,9 +16,10 @@ rate limit, 30-second selected-symbol cooldown, and durable five-second
 decision idempotency. Brain telemetry records live event, context, decision,
 selection, fill/cancel, and position-management times without gating execution.
 
-Local validation: 460/460 full tests pass; `git diff --check` clean. New tests
+Local validation: 461/461 full tests pass; `git diff --check` clean. New tests
 cover no-minute live candidate, stale input, risk veto, decision idempotency,
-and Control Center latency chain. GitHub CI and live VM acceptance are pending.
+nonblocking ingest, and Control Center latency chain. First GitHub CI passed
+at commit `4c2504b`; final-head CI and live VM acceptance are pending.
 Only after review and green CI, deploy this PR's exact head to the canonical VM
 service checkout and restart `agca-paper-realtime-worker.service` once. Do not
 run cutover/installers, change `.cutover_stamp`, or enable real orders.
