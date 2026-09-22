@@ -24,8 +24,11 @@ from paper_trading.exchange_metadata import (
 )
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
-from paper_trading import behavior_decision_core, experience_memory, position_management, realtime_market, trade_learning
-from paper_trading import strategy_allocator
+from paper_trading import (
+    behavior_decision_core, continuous_improvement, experience_memory,
+    external_trader_learning, external_trader_rationale, position_management,
+    realtime_market, strategy_allocator, trade_learning,
+)
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -51,13 +54,19 @@ MAX_DYNAMIC_MONITORING_SYMBOLS = 6
 WORKER_DB_TIMEOUT_SECONDS = max(
     1.0, float(os.getenv("AGCA_PAPER_DB_TIMEOUT_SECONDS", "5"))
 )
+LEARNING_DB_TIMEOUT_SECONDS = max(
+    WORKER_DB_TIMEOUT_SECONDS,
+    float(os.getenv("AGCA_PAPER_LEARNING_DB_TIMEOUT_SECONDS", "20")),
+)
 
 
-def worker_connect(stop_requested=None):
-    db = connect(DB_NAME, timeout=WORKER_DB_TIMEOUT_SECONDS)
-    db.execute(
-        f"PRAGMA busy_timeout={int(WORKER_DB_TIMEOUT_SECONDS * 1000)}"
+def worker_connect(stop_requested=None, timeout_seconds=None):
+    timeout = (
+        WORKER_DB_TIMEOUT_SECONDS
+        if timeout_seconds is None else max(0.1, float(timeout_seconds))
     )
+    db = connect(DB_NAME, timeout=timeout)
+    db.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
     if stop_requested is not None:
         db.set_progress_handler(lambda: int(stop_requested.is_set()), 1000)
     return db
@@ -311,6 +320,15 @@ async def run():
     con = worker_connect(shutdown_requested)
     ensure_tables(con)
     position_management.ensure_tables(con)
+    # Install research/learning schema once at service startup. Repeating DDL
+    # from the background learning thread adds avoidable SQLite schema-lock
+    # contention against the live PAPER writer.
+    trade_learning.ensure_tables(con)
+    external_trader_learning.ensure_tables(con)
+    external_trader_rationale.ensure_tables(con)
+    continuous_improvement.ensure_tables(con)
+    strategy_allocator.ensure_tables(con)
+    con.commit()
     decision_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-paper-decision"
     )
@@ -786,12 +804,23 @@ async def run():
             last_health_at = observed_at
 
     def learning_once():
-        """Run non-authoritative learning off the execution path."""
+        """Run non-authoritative learning off the execution path.
+
+        Learning may wait longer for a transient SQLite writer because it runs
+        on its own thread and has no execution authority. Live decisions keep
+        their shorter timeout and never depend on this work.
+        """
         db = None
         try:
-            db = worker_connect(shutdown_requested)
-            trade_learning.run(db, FORWARD_COHORT, now())
-            strategy_allocator.rebalance(db, now())
+            db = worker_connect(
+                shutdown_requested, timeout_seconds=LEARNING_DB_TIMEOUT_SECONDS
+            )
+            trade_learning.run(
+                db, FORWARD_COHORT, now(), ensure_schema=False
+            )
+            strategy_allocator.rebalance(
+                db, now(), ensure_schema=False
+            )
             return None
         except sqlite3.OperationalError as exc:
             if db is not None:
