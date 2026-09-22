@@ -196,12 +196,22 @@ def build(candles, *, symbol, generated_at=None, market_scope="RISK_MANAGER_CLOS
     else:
         alignment = "MIXED"
 
+    latest_price = float(hourly[-1]["close"])
+    support72 = min(row["low"] for row in hourly[-72:])
+    resistance72 = max(row["high"] for row in hourly[-72:])
     return {
         "version": VERSION,
         "symbol": str(symbol).upper(),
         "generated_at": _iso(generated_at),
         "as_of": _iso(hourly[-1]["close_time"]),
         "market_scope": str(market_scope),
+        "reference_price": latest_price,
+        "levels": {
+            "support_1h_72": float(support72),
+            "resistance_1h_72": float(resistance72),
+            "support_4h_20": float(latest_price * (1.0 - four_hour["support_distance_20_pct"] / 100.0)),
+            "resistance_4h_20": float(latest_price * (1.0 + four_hour["resistance_distance_20_pct"] / 100.0)),
+        },
         "observation_only": True,
         "real_order_allowed": False,
         "timeframes": ["1h", "4h"],
