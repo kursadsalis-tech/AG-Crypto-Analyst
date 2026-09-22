@@ -91,6 +91,17 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         self.assertIn(("ETHUSDT", "USD_M_PERPETUAL"), symbols)
         self.assertNotIn(("BTCUSDT", "SPOT"), symbols)
 
+    def test_legacy_binance_risk_refresh_units_are_retired(self):
+        installer=(ROOT/"deploy/install_gce_free_worker.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "agca-binance-risk-refresh.service agca-binance-risk-refresh.timer",
+            installer,
+        )
+        canonical = installer.split("canonical_units=(", 1)[1].split(")", 1)[0]
+        active = installer.split("active_timers=(", 1)[1].split(")", 1)[0]
+        self.assertNotIn("agca-binance-risk-refresh.service", canonical)
+        self.assertNotIn("agca-binance-risk-refresh.timer", active)
+
     def test_risk_refresh_is_support_only_and_uses_canonical_database(self):
         service=(ROOT/"deploy/agca-risk-refresh.service").read_text(encoding="utf-8")
         timer=(ROOT/"deploy/agca-risk-refresh.timer").read_text(encoding="utf-8")
