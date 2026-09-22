@@ -658,6 +658,12 @@ def render_result(policy, assets, source_errors, snapshot_id):
     )
 
 
+def runtime_connection():
+    con = runtime_connect(DB_NAME, timeout=30)
+    con.execute("PRAGMA busy_timeout=30000")
+    return con
+
+
 def main():
     created_at = iso(utcnow())
     assets = []
@@ -665,7 +671,7 @@ def main():
     technical_contexts = []
     technical_context_errors = {}
     technical_compute_ms = 0.0
-    con = runtime_connect(DB_NAME)
+    con = runtime_connection()
     try:
         dynamic_symbols = behavior_risk_symbols(con)
         try:
@@ -711,7 +717,7 @@ def main():
             source_errors[symbol] = str(exc)
 
     policy = build_global_policy(assets, source_errors, created_at)
-    con = runtime_connect(DB_NAME)
+    con = runtime_connection()
     try:
         ensure_tables(con)
         snapshot_id = save_snapshot(
