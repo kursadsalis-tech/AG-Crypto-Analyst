@@ -7,6 +7,13 @@ from risk_manager import risk_manager
 
 
 class RiskMarketDataTests(unittest.TestCase):
+    def test_runtime_connection_uses_extended_sqlite_busy_timeout(self):
+        con = mock.Mock()
+        with mock.patch.object(risk_manager, "runtime_connect", return_value=con) as connect:
+            self.assertIs(risk_manager.runtime_connection(), con)
+        connect.assert_called_once_with(risk_manager.DB_NAME, timeout=30)
+        con.execute.assert_called_once_with("PRAGMA busy_timeout=30000")
+
     def test_dynamic_symbol_prefers_binance_usd_m(self):
         expected = object()
         with mock.patch.object(
