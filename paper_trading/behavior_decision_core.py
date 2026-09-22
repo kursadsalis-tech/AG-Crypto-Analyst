@@ -462,7 +462,9 @@ def evaluate_live(con, now, context, patterns=None, risks=None, freshness_now=No
     ensure_tables(con)
     observed_ms = int(context.get("observed_event_ms") or 0)
     quote_ms = int(context.get("quote_ms") or 0)
-    freshness_clock = freshness_now or (lambda: datetime.now(timezone.utc))
+    # Callers on the live worker pass a real wall-clock function. Tests and
+    # offline/replay callers remain deterministic against their supplied `now`.
+    freshness_clock = freshness_now or (lambda: now)
 
     def live_is_fresh(at):
         wall_ms = int(at.timestamp() * 1000)
