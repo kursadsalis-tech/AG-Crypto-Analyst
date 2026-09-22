@@ -569,6 +569,30 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "OPEN",
         )
 
+    def test_realtime_housekeeping_cancels_expired_pending_without_live_quote(self):
+        candidate = self.candidate()
+        candidate.update({"decision_id": 1001, "symbol": "ZOMBIEUSDT",
+                          "evidence_sha256": "f" * 64})
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        cancelled = agent.cancel_expired_pending_entries(
+            self.con, NOW + timedelta(minutes=11)
+        )
+        self.assertEqual(cancelled, 1)
+        self.assertEqual(
+            self.con.execute("""SELECT status,cancel_reason
+                FROM paper_agent_positions""").fetchone(),
+            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
+        )
+        event = self.con.execute("""SELECT event_type,reason,real_order_allowed
+            FROM paper_position_events ORDER BY event_id DESC LIMIT 1""").fetchone()
+        self.assertEqual(
+            event,
+            ("ENTRY_REJECTED", "ENTRY_OBSERVATION_WINDOW_EXPIRED", 0),
+        )
+
     def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 10, "symbol": "UNIUSDT",
