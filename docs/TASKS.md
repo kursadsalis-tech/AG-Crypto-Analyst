@@ -42,10 +42,20 @@ schedulers and research-for-research's-sake are not product objectives.
 - [ ] Verify natural post-deployment trades exercise the corrected stop, venue,
   fee, negative-expectancy and re-entry contracts before adding decision-path
   complexity.
-- [ ] P1 research gate: inventory existing causal technical/multi-timeframe
-  capabilities, benchmark their CPU/latency/storage cost, and design the minimal
-  candidate-only integration. Do not promote the historical multi-timeframe
-  research model.
+- [x] P1 research gate: inventory existing causal technical/multi-timeframe
+  capabilities, benchmark CPU/latency/storage cost, and deploy the minimal
+  observation-only 1h/4h candidate context without promoting the historical
+  multi-timeframe research model.
+- [x] P1 runtime acceptance: reuse existing risk candles with zero extra market
+  requests; measure 23 contexts at 119.863 ms total; keep latest-only local
+  storage, no mirrored technical-context table, and no decision authority.
+- [x] Retire/mask the legacy Binance risk refresh that recreated a local
+  `crypto_data.db`; restore canonical risk refresh, stale-risk fail-closed and
+  transient SQLite busy handling.
+- [ ] P1 forward evidence gate: accumulate natural PAPER theses carrying
+  `technical_context_observed` and compare realized net-after-cost outcomes by
+  alignment/structure/regime. Keep direction/ranking/confidence/sizing/stop
+  authority disabled until adequate forward evidence exists.
 - [ ] P2 research gate: separate broad lightweight opportunity radar from scarce
   deep-analysis slots so the shortlist cannot silently become the trade universe.
 - [ ] P3 research gate: define bounded autonomous challenger generation and
