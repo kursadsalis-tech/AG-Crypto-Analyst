@@ -363,7 +363,21 @@ async def run():
 
     def refresh_symbol_cache_once():
         nonlocal cached_symbols
-        refreshed = load_symbols(universe_connection())
+        try:
+            refreshed = load_symbols(universe_connection())
+        except Exception:
+            db = getattr(universe_local, "connection", None)
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                universe_local.connection = None
+            raise
         with symbol_cache_lock:
             cached_symbols = refreshed
         return refreshed
@@ -572,6 +586,11 @@ async def run():
                     db.rollback()
                 except Exception:
                     pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                decision_local.connection = None
             prefix = (
                 "DECISION_SQLITE"
                 if isinstance(exc, sqlite3.OperationalError)
