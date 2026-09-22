@@ -41,18 +41,30 @@ class CloudAttestationTests(unittest.TestCase):
                 "paper_agent": {"status": "SUCCESS"},
             },
         }
-        source = {"git_sha": "a" * 40, "git_dirty": False}
+        checkout_source = {"git_sha": "a" * 40, "git_dirty": False}
+        process_source = {"git_sha": "b" * 40, "git_dirty": False}
+        realtime = {
+            "state": "CURRENT", "status": "CONNECTED", "age_seconds": 0.1,
+            "required": True, "real_order_allowed": False,
+            "process_runtime_source": process_source,
+        }
         with patch.dict(os.environ, {"AGCA_EXECUTION_MODE": "PAPER_ONLY"}), \
-                patch.object(cloud_attestation, "runtime_source_state", return_value=source):
+                patch.object(cloud_attestation, "runtime_source_state", return_value=checkout_source), \
+                patch.object(cloud_attestation, "paper_realtime_health", return_value=realtime):
             payload, encoded, digest = cloud_attestation.build(
                 self.con, "HEALTHY", results, now
             )
         self.assertEqual(payload["execution_mode"], "PAPER_ONLY")
         self.assertFalse(payload["may_send_real_orders"])
-        self.assertEqual(payload["runtime_source"], source)
+        self.assertEqual(payload["runtime_source"], {
+            "git_sha": process_source["git_sha"],
+            "git_dirty": False,
+            "checkout_git_sha": checkout_source["git_sha"],
+            "checkout_git_dirty": False,
+        })
         self.assertEqual(payload["sqlite_quick_check"], "ok")
         self.assertEqual(payload["positions"]["open"], 1)
-        self.assertEqual(payload["attestation_version"], "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER")
+        self.assertEqual(payload["attestation_version"], "AGCA_RUNTIME_ATTESTATION_V4_PROCESS_BOUND_PAPER")
         self.assertNotIn("hourly_job_status", payload)
         self.assertNotIn("product_cycle_status", payload)
         self.assertEqual(hashlib.sha256(encoded.encode()).hexdigest(), digest)
@@ -82,7 +94,10 @@ class CloudAttestationTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"status": "CONNECTED", "at": now.isoformat(),
                            "execution_mode": "PAPER_ONLY",
-                           "real_order_allowed": False}, handle)
+                           "real_order_allowed": False,
+                           "process_runtime_source": {
+                               "git_sha": "c" * 40, "git_dirty": False,
+                           }}, handle)
             payload, _, _ = cloud_attestation.build(
                 self.con, "HEALTHY", {}, now,
                 paper_realtime_health_path=path,
@@ -98,9 +113,28 @@ class CloudAttestationTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"status": "IDLE", "at": now.isoformat(),
                            "execution_mode": "PAPER_ONLY",
-                           "real_order_allowed": False}, handle)
+                           "real_order_allowed": False,
+                           "process_runtime_source": {
+                               "git_sha": "d" * 40, "git_dirty": False,
+                           }}, handle)
             result = cloud_attestation.paper_realtime_health(now, path, open_positions=1)
         self.assertEqual(result["state"], "UNHEALTHY")
+
+    def test_realtime_health_without_process_source_is_invalid(self):
+        now = datetime(2026, 9, 2, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper-realtime.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "status": "CONNECTED", "at": now.isoformat(),
+                    "execution_mode": "PAPER_ONLY",
+                    "real_order_allowed": False,
+                }, handle)
+            result = cloud_attestation.paper_realtime_health(
+                now, path, open_positions=1
+            )
+        self.assertEqual(result["state"], "INVALID")
+        self.assertIsNone(result["process_runtime_source"])
 
     def test_attestation_uses_hash_valid_fresh_integrity_cache(self):
         now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)

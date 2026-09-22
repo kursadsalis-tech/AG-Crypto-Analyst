@@ -5,6 +5,8 @@ import asyncio
 import json
 import os
 import signal
+import string
+import subprocess
 import tempfile
 import threading
 from collections import deque
@@ -43,6 +45,29 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def worker_process_source_state(repo_path=None):
+    """Capture the git source identity once for this worker process lifetime."""
+    root = Path(repo_path or Path(__file__).resolve().parents[1])
+    base = {"git_sha": None, "git_dirty": None}
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        if sha.returncode != 0 or dirty.returncode != 0:
+            return base
+        value = sha.stdout.strip()
+        if len(value) != 40 or any(ch not in string.hexdigits for ch in value):
+            return base
+        return {"git_sha": value.lower(), "git_dirty": bool(dirty.stdout.strip())}
+    except (OSError, subprocess.SubprocessError):
+        return base
 
 
 def _atomic_json_write(path, payload):
@@ -180,6 +205,7 @@ def subscription_symbols(con):
 
 
 async def run():
+    process_runtime_source = worker_process_source_state()
     validate_agent_authority(
         execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
         policy_version="PAPER_OPPORTUNITY_POLICY_V3_IMMEDIATE_EXECUTION",
@@ -350,6 +376,7 @@ async def run():
             "action": last_action_status,
             "quote_ingest": quote_ingest_snapshot(wall_clock_ms),
         })
+        details["process_runtime_source"] = process_runtime_source
         write_health(status, **details)
 
     def universe_connection():
