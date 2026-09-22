@@ -58,30 +58,50 @@ missing.
 
 ## Validation baseline
 
-On 2026-09-20 the cleaned canonical product line passed GitHub Actions:
+On 2026-09-22 the first mandatory correctness package (P0) was merged to
+canonical `main` through five isolated pull requests. The final P0 pull request
+passed GitHub Actions with:
 
-- focused PAPER integration: 83/83
-- broad offline regression: 331/331
-- total: 414/414
-- canonical `main` workflow: SUCCESS
+- focused PAPER integration: 107/107
+- broad offline regression: 384/384
+- canonical `main` head after P0: `42645f47a196224f0ce860dd55f61c30f2c90851`
 
-This is the current code-validation baseline, not a claim of live profitability
-or external deployment health.
+The P0 package corrects five execution/economic defects without granting new
+real-order authority:
+
+1. volatility stop evidence is carried from the asset-risk snapshot into the
+   position path and missing stop evidence fails closed;
+2. an evidence-mature matching pattern is suspended from new exposure when at
+   least 10 own closed PAPER trades across at least three independent days leave
+   calibrated net expectancy non-positive;
+3. adverse same-setup re-entry requires materially new evidence or at least a
+   one-risk-unit price reset instead of a new decision id alone;
+4. `PENDING_ENTRY` routes remain subscribed so a 1x LONG selected for SPOT can
+   receive its own executable Spot quote, and cloud attestation now records the
+   deployed git SHA/dirty state;
+5. selection, risk sizing, reservation and simulated fills share one
+   venue-specific taker-fee contract.
+
+This is a repository/CI validation checkpoint, not a claim that the external VM
+has already deployed this commit or that live profitability improved. Fresh
+cloud attestation and controlled PAPER acceptance are still required.
 
 ## Current priorities
 
-1. Keep one realtime PAPER authority and remove remaining obsolete parallel
-   runtime/reporting dependencies.
-2. Verify opportunity discovery remains dynamic and is not constrained by legacy
-   fixed watchlists.
-3. Preserve fail-closed executable quote, liquidity, funding, stop and risk
-   behaviour.
-4. Evaluate learning/allocation only from clean, economically meaningful forward
-   PAPER outcomes.
-5. Promote no capability merely because a backtest looks good; require natural
-   forward evidence and net-after-cost improvement.
-6. Keep documentation limited to current product truth; history belongs in Git
-   history/CHANGELOG rather than operational instructions.
+1. Deploy the P0 `main` checkpoint to the canonical VM with rollback protection
+   and verify a fresh attestation reports the exact deployed git SHA, clean
+   checkout, `PAPER_ONLY`, current realtime worker and canonical database.
+2. Verify the first natural post-P0 selections use the intended stop evidence,
+   venue, fee contract and re-entry/suspension gates.
+3. Audit opportunity discovery so the lightweight broad market universe is not
+   collapsed into the small deep-analysis slot set.
+4. Reuse existing causal technical and multi-timeframe capabilities in the active
+   decision path only after latency/resource benchmarks prove they do not damage
+   realtime operation; 4h evidence is context, not automatic direction authority.
+5. Extend learning from underperformance detection toward bounded challenger
+   generation/evaluation without creating a second live decision authority.
+6. Keep high-frequency raw evidence in memory/local compact storage by default;
+   do not expand Supabase/cloud cost without measured product benefit.
 
 ## Explicit non-claims
 
