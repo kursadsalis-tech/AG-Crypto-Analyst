@@ -13,7 +13,7 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
-    def test_market_observation_does_not_require_fresh_risk_permission(self):
+    def test_dynamic_attention_route_not_legacy_risk_basket_drives_monitoring(self):
         con = sqlite3.connect(":memory:")
         try:
             con.execute(
@@ -22,16 +22,71 @@ class LiveControlStateTests(unittest.TestCase):
             )
             con.executemany(
                 "INSERT INTO asset_risk_snapshots VALUES(?,?)",
-                [(7, "BTCUSDT"), (7, "ETHUSDT"), (7, "DELISTEDUSDT")],
+                [(7, "ARKMUSDT"), (7, "BIOUSDT"), (7, "ILVUSDT")],
             )
             metadata = SimpleNamespace(
-                symbols={"BTCUSDT": object(), "ETHUSDT": object()}
+                symbols={
+                    "BTCUSDT": object(), "ETHUSDT": object(),
+                    "DOGEUSDT": object(), "TAOUSDT": object(),
+                    "ARKMUSDT": object(), "BIOUSDT": object(),
+                    "ILVUSDT": object(),
+                }
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                report = Path(tmp) / "live.json"
+                report.write_text(json.dumps({
+                    "source_exchange": "BINANCE_USD_M",
+                    "universe_coverage": {"deep_stream_instrument_count": 4},
+                    "rows": [
+                        {"instrument": "BTCUSDT"},
+                        {"instrument": "ETHUSDT"},
+                        {"instrument": "DOGEUSDT"},
+                        {"instrument": "TAOUSDT"},
+                    ],
+                }))
+                self.assertEqual(
+                    paper_realtime_worker.dynamic_monitoring_symbols(
+                        con, metadata, report
+                    ),
+                    (
+                        ("BTCUSDT", "USD_M_PERPETUAL"),
+                        ("ETHUSDT", "USD_M_PERPETUAL"),
+                        ("DOGEUSDT", "USD_M_PERPETUAL"),
+                        ("TAOUSDT", "USD_M_PERPETUAL"),
+                    ),
+                )
+        finally:
+            con.close()
+
+    def test_dynamic_monitoring_falls_back_only_to_latest_behavior_minute(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute(
+                "CREATE TABLE market_behavior_minute_features("
+                "instrument TEXT, minute_end_timestamp_ms INTEGER, "
+                "eligible_for_learning INTEGER)"
+            )
+            con.executemany(
+                "INSERT INTO market_behavior_minute_features VALUES(?,?,?)",
+                [
+                    ("ARKMUSDT", 1000, 1),
+                    ("BTCUSDT", 2000, 1),
+                    ("DOGEUSDT", 2000, 1),
+                ],
+            )
+            metadata = SimpleNamespace(
+                symbols={
+                    "ARKMUSDT": object(), "BTCUSDT": object(),
+                    "DOGEUSDT": object(),
+                }
             )
             self.assertEqual(
-                paper_realtime_worker.latest_monitoring_symbols(con, metadata),
+                paper_realtime_worker.dynamic_monitoring_symbols(
+                    con, metadata, Path("/definitely/missing.json")
+                ),
                 (
                     ("BTCUSDT", "USD_M_PERPETUAL"),
-                    ("ETHUSDT", "USD_M_PERPETUAL"),
+                    ("DOGEUSDT", "USD_M_PERPETUAL"),
                 ),
             )
         finally:
