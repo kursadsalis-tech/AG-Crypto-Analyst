@@ -8,6 +8,7 @@ import signal
 import sqlite3
 import tempfile
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -18,11 +19,15 @@ from paper_trading.crypto_profit_agent import (
     DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
     fill_pending_from_live_state, select_new_positions,
 )
-from paper_trading.exchange_metadata import load_cache, rules_for
+from paper_trading.exchange_metadata import (
+    ExchangeMetadataError, load_cache, rules_for,
+)
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
-from paper_trading import behavior_decision_core, experience_memory, position_management, realtime_market, trade_learning
-from paper_trading import strategy_allocator
+from paper_trading import (
+    behavior_decision_core, experience_memory, position_management,
+    realtime_market, strategy_allocator, trade_learning,
+)
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -40,16 +45,27 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
     "/var/lib/agca/paper-realtime-brain-timeline.json",
 ))
+DYNAMIC_BEHAVIOR_REPORT_PATH = Path(os.getenv(
+    "AGCA_LIVE_BEHAVIOR_REPORT",
+    "/var/lib/agca/reports/live_behavior_closed_minute.json",
+))
+MAX_DYNAMIC_MONITORING_SYMBOLS = 6
 WORKER_DB_TIMEOUT_SECONDS = max(
     1.0, float(os.getenv("AGCA_PAPER_DB_TIMEOUT_SECONDS", "5"))
 )
+LEARNING_DB_TIMEOUT_SECONDS = max(
+    WORKER_DB_TIMEOUT_SECONDS,
+    float(os.getenv("AGCA_PAPER_LEARNING_DB_TIMEOUT_SECONDS", "20")),
+)
 
 
-def worker_connect(stop_requested=None):
-    db = connect(DB_NAME, timeout=WORKER_DB_TIMEOUT_SECONDS)
-    db.execute(
-        f"PRAGMA busy_timeout={int(WORKER_DB_TIMEOUT_SECONDS * 1000)}"
+def worker_connect(stop_requested=None, timeout_seconds=None):
+    timeout = (
+        WORKER_DB_TIMEOUT_SECONDS
+        if timeout_seconds is None else max(0.1, float(timeout_seconds))
     )
+    db = connect(DB_NAME, timeout=timeout)
+    db.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
     if stop_requested is not None:
         db.set_progress_handler(lambda: int(stop_requested.is_set()), 1000)
     return db
@@ -122,6 +138,96 @@ def stale_quote_symbols(active_symbols, live_states, wall_clock_ms, max_age_ms=3
     return stale
 
 
+def _validated_monitoring_rows(rows, usdm_metadata):
+    symbols = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = str(row.get("instrument") or "").upper()
+        if not value.endswith("USDT") or "-" in value or value in symbols:
+            continue
+        try:
+            rules_for(usdm_metadata, value)
+        except (ExchangeMetadataError, KeyError, TypeError):
+            continue
+        symbols.append(value)
+    if not symbols or len(symbols) > MAX_DYNAMIC_MONITORING_SYMBOLS:
+        return ()
+    return tuple((symbol, "USD_M_PERPETUAL") for symbol in symbols)
+
+
+def dynamic_monitoring_symbols(db, usdm_metadata, report_path=DYNAMIC_BEHAVIOR_REPORT_PATH):
+    """Read the canonical dynamic attention route, never the legacy risk basket.
+
+    The closed-minute observer broadly scans Binance USD-M and writes the exact
+    deep-stream instruments it actually observed.  That route controls market
+    observation only. Fresh risk policy remains a separate mandatory gate for
+    any new PAPER position.
+
+    If the atomic report is temporarily unavailable during rotation, fall back
+    only to the latest persisted behavior minute.  Never fall back to
+    asset_risk_snapshots because those also contain the legacy reference basket.
+    """
+    try:
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+        coverage = report.get("universe_coverage") or {}
+        expected = int(coverage.get("deep_stream_instrument_count") or 0)
+        route = report.get("dynamic_attention_route") or {}
+        route_symbols = route.get("deep_stream_instruments") or []
+        if (
+            report.get("source_exchange") == "BINANCE_USD_M"
+            and 0 < expected <= MAX_DYNAMIC_MONITORING_SYMBOLS
+            and len(route_symbols) == expected
+        ):
+            validated = _validated_monitoring_rows(
+                [{"instrument": symbol} for symbol in route_symbols],
+                usdm_metadata,
+            )
+            if len(validated) == expected:
+                return validated
+        # Backward-compatible bridge while the observer rotates from the
+        # previous report schema. It is removed from authority as soon as the
+        # explicit route field is present on the next closed-minute report.
+        rows = report.get("rows") or []
+        if (
+            report.get("source_exchange") == "BINANCE_USD_M"
+            and 0 < expected <= MAX_DYNAMIC_MONITORING_SYMBOLS
+            and len(rows) == expected
+        ):
+            validated = _validated_monitoring_rows(rows, usdm_metadata)
+            if len(validated) == expected:
+                return validated
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+
+    try:
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='market_behavior_minute_features'"
+        ).fetchone()
+        if not exists:
+            return ()
+        latest = db.execute(
+            "SELECT MAX(minute_end_timestamp_ms) "
+            "FROM market_behavior_minute_features"
+        ).fetchone()[0]
+        if latest is None:
+            return ()
+        rows = db.execute(
+            """SELECT instrument FROM market_behavior_minute_features
+               WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1
+               ORDER BY instrument""",
+            (latest,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return ()
+    if not rows or len(rows) > MAX_DYNAMIC_MONITORING_SYMBOLS:
+        return ()
+    return _validated_monitoring_rows(
+        [{"instrument": row[0]} for row in rows], usdm_metadata
+    )
+
+
 def write_health(status, **details):
     payload = {"status": status, "at": now().isoformat(), **details,
                "execution_mode": "PAPER_ONLY", "real_order_allowed": False}
@@ -159,6 +265,8 @@ def write_brain_state(payload):
                 "observed_event_ms": event.get("observed_event_ms"),
                 "context_window_start_ms": event.get("context_window_start_ms"),
                 "decision_time_ms": event.get("decision_time_ms"),
+                "queue_delay_ms": event.get("queue_delay_ms"),
+                "evaluation_ms": event.get("evaluation_ms"),
                 "rejection_reasons": event.get("rejection_reasons"),
                 "signature": list(signature),
             })
@@ -243,6 +351,12 @@ async def run():
     decision_wakeup = asyncio.Event()
     symbol_cache_lock = threading.Lock()
     cached_symbols = ()
+    pattern_cache_lock = threading.Lock()
+    # Fail closed until the background refresher has loaded learned patterns.
+    # Startup and lightweight test DBs must not require research-history tables.
+    cached_patterns = {}
+    cached_patterns_at = 0.0
+    learning_schema_ready = False
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -301,20 +415,12 @@ async def run():
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
-        monitored = set()
-        # The current, risk-covered Binance universe authorises subscriptions.
-        # Historical minute evidence is learning material, never the discovery
-        # clock or the subscription gate.
-        try:
-            risks = behavior_decision_core._latest_risk(db, now())
-        except sqlite3.OperationalError as exc:
-            if "no such table" not in str(exc):
-                raise
-            risks = {}
-        for symbol, risk in risks.items():
-            if (risk["allowed"] and symbol.endswith("USDT") and "-" not in symbol
-                    and rules_for(metadata["USD_M_PERPETUAL"], symbol) is not None):
-                monitored.add((symbol, "USD_M_PERPETUAL"))
+        # Observation follows the dynamic Binance attention route, not the
+        # Risk Manager's legacy reference basket. evaluate_live() separately
+        # requires fresh risk before it can authorise any new PAPER position.
+        monitored = set(dynamic_monitoring_symbols(
+            db, metadata["USD_M_PERPETUAL"]
+        ))
         return tuple(sorted(active | monitored))
 
     def live_decision_context(state, observed_ms):
@@ -423,9 +529,18 @@ async def run():
         return db
 
     def refresh_symbol_cache_once():
-        nonlocal cached_symbols
+        nonlocal cached_symbols, cached_patterns, cached_patterns_at
         try:
-            refreshed = load_symbols(universe_connection())
+            db = universe_connection()
+            refreshed = load_symbols(db)
+            refreshed_patterns = None
+            current = time.monotonic()
+            has_learning_history = db.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='behavior_event_forward_outcomes'"
+            ).fetchone()
+            if has_learning_history and current - cached_patterns_at >= 30.0:
+                refreshed_patterns = behavior_decision_core.learned_patterns(db, now())
         except Exception:
             db = getattr(universe_local, "connection", None)
             if db is not None:
@@ -441,7 +556,15 @@ async def run():
             raise
         with symbol_cache_lock:
             cached_symbols = refreshed
+        if refreshed_patterns is not None:
+            with pattern_cache_lock:
+                cached_patterns = refreshed_patterns
+                cached_patterns_at = current
         return refreshed
+
+    def live_patterns_snapshot():
+        with pattern_cache_lock:
+            return dict(cached_patterns)
 
     async def refresh_symbol_cache():
         while not stop_event.is_set():
@@ -495,57 +618,82 @@ async def run():
             and (key not in last_selection_by_symbol
                  or (observed_at - last_selection_by_symbol[key]).total_seconds() >= 30.0)
         ):
-            selection_result = {}
-            selected = select_new_positions(
-                work_con, now(), metadata, telemetry=selection_result,
-                live_context=live_context,
-            )
-            latest_scan = work_con.execute(
-                """SELECT core_status,candidate_count,selected_count,
-                          active_position_count,capacity,available_exposure,
-                          reason_counts_json
-                   FROM paper_behavior_selection_runs
-                   ORDER BY run_id DESC LIMIT 1"""
-            ).fetchone()
-            brain_state, _ = latest_execution_state(state, observed_ms)
-            write_brain_state({
-                "phase": "OPPORTUNITY_SCAN",
-                "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
-                "observed_symbol": brain_state.symbol,
-                "observed_market_type": brain_state.market_type,
-                "observed_price": brain_state.last_price,
-                "observed_event_ms": live_context["observed_event_ms"],
-                "context_window_start_ms": live_context["window_start_ms"],
-                "decision_time_ms": int(now().timestamp() * 1000),
-                "monitored_symbols": len(load_symbols(work_con)),
-                "scan": ({
-                    "core_status": latest_scan[0],
-                    "candidate_count": latest_scan[1],
-                    "selected_count": latest_scan[2],
-                    "active_position_count": latest_scan[3],
-                    "capacity": latest_scan[4],
-                    "available_exposure": latest_scan[5],
-                    "reason_counts": json.loads(latest_scan[6] or "{}"),
-                } if latest_scan else None),
-                "candidates": selection_result.get("candidates", []),
-                "open_positions": selection_result.get("open_positions", []),
-                "portfolio_capacity": selection_result.get(
-                    "portfolio_capacity", {}
-                ),
-                "rejection_reasons": selection_result.get(
-                    "rejection_reasons", {}
-                ),
-                "decision": (
-                    "NEW_POSITION_SELECTED"
-                    if selected else "CONTINUE_SCANNING"
-                ),
-            })
-            # Cadence is based on completion time, not the event that started
-            # a potentially slow scan. Otherwise a multi-second scan retriggers
-            # immediately and starves position/fill management.
-            last_selection_attempt_at = now()
-            if selected:
-                last_selection_by_symbol[key] = last_selection_attempt_at
+            decision_started_at = now()
+            decision_started_ms = int(decision_started_at.timestamp() * 1000)
+            event_ms = int(live_context.get("observed_event_ms") or 0)
+            queue_delay_ms = decision_started_ms - event_ms
+            if queue_delay_ms < -500 or queue_delay_ms > realtime_market.MAX_EVENT_AGE_MS:
+                write_brain_state({
+                    "phase": "OPPORTUNITY_SCAN",
+                    "message": "Canlı fırsat olayı karar kuyruğunda eskidi; işlem yetkisi verilmedi.",
+                    "observed_symbol": state.symbol,
+                    "observed_market_type": state.market_type,
+                    "observed_price": state.last_price,
+                    "observed_event_ms": event_ms,
+                    "context_window_start_ms": live_context.get("window_start_ms"),
+                    "decision_time_ms": decision_started_ms,
+                    "queue_delay_ms": queue_delay_ms,
+                    "evaluation_ms": 0,
+                    "decision": "LIVE_EVENT_STALE_BEFORE_DECISION",
+                })
+            else:
+                selection_result = {}
+                evaluation_started = time.monotonic()
+                selected = select_new_positions(
+                    work_con, decision_started_at, metadata,
+                    telemetry=selection_result, live_context=live_context,
+                    live_patterns=live_patterns_snapshot(), freshness_now=now,
+                )
+                evaluation_ms = int((time.monotonic() - evaluation_started) * 1000)
+                latest_scan = work_con.execute(
+                    """SELECT core_status,candidate_count,selected_count,
+                              active_position_count,capacity,available_exposure,
+                              reason_counts_json
+                       FROM paper_behavior_selection_runs
+                       ORDER BY run_id DESC LIMIT 1"""
+                ).fetchone()
+                brain_state, _ = latest_execution_state(state, observed_ms)
+                decision_finished_ms = int(now().timestamp() * 1000)
+                write_brain_state({
+                    "phase": "OPPORTUNITY_SCAN",
+                    "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
+                    "observed_symbol": brain_state.symbol,
+                    "observed_market_type": brain_state.market_type,
+                    "observed_price": brain_state.last_price,
+                    "observed_event_ms": live_context["observed_event_ms"],
+                    "context_window_start_ms": live_context["window_start_ms"],
+                    "decision_time_ms": decision_finished_ms,
+                    "queue_delay_ms": queue_delay_ms,
+                    "evaluation_ms": evaluation_ms,
+                    "monitored_symbols": len(symbols()),
+                    "scan": ({
+                        "core_status": latest_scan[0],
+                        "candidate_count": latest_scan[1],
+                        "selected_count": latest_scan[2],
+                        "active_position_count": latest_scan[3],
+                        "capacity": latest_scan[4],
+                        "available_exposure": latest_scan[5],
+                        "reason_counts": json.loads(latest_scan[6] or "{}"),
+                    } if latest_scan else None),
+                    "candidates": selection_result.get("candidates", []),
+                    "open_positions": selection_result.get("open_positions", []),
+                    "portfolio_capacity": selection_result.get(
+                        "portfolio_capacity", {}
+                    ),
+                    "rejection_reasons": selection_result.get(
+                        "rejection_reasons", {}
+                    ),
+                    "decision": (
+                        "NEW_POSITION_SELECTED"
+                        if selected else "CONTINUE_SCANNING"
+                    ),
+                })
+                # Cadence is based on completion time, not the event that started
+                # a potentially slow scan. Otherwise a multi-second scan retriggers
+                # immediately and starves position/fill management.
+                last_selection_attempt_at = now()
+                if selected:
+                    last_selection_by_symbol[key] = last_selection_attempt_at
 
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
@@ -647,12 +795,28 @@ async def run():
             last_health_at = observed_at
 
     def learning_once():
-        """Run non-authoritative learning off the execution path."""
+        """Run non-authoritative learning off the execution path.
+
+        Learning may wait longer for a transient SQLite writer because it runs
+        on its own thread and has no execution authority. Live decisions keep
+        their shorter timeout and never depend on this work. Learning schema
+        installation also stays here so schema contention can never restart the
+        canonical live worker.
+        """
+        nonlocal learning_schema_ready
         db = None
         try:
-            db = worker_connect(shutdown_requested)
-            trade_learning.run(db, FORWARD_COHORT, now())
-            strategy_allocator.rebalance(db, now())
+            db = worker_connect(
+                shutdown_requested, timeout_seconds=LEARNING_DB_TIMEOUT_SECONDS
+            )
+            install_schema = not learning_schema_ready
+            trade_learning.run(
+                db, FORWARD_COHORT, now(), ensure_schema=install_schema
+            )
+            strategy_allocator.rebalance(
+                db, now(), ensure_schema=install_schema
+            )
+            learning_schema_ready = True
             return None
         except sqlite3.OperationalError as exc:
             if db is not None:

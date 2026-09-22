@@ -54,6 +54,23 @@ class ControlCenterServerTests(unittest.TestCase):
             self.assertIn("Canlı Aktivite", html)
             self.assertIn('id="activityPanel"', html)
             self.assertIn('id="activityRows"', html)
+            for element_id in (
+                "capacityState", "portfolioCompare", "radarCount", "radarRows",
+                "thoughtCount", "thoughtTimeline", "brainSees", "brainMarkets",
+                "brainThinks", "brainReasons", "brainActs", "brainTime",
+                "brainPulseText", "brainActionCard", "brainPulseDot",
+                "scanSummary", "scanDetails",
+            ):
+                self.assertIn(f'id="{element_id}"', html)
+            self.assertIn(
+                '["activityPanel","openPanel","marketPanel","flowPanel",'
+                '"riskPanel","learningPanel","incidentsPanel","reportsPanel",'
+                '"closedPanel"]',
+                html,
+            )
+            self.assertIn("const arr=v=>Array.isArray(v)?v:[]", html)
+            self.assertIn("Control Center görünümü işlenemedi", html)
+            self.assertNotIn('\\n<div class="card"><div class="label">Son Gerçek İş', html)
             self.assertIn("market-data-mismatch", html)
             self.assertIn('method:"POST"', html)
         finally:

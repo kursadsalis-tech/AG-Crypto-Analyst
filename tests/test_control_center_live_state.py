@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -12,6 +13,102 @@ from runtime import paper_realtime_worker
 
 
 class LiveControlStateTests(unittest.TestCase):
+    def test_worker_connection_timeout_can_be_extended_for_background_learning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.db"
+            with patch.object(paper_realtime_worker, "DB_NAME", str(path)):
+                db = paper_realtime_worker.worker_connect(timeout_seconds=.25)
+                try:
+                    self.assertEqual(
+                        db.execute("PRAGMA busy_timeout").fetchone()[0], 250
+                    )
+                finally:
+                    db.close()
+
+    def test_dynamic_attention_route_not_legacy_risk_basket_drives_monitoring(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute(
+                "CREATE TABLE asset_risk_snapshots("
+                "policy_snapshot_id INTEGER, symbol TEXT)"
+            )
+            con.executemany(
+                "INSERT INTO asset_risk_snapshots VALUES(?,?)",
+                [(7, "ARKMUSDT"), (7, "BIOUSDT"), (7, "ILVUSDT")],
+            )
+            metadata = SimpleNamespace(
+                symbols={
+                    "BTCUSDT": object(), "ETHUSDT": object(),
+                    "DOGEUSDT": object(), "TAOUSDT": object(),
+                    "ARKMUSDT": object(), "BIOUSDT": object(),
+                    "ILVUSDT": object(),
+                }
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                report = Path(tmp) / "live.json"
+                report.write_text(json.dumps({
+                    "source_exchange": "BINANCE_USD_M",
+                    "universe_coverage": {"deep_stream_instrument_count": 4},
+                    "dynamic_attention_route": {
+                        "deep_stream_instruments": [
+                            "BTCUSDT", "ETHUSDT", "DOGEUSDT", "TAOUSDT"
+                        ],
+                    },
+                    "rows": [
+                        {"instrument": "ARKMUSDT"},
+                        {"instrument": "BIOUSDT"},
+                        {"instrument": "ILVUSDT"},
+                        {"instrument": "BTCUSDT"},
+                    ],
+                }))
+                self.assertEqual(
+                    paper_realtime_worker.dynamic_monitoring_symbols(
+                        con, metadata, report
+                    ),
+                    (
+                        ("BTCUSDT", "USD_M_PERPETUAL"),
+                        ("ETHUSDT", "USD_M_PERPETUAL"),
+                        ("DOGEUSDT", "USD_M_PERPETUAL"),
+                        ("TAOUSDT", "USD_M_PERPETUAL"),
+                    ),
+                )
+        finally:
+            con.close()
+
+    def test_dynamic_monitoring_falls_back_only_to_latest_behavior_minute(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute(
+                "CREATE TABLE market_behavior_minute_features("
+                "instrument TEXT, minute_end_timestamp_ms INTEGER, "
+                "eligible_for_learning INTEGER)"
+            )
+            con.executemany(
+                "INSERT INTO market_behavior_minute_features VALUES(?,?,?)",
+                [
+                    ("ARKMUSDT", 1000, 1),
+                    ("BTCUSDT", 2000, 1),
+                    ("DOGEUSDT", 2000, 1),
+                ],
+            )
+            metadata = SimpleNamespace(
+                symbols={
+                    "ARKMUSDT": object(), "BTCUSDT": object(),
+                    "DOGEUSDT": object(),
+                }
+            )
+            self.assertEqual(
+                paper_realtime_worker.dynamic_monitoring_symbols(
+                    con, metadata, Path("/definitely/missing.json")
+                ),
+                (
+                    ("BTCUSDT", "USD_M_PERPETUAL"),
+                    ("DOGEUSDT", "USD_M_PERPETUAL"),
+                ),
+            )
+        finally:
+            con.close()
+
     def test_websocket_ingest_does_not_wait_for_slow_decision_database_work(self):
         started = threading.Event()
         callback_latency = []
@@ -123,13 +220,16 @@ class LiveControlStateTests(unittest.TestCase):
                 paper_realtime_worker.write_brain_state({
                     "phase": "OPPORTUNITY_SCAN", "observed_symbol": "BTCUSDT",
                     "observed_event_ms": 10000, "context_window_start_ms": 5000,
-                    "decision_time_ms": 10120, "decision": "CONTINUE_SCANNING",
+                    "decision_time_ms": 10120, "queue_delay_ms": 40,
+                    "evaluation_ms": 80, "decision": "CONTINUE_SCANNING",
                     "rejection_reasons": {"RISK_VETO": 1},
                 })
             row = json.loads(timeline_path.read_text())[0]
             self.assertEqual(row["observed_event_ms"], 10000)
             self.assertEqual(row["context_window_start_ms"], 5000)
             self.assertEqual(row["decision_time_ms"], 10120)
+            self.assertEqual(row["queue_delay_ms"], 40)
+            self.assertEqual(row["evaluation_ms"], 80)
             self.assertEqual(row["rejection_reasons"], {"RISK_VETO": 1})
 
     def test_live_payload_preserves_worker_market_state(self):

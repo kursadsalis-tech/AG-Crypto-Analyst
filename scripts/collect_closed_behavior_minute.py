@@ -106,6 +106,16 @@ def main():
         "broad_scan_instrument_count": route["broad_scan_instrument_count"],
         "deep_stream_instrument_count": route["deep_stream_instrument_count"],
     }
+    result["dynamic_attention_route"] = {
+        "version": route["version"],
+        "created_at": route["created_at"],
+        "source_universe_snapshot_timestamp_ms":
+            route["source_universe_snapshot_timestamp_ms"],
+        "context_instruments": list(route["context_instruments"]),
+        "opportunity_candidates": list(route["opportunity_candidates"]),
+        "deep_stream_instruments": list(route["deep_stream_instruments"]),
+        "routing_contract": dict(route["routing_contract"]),
+    }
     result["source_exchange"] = "BINANCE_USD_M"
     if args.shadow_only:
         # Do not persist, write health, or settle historical outcomes.

@@ -809,10 +809,18 @@ def latest_candidates(con, now=None):
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
-def select_new_positions(con, now, exchange_metadata=None, telemetry=None, live_context=None):
-    behavior_result = (behavior_decision_core.evaluate_live(con, now, live_context)
-                       if live_context is not None else
-                       behavior_decision_core.evaluate(con, now))
+def select_new_positions(
+    con, now, exchange_metadata=None, telemetry=None, live_context=None,
+    live_patterns=None, live_risks=None, freshness_now=None,
+):
+    behavior_result = (
+        behavior_decision_core.evaluate_live(
+            con, now, live_context, patterns=live_patterns, risks=live_risks,
+            freshness_now=freshness_now,
+        )
+        if live_context is not None else
+        behavior_decision_core.evaluate(con, now)
+    )
     candidates = behavior_result["candidates"]
     snapshot = portfolio_snapshot(con, now)
     active = con.execute("""

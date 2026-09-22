@@ -451,18 +451,29 @@ def _latest_risk(con, now):
     return assets
 
 
-def evaluate_live(con, now, context):
+def evaluate_live(con, now, context, patterns=None, risks=None, freshness_now=None):
     """Evaluate one fresh WebSocket state using causal rolling observations.
 
     Historical outcomes teach the existing core its patterns; a completed
-    minute feature never authorises or times this live decision.
+    minute feature never authorises or times this live decision.  Freshness is
+    checked against wall-clock decision time, not the event timestamp that
+    started a potentially queued evaluation.
     """
     ensure_tables(con)
     observed_ms = int(context.get("observed_event_ms") or 0)
     quote_ms = int(context.get("quote_ms") or 0)
-    now_ms = int(now.timestamp() * 1000)
-    if (not -500 <= now_ms - observed_ms <= 2000
-            or not -500 <= now_ms - quote_ms <= 2000):
+    # Callers on the live worker pass a real wall-clock function. Tests and
+    # offline/replay callers remain deterministic against their supplied `now`.
+    freshness_clock = freshness_now or (lambda: now)
+
+    def live_is_fresh(at):
+        wall_ms = int(at.timestamp() * 1000)
+        return (
+            -500 <= wall_ms - observed_ms <= 2000
+            and -500 <= wall_ms - quote_ms <= 2000
+        )
+
+    if not live_is_fresh(freshness_clock()):
         return {"status": "LIVE_STATE_STALE", "candidates": []}
     symbol = str(context.get("symbol") or "")
     if (not symbol.endswith("USDT") or "-" in symbol
@@ -481,8 +492,12 @@ def evaluate_live(con, now, context):
         return {"status": "LIVE_CONTEXT_INVALID", "candidates": []}
     flow_pattern = _flow_pattern(book, taker)
     price_pattern = _price_pattern(move, spread)
-    patterns = learned_patterns(con, now)
-    risks = _latest_risk(con, now)
+    patterns = learned_patterns(con, now) if patterns is None else patterns
+    risks = _latest_risk(con, now) if risks is None else risks
+    # Pattern/risk loading may be expensive on a large runtime DB. Never allow
+    # an event that aged out during that work to authorize a new position.
+    if not live_is_fresh(freshness_clock()):
+        return {"status": "LIVE_STATE_STALE", "candidates": []}
     risk = risks.get(symbol)
     candidates = []
     # A 5-second evidence bucket prevents repeated decisions on each quote.

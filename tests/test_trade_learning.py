@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from paper_trading import trade_learning
@@ -36,6 +37,29 @@ class TradeLearningTests(unittest.TestCase):
             (index, index, "BTCUSDT", 4, "LONG", stamp.isoformat(), 100.0,
              pnl, "CLOSED", eligible, cohort, "POLICY", "SOURCE"),
         )
+
+    def test_preinstalled_schema_skips_repeated_learning_ddl(self):
+        trade_learning.ensure_tables(self.con)
+        trade_learning.external_trader_learning.ensure_tables(self.con)
+        trade_learning.external_trader_rationale.ensure_tables(self.con)
+        trade_learning.continuous_improvement.ensure_tables(self.con)
+        with patch.object(
+            trade_learning, "ensure_tables",
+            side_effect=AssertionError("trade learning DDL repeated"),
+        ), patch.object(
+            trade_learning.external_trader_learning, "ensure_tables",
+            side_effect=AssertionError("external learning DDL repeated"),
+        ), patch.object(
+            trade_learning.external_trader_rationale, "ensure_tables",
+            side_effect=AssertionError("rationale DDL repeated"),
+        ), patch.object(
+            trade_learning.continuous_improvement, "ensure_tables",
+            side_effect=AssertionError("improvement DDL repeated"),
+        ):
+            result = trade_learning.run(
+                self.con, "CLEAN", ensure_schema=False
+            )
+        self.assertEqual(result["status"], "COLLECTING_EVIDENCE")
 
     def test_zero_clean_closed_is_collecting(self):
         result = trade_learning.run(self.con, "CLEAN")
