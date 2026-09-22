@@ -119,7 +119,7 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text(
             encoding="utf-8"
         )
-        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3", service)
+        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=8", service)\n        self.assertIn("AGCA_BINANCE_REQUEST_ATTEMPTS=3", service)
         self.assertNotIn("AGCA_OKX_REQUEST_TIMEOUT_SECONDS", service)
 
     def test_risk_refresh_is_support_only_and_uses_canonical_database(self):
