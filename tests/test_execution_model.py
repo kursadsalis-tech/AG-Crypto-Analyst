@@ -3,7 +3,10 @@ import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from paper_trading.execution_model import simulated_fill as execute_fill
+from paper_trading.execution_model import (
+    simulated_fill as execute_fill,
+    taker_fee_rate,
+)
 
 
 def simulated_fill(**kwargs):
@@ -23,6 +26,40 @@ class ExecutionModelTest(unittest.TestCase):
         self.assertGreater(buy.price, 100)
         self.assertLess(sell.price, 100)
         self.assertGreater(buy.fee, 0)
+
+    def test_default_taker_fee_contract_is_venue_specific(self):
+        names = (
+            "AGCA_PAPER_SPOT_TAKER_FEE_BPS",
+            "AGCA_PAPER_USDM_TAKER_FEE_BPS",
+            "AGCA_PAPER_TAKER_FEE_BPS",
+            "AGCA_PAPER_FEE_BPS",
+        )
+        saved = {name: os.environ.pop(name, None) for name in names}
+        try:
+            self.assertAlmostEqual(taker_fee_rate("SPOT"), 0.001)
+            self.assertAlmostEqual(taker_fee_rate("USD_M_PERPETUAL"), 0.0005)
+            spot = simulated_fill(
+                reference_price=100, requested_notional=1000, side="BUY",
+                market_type="SPOT",
+            )
+            futures = simulated_fill(
+                reference_price=100, requested_notional=1000, side="BUY",
+                market_type="USD_M_PERPETUAL",
+            )
+        finally:
+            for name, value in saved.items():
+                if value is not None:
+                    os.environ[name] = value
+        self.assertGreater(spot.fee, futures.fee)
+
+    def test_venue_fee_override_beats_legacy_generic_fee(self):
+        with mock.patch.dict(os.environ, {
+            "AGCA_PAPER_TAKER_FEE_BPS": "7",
+            "AGCA_PAPER_SPOT_TAKER_FEE_BPS": "11",
+            "AGCA_PAPER_USDM_TAKER_FEE_BPS": "4",
+        }, clear=False):
+            self.assertAlmostEqual(taker_fee_rate("SPOT"), 0.0011)
+            self.assertAlmostEqual(taker_fee_rate("USD_M_PERPETUAL"), 0.0004)
 
     def test_capacity_creates_partial_fill(self):
         fill = simulated_fill(

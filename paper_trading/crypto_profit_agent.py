@@ -19,7 +19,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
-from paper_trading.execution_model import PAPER_MARKET, execute_paper, estimate_order_rules
+from paper_trading.execution_model import (
+    PAPER_MARKET, execute_paper, estimate_order_rules, taker_fee_rate,
+)
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
 from paper_trading.exchange_metadata import (
@@ -43,8 +45,6 @@ DB_NAME = forecast_engine.DB_NAME
 AGENT_VERSION = "CRYPTO_PROFIT_AGENT_V1"
 POLICY_VERSION = "PAPER_OPPORTUNITY_POLICY_V3_IMMEDIATE_EXECUTION"
 INITIAL_CAPITAL = float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000"))
-FEE_BPS = float(os.getenv("AGCA_PAPER_FEE_BPS", "10"))
-FEE_RATE = FEE_BPS / 10000.0
 MAX_TOTAL_EXPOSURE = 0.60
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
@@ -902,15 +902,20 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     # Fresh marked exposure comes from the same valuation used for equity.
     # Entry price is historical accounting data and must not size new risk.
     open_gross_exposure = float(snapshot["gross_exposure"])
-    pending = con.execute("""
-        SELECT COALESCE(SUM(notional),0),
-               COALESCE(SUM(notional / CASE WHEN leverage>0 THEN leverage ELSE 1 END),0)
+    pending_rows = con.execute("""
+        SELECT notional,leverage,market_type
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
-    """).fetchone()
-    pending_gross_exposure = float(pending[0] or 0.0)
-    pending_margin = float(pending[1] or 0.0)
-    pending_entry_fees = pending_gross_exposure * FEE_RATE
+    """).fetchall()
+    pending_gross_exposure = sum(float(row[0] or 0.0) for row in pending_rows)
+    pending_margin = sum(
+        float(row[0] or 0.0) / max(float(row[1] or 1.0), 1e-9)
+        for row in pending_rows
+    )
+    pending_entry_fees = sum(
+        float(row[0] or 0.0) * taker_fee_rate(row[2])
+        for row in pending_rows
+    )
     available_cash = max(
         0.0, snapshot["cash"] - pending_margin - pending_entry_fees
     )
@@ -927,6 +932,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     ranked_candidates = []
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
+        fee_rate = taker_fee_rate(tier.market_type)
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
@@ -941,7 +947,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
         risk_sized_notional = (
-            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * FEE_RATE)
+            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * fee_rate)
             if trade_risk_budget > 0.0 else 0.0
         )
         sizing_cap = min(
@@ -949,7 +955,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             max_exposure,
             position_cap,
             risk_sized_notional,
-            available_cash * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
+            available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage),
         )
         expected_profit_usdt = (
             max(0.0, sizing_cap)
@@ -960,7 +966,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         # snapshot and Position Manager clamps the same value to 0.5%-5.0%.
         stop_loss_usdt = max(0.0, sizing_cap) * effective_stop_pct / 100.0
         estimated_round_trip_cost_usdt = max(0.0, sizing_cap) * (
-            2.0 * FEE_RATE
+            2.0 * fee_rate
         )
         expected_loss_budget_usdt = stop_loss_usdt + estimated_round_trip_cost_usdt
         expected_profit_per_risk = (
@@ -1070,6 +1076,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             }
             continue
         tier = risk_tiering.tier_for(row)
+        fee_rate = taker_fee_rate(tier.market_type)
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
@@ -1091,7 +1098,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
         risk_sized_notional = (
-            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * FEE_RATE)
+            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * fee_rate)
             if trade_risk_budget > 0.0 else 0.0
         )
         notional = min(
@@ -1099,7 +1106,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             available_exposure,
             position_cap,
             risk_sized_notional,
-            available_cash * tier.leverage / (1.0 + FEE_RATE * tier.leverage),
+            available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage),
         )
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
@@ -1122,6 +1129,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 side="BUY" if row["direction"] == "LONG" else "SELL",
                 symbol=row["symbol"], quantity_step=rules.quantity_step,
                 price_tick=rules.price_tick, min_notional=rules.min_notional,
+                market_type=tier.market_type,
             )
             if executable.status == "REJECTED":
                 reason_code = f"PRESELECTION_{executable.reason}"
@@ -1135,6 +1143,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             f"execution_size_multiplier={row.get('execution_size_multiplier', 1.0):.3f} | "
             f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
             f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
+            f"market={tier.market_type} | taker_fee_bps={fee_rate * 10000.0:.3f} | "
             f"signals={','.join(tier.signal_sources)} | "
             f"strategy={strategy_id}"
         )
@@ -1172,8 +1181,10 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 "planned_stop_reference_pct": raw_stop_pct,
                 "risk_per_trade_pct": float(row.get("risk_per_trade_pct") or 0.0),
                 "planned_stop_and_fee_risk_usdt": notional * (
-                    effective_stop_pct / 100.0 + 2.0 * FEE_RATE
+                    effective_stop_pct / 100.0 + 2.0 * fee_rate
                 ),
+                "market_type": tier.market_type,
+                "taker_fee_rate": fee_rate,
                 "stop_basis": "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT",
                 "independent_signal_count": tier.independent_signal_count,
                 "signal_sources": list(tier.signal_sources),
@@ -1190,7 +1201,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             selected += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
-            reservation = notional / tier.leverage + notional * FEE_RATE
+            reservation = notional / tier.leverage + notional * fee_rate
             available_cash = max(0.0, available_cash - reservation)
             snapshot["cash"] -= reservation
         else:

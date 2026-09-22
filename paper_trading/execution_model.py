@@ -83,6 +83,32 @@ def _env_bps(name: str, default: str) -> float:
     return max(0.0, float(os.getenv(name, default))) / 10_000.0
 
 
+def taker_fee_rate(market_type: str) -> float:
+    """Return the single PAPER taker-fee contract for a concrete execution venue.
+
+    Venue-specific configuration has priority. The old generic fee variables
+    remain backward-compatible overrides only when no venue-specific value is
+    configured, so selection/risk sizing and the simulated fill cannot silently
+    price the same trade with different fees.
+    """
+    market_type = str(market_type or "").upper()
+    if market_type == "SPOT":
+        specific = "AGCA_PAPER_SPOT_TAKER_FEE_BPS"
+        default = "10"
+    elif market_type == "USD_M_PERPETUAL":
+        specific = "AGCA_PAPER_USDM_TAKER_FEE_BPS"
+        default = "5"
+    else:
+        raise ValueError("UNSUPPORTED_MARKET")
+
+    configured = os.getenv(specific)
+    if configured is None:
+        configured = os.getenv("AGCA_PAPER_TAKER_FEE_BPS")
+    if configured is None:
+        configured = os.getenv("AGCA_PAPER_FEE_BPS")
+    return max(0.0, float(default if configured is None else configured)) / 10_000.0
+
+
 class PaperExecutionAdapter:
     """Deterministic PAPER implementation of the common execution contract."""
 
@@ -195,7 +221,10 @@ def _paper_fill(intent, market, rules, reference_price, *, estimate=False):
     actual_notional = quantity * price
     if quantity <= 0 or (actual_notional < min_notional and not intent.reduce_only):
         return None, "EXCHANGE_FILTER_REJECTION"
-    fee_rate = _env_bps("AGCA_PAPER_TAKER_FEE_BPS", "5")
+    try:
+        fee_rate = taker_fee_rate(market.market_type)
+    except (TypeError, ValueError):
+        return None, "UNSUPPORTED_MARKET"
     return Fill(
         price=price,
         quantity=quantity,
@@ -276,11 +305,12 @@ def funding_cost(notional: float, held_hours: float) -> float:
 
 
 def estimate_order_rules(*, reference_price, requested_notional, side, symbol,
-                         quantity_step, price_tick, min_notional):
+                         quantity_step, price_tick, min_notional,
+                         market_type="USD_M_PERPETUAL"):
     """Preserve the selection filter's estimate; never return an executable fill."""
     fill, reason = _paper_fill(
         OrderIntent(symbol, side, requested_notional),
-        MarketSnapshot(reference_price, None),
+        MarketSnapshot(reference_price, None, market_type=market_type),
         ExecutionRules(quantity_step, price_tick, min_notional, False),
         reference_price, estimate=True,
     )
