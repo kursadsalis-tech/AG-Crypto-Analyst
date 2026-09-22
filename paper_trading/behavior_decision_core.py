@@ -30,6 +30,8 @@ MIN_COST_AFTER_WIN_RATE = 0.55
 MIN_MEAN_NET_EDGE_PCT = 0.05
 MIN_EXECUTION_TRADES_FOR_PROMOTION = 10
 MIN_EXECUTION_DAYS_FOR_PROMOTION = 3
+MIN_EXECUTION_TRADES_FOR_SUSPENSION = 10
+MIN_EXECUTION_DAYS_FOR_SUSPENSION = 3
 EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
 ROUND_TRIP_FEE_PCT = 0.20
@@ -181,6 +183,7 @@ def calibrate_pattern(pattern, feedback):
             "calibrated_net_edge_pct": pattern["mean_net_edge_pct"],
             "calibrated_win_rate": pattern["cost_after_win_rate"],
             "execution_size_multiplier": 1.0,
+            "execution_suspended": False,
         })
         calibrated["promotion_ready"] = False
         calibrated["ready"] = False
@@ -195,6 +198,13 @@ def calibrate_pattern(pattern, feedback):
     expectancy_signal = math.tanh(feedback["mean_net_return_pct"] / 0.5)
     performance_signal = 0.5 * win_signal + 0.5 * expectancy_signal
     size_multiplier = max(0.5, min(1.25, 1.0 + weight * performance_signal))
+    execution_mature_for_suspension = (
+        count >= MIN_EXECUTION_TRADES_FOR_SUSPENSION
+        and feedback["independent_days"] >= MIN_EXECUTION_DAYS_FOR_SUSPENSION
+    )
+    execution_suspended = bool(
+        execution_mature_for_suspension and edge <= 0.0
+    )
     execution_confirmed = (
         count >= MIN_EXECUTION_TRADES_FOR_PROMOTION
         and feedback["independent_days"] >= MIN_EXECUTION_DAYS_FOR_PROMOTION
@@ -208,7 +218,11 @@ def calibrate_pattern(pattern, feedback):
         "calibrated_net_edge_pct": edge,
         "calibrated_win_rate": win_rate,
         "execution_size_multiplier": size_multiplier,
-        "promotion_ready": bool(pattern["promotion_ready"] and execution_confirmed),
+        "execution_suspended": execution_suspended,
+        "promotion_ready": bool(
+            pattern["promotion_ready"] and execution_confirmed
+            and not execution_suspended
+        ),
     })
     calibrated["ready"] = calibrated["promotion_ready"]
     return calibrated
@@ -431,7 +445,11 @@ def evaluate(con, now=None):
     patterns = learned_patterns(con, now)
     exploration_patterns = {
         key: value for key, value in patterns.items()
-        if value["exploration_eligible"]
+        if value["exploration_eligible"] and not value.get("execution_suspended", False)
+    }
+    suspended_patterns = {
+        key: value for key, value in patterns.items()
+        if value.get("execution_suspended", False)
     }
     promoted_patterns = {
         key: value for key, value in patterns.items()
@@ -451,6 +469,12 @@ def evaluate(con, now=None):
                             "minimum_mean_net_edge_pct": MIN_MEAN_NET_EDGE_PCT,
                             "minimum_own_execution_trades": MIN_EXECUTION_TRADES_FOR_PROMOTION,
                             "minimum_own_execution_days": MIN_EXECUTION_DAYS_FOR_PROMOTION},
+        "execution_suspension_gates": {
+            "minimum_own_execution_trades": MIN_EXECUTION_TRADES_FOR_SUSPENSION,
+            "minimum_own_execution_days": MIN_EXECUTION_DAYS_FOR_SUSPENSION,
+            "suspend_when_calibrated_net_edge_pct_lte": 0.0,
+            "small_losing_sample_is_hard_veto": False,
+        },
         "unified_forecast_used": False, "real_orders": False,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -460,6 +484,7 @@ def evaluate(con, now=None):
         iso(now), VERSION, HORIZON_MINUTES,
         ("PROMOTION_READY_PATTERNS_AVAILABLE" if promoted_patterns
          else "PAPER_EXPLORATION_AVAILABLE" if exploration_patterns
+         else "EXECUTION_NEGATIVE_PATTERNS_SUSPENDED" if suspended_patterns
          else "COLLECTING_TESTABLE_HYPOTHESES"),
         review_json, int(bool(exploration_patterns)),
     ))

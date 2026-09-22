@@ -218,6 +218,21 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         }
         calibrated = core.calibrate_pattern(pattern, feedback)
         self.assertLess(calibrated["execution_size_multiplier"], 1.0)
+        self.assertFalse(calibrated["execution_suspended"])
+        self.assertFalse(calibrated["promotion_ready"])
+
+    def test_mature_negative_execution_evidence_suspends_pattern(self):
+        pattern = {
+            "mean_net_edge_pct": 0.20, "cost_after_win_rate": 0.60,
+            "promotion_ready": True,
+        }
+        feedback = {
+            "closed_count": 12, "independent_days": 3,
+            "mean_net_return_pct": -0.60, "cost_after_win_rate": 0.25,
+        }
+        calibrated = core.calibrate_pattern(pattern, feedback)
+        self.assertLessEqual(calibrated["calibrated_net_edge_pct"], 0.0)
+        self.assertTrue(calibrated["execution_suspended"])
         self.assertFalse(calibrated["promotion_ready"])
 
     def test_newer_eventless_minute_does_not_hide_fresh_event_minute(self):
