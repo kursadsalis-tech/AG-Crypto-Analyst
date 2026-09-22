@@ -15,10 +15,12 @@ from paper_trading import external_trader_learning, external_trader_rationale
 from paper_trading import continuous_improvement
 
 
-LEARNING_VERSION = "PAPER_TRADE_LEARNING_REVIEW_V1"
+LEARNING_VERSION = "PAPER_TRADE_LEARNING_REVIEW_V2_TECHNICAL_SHADOW"
 MIN_TOTAL_CLOSED = 100
 MIN_PATTERN_TRADES = 30
 MIN_PATTERN_WEEKS = 3
+MIN_TECHNICAL_SHADOW_TRADES = 30
+MIN_TECHNICAL_SHADOW_DAYS = 3
 
 
 def iso(value):
@@ -175,6 +177,188 @@ def grouped_metrics(rows):
     return {key: metrics(value) for key, value in sorted(groups.items())}
 
 
+def _day_key(value):
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).date().isoformat()
+
+
+def _technical_relation(direction, alignment):
+    direction = str(direction or "").upper()
+    alignment = str(alignment or "").upper()
+    if alignment == "ALIGNED_BULLISH":
+        return "SUPPORTS_DIRECTION" if direction == "LONG" else "OPPOSES_DIRECTION"
+    if alignment == "ALIGNED_BEARISH":
+        return "SUPPORTS_DIRECTION" if direction == "SHORT" else "OPPOSES_DIRECTION"
+    return "MIXED_OR_UNALIGNED"
+
+
+def _technical_metrics(rows):
+    if not rows:
+        return {
+            "trades": 0,
+            "independent_days": 0,
+            "net_pnl_usdt": 0.0,
+            "mean_net_return_pct": 0.0,
+            "median_net_return_pct": 0.0,
+            "win_rate_pct": 0.0,
+            "largest_three_abs_pnl_share": 0.0,
+        }
+    returns = [float(row["net_return_pct"]) for row in rows]
+    absolute_pnl = sorted((abs(float(row["net_pnl"])) for row in rows), reverse=True)
+    total_abs = sum(absolute_pnl)
+    return {
+        "trades": len(rows),
+        "independent_days": len({_day_key(row["exit_time"]) for row in rows}),
+        "net_pnl_usdt": sum(float(row["net_pnl"]) for row in rows),
+        "mean_net_return_pct": statistics.fmean(returns),
+        "median_net_return_pct": statistics.median(returns),
+        "win_rate_pct": 100.0 * statistics.fmean(
+            float(row["net_pnl"]) > 0.0 for row in rows
+        ),
+        "largest_three_abs_pnl_share": (
+            sum(absolute_pnl[:3]) / total_abs if total_abs else 0.0
+        ),
+    }
+
+
+def technical_shadow_review(con, validation_cohort):
+    """Measure frozen technical context against later net outcomes, read-only.
+
+    This review cannot open challengers, mutate policy, size trades, or grant
+    promotion authority. It only summarizes forward associations after a
+    technical context was frozen into an already-selected PAPER thesis.
+    """
+    required = {
+        "paper_agent_decision_theses",
+        "paper_agent_experience_reviews",
+        "paper_agent_positions",
+    }
+    existing = {
+        row[0] for row in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if not required.issubset(existing):
+        return {
+            "status": "NO_TECHNICAL_SHADOW_EVIDENCE",
+            "basis": "FROZEN_TECHNICAL_CONTEXT_VS_REALIZED_NET_AFTER_COST",
+            "overall": _technical_metrics([]),
+            "groups": {},
+            "authority": {
+                "direction": False, "ranking": False, "confidence": False,
+                "sizing": False, "stop": False, "promotion_allowed": False,
+                "policy_mutation_allowed": False,
+            },
+        }
+
+    rows = con.execute("""
+        SELECT p.position_id,p.direction,p.exit_time,r.net_pnl,r.review_json
+        FROM paper_agent_positions p
+        JOIN paper_agent_decision_theses t USING(position_id)
+        JOIN paper_agent_experience_reviews r USING(position_id)
+        WHERE p.status='CLOSED'
+          AND p.evidence_eligible=1
+          AND p.validation_cohort=?
+          AND t.validation_cohort=?
+        ORDER BY p.exit_time,p.position_id
+    """, (validation_cohort, validation_cohort)).fetchall()
+
+    usable = []
+    for position_id, direction, exit_time, net_pnl, review_json in rows:
+        try:
+            review = json.loads(review_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        assessment = review.get("evidence_assessment") or {}
+        if (
+            assessment.get("execution_complete") is not True
+            or assessment.get("economics_final") is not True
+        ):
+            continue
+        economic = review.get("economic_result") or {}
+        net_return = economic.get("net_return_pct")
+        if net_return is None:
+            continue
+        thesis = review.get("frozen_thesis") or {}
+        technical = thesis.get("technical_context_observed")
+        if not isinstance(technical, dict):
+            continue
+        if technical.get("observation_only") is not True:
+            continue
+        authority = technical.get("authority") or {}
+        if any(
+            bool(authority.get(key))
+            for key in (
+                "direction_input","ranking_input","confidence_input",
+                "sizing_input","stop_input",
+            )
+        ):
+            continue
+        summary = technical.get("summary") or {}
+        alignment = str(summary.get("alignment") or "UNKNOWN")
+        usable.append({
+            "position_id": int(position_id),
+            "direction": str(direction),
+            "exit_time": str(exit_time),
+            "net_pnl": float(net_pnl),
+            "net_return_pct": float(net_return),
+            "alignment": alignment,
+            "relation": _technical_relation(direction, alignment),
+            "trend_1h": str(summary.get("trend_1h") or "UNKNOWN"),
+            "trend_4h": str(summary.get("trend_4h") or "UNKNOWN"),
+        })
+
+    groups = defaultdict(list)
+    for row in usable:
+        groups[f"RELATION:{row['relation']}"].append(row)
+        groups[f"ALIGNMENT:{row['alignment']}"].append(row)
+        groups[f"DIRECTION:{row['direction']}|RELATION:{row['relation']}"].append(row)
+
+    overall = _technical_metrics(usable)
+    grouped = {key: _technical_metrics(value) for key, value in sorted(groups.items())}
+    if not usable:
+        status = "NO_TECHNICAL_SHADOW_EVIDENCE"
+    elif (
+        overall["trades"] < MIN_TECHNICAL_SHADOW_TRADES
+        or overall["independent_days"] < MIN_TECHNICAL_SHADOW_DAYS
+    ):
+        status = "COLLECTING_FORWARD_EVIDENCE"
+    else:
+        status = "ASSOCIATION_REVIEWABLE_NO_AUTHORITY"
+
+    supports = grouped.get("RELATION:SUPPORTS_DIRECTION")
+    opposes = grouped.get("RELATION:OPPOSES_DIRECTION")
+    comparison = None
+    if supports and opposes:
+        comparison = {
+            "supports_minus_opposes_mean_net_return_pct": (
+                supports["mean_net_return_pct"] - opposes["mean_net_return_pct"]
+            ),
+            "supports_minus_opposes_win_rate_pct": (
+                supports["win_rate_pct"] - opposes["win_rate_pct"]
+            ),
+            "claim_level": "FORWARD_ASSOCIATION_NOT_CAUSATION",
+        }
+
+    return {
+        "status": status,
+        "basis": "FROZEN_TECHNICAL_CONTEXT_VS_REALIZED_NET_AFTER_COST",
+        "overall": overall,
+        "groups": grouped,
+        "comparison": comparison,
+        "minimum_reviewable_trades": MIN_TECHNICAL_SHADOW_TRADES,
+        "minimum_reviewable_days": MIN_TECHNICAL_SHADOW_DAYS,
+        "claim_level": "FORWARD_ASSOCIATION_NOT_CAUSATION",
+        "authority": {
+            "direction": False, "ranking": False, "confidence": False,
+            "sizing": False, "stop": False, "promotion_allowed": False,
+            "policy_mutation_allowed": False,
+        },
+    }
+
+
 def candidate_type(pattern_key):
     if pattern_key.startswith("DIRECTION_HORIZON:"):
         return "DIRECTION_HORIZON_POLICY_CHALLENGER"
@@ -240,6 +424,7 @@ def run(con, validation_cohort, now=None):
             "single_trade_attribution_allowed": False,
             "concentration_must_be_reported": True,
         },
+        "technical_shadow": technical_shadow_review(con, validation_cohort),
         "policy": {
             "legacy_trades_included": False,
             "single_trade_update": False,
@@ -277,9 +462,11 @@ def run(con, validation_cohort, now=None):
         external_trader_rationale.review_available_closed_contexts(con, now)
     )
     improvement = continuous_improvement.run(con, now)
+    technical_shadow = evidence["technical_shadow"]
     return {
         "status": status, "closed": len(rows), "weeks": weeks,
         "patterns": patterns, "promotion_allowed": False,
+        "technical_shadow": technical_shadow,
         "external_research": external_research,
         "continuous_improvement": improvement,
     }
