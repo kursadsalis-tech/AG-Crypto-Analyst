@@ -159,22 +159,65 @@ def summarize_instrument(
     }
 
 
-def fetch_json(path, params=None, timeout=None):
+def fetch_json(path, params=None, timeout=None, attempts=None):
     timeout = float(
-        timeout or os.getenv("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS", "3")
+        timeout or os.getenv("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS", "8")
     )
-    try:
-        response = _SESSION.get(
-            f"{BASE_URL}{path}", params=params or {}, timeout=timeout,
-            headers={"User-Agent": "AG-Crypto-Analyst/binance-live-evidence-v1",
-                     "Accept": "application/json"},
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.Timeout:
-        return {"_transport_error": "TIMEOUT"}
-    except (requests.RequestException, ValueError):
-        return {"_transport_error": "ERROR"}
+    attempts = int(
+        attempts or os.getenv("AGCA_BINANCE_REQUEST_ATTEMPTS", "3")
+    )
+    attempts = max(1, min(attempts, 5))
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = _SESSION.get(
+                f"{BASE_URL}{path}", params=params or {}, timeout=timeout,
+                headers={
+                    "User-Agent": "AG-Crypto-Analyst/binance-live-evidence-v1",
+                    "Accept": "application/json",
+                },
+            )
+            status = int(response.status_code)
+            if status >= 400:
+                last_error = {
+                    "_transport_error": f"HTTP_{status}",
+                    "_endpoint": path,
+                    "_attempt": attempt,
+                }
+                # Permanent client errors should fail closed immediately.
+                if 400 <= status < 500 and status != 429:
+                    return last_error
+            else:
+                try:
+                    return response.json()
+                except ValueError:
+                    last_error = {
+                        "_transport_error": "INVALID_JSON",
+                        "_endpoint": path,
+                        "_attempt": attempt,
+                    }
+        except requests.Timeout:
+            last_error = {
+                "_transport_error": "TIMEOUT",
+                "_endpoint": path,
+                "_attempt": attempt,
+            }
+        except requests.RequestException as exc:
+            last_error = {
+                "_transport_error": type(exc).__name__.upper(),
+                "_endpoint": path,
+                "_attempt": attempt,
+            }
+        if attempt < attempts:
+            time.sleep(min(2.0, 0.35 * (2 ** (attempt - 1))))
+    return {
+        **(last_error or {
+            "_transport_error": "UNKNOWN",
+            "_endpoint": path,
+            "_attempt": attempts,
+        }),
+        "_attempts": attempts,
+    }
 
 
 def collect(route, universe, workers=8, fetch=fetch_json):

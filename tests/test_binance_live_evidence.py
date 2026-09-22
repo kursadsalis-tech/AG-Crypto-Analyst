@@ -1,9 +1,42 @@
 import unittest
+from unittest.mock import Mock, patch
 
+from data import binance_live_evidence
 from data.binance_live_evidence import summarize_instrument
 
 
 class BinanceLiveEvidenceTests(unittest.TestCase):
+    def test_fetch_json_retries_transient_timeout_then_succeeds(self):
+        timeout_exc = binance_live_evidence.requests.Timeout()
+        response = Mock(status_code=200)
+        response.json.return_value = {"ok": True}
+        with patch.object(
+            binance_live_evidence._SESSION, "get",
+            side_effect=[timeout_exc, response],
+        ), patch.object(binance_live_evidence.time, "sleep"):
+            result = binance_live_evidence.fetch_json(
+                "/fapi/v1/exchangeInfo", timeout=0.1, attempts=2
+            )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            binance_live_evidence._SESSION.get.call_count, 2
+        )
+
+    def test_fetch_json_exposes_nonretryable_http_failure(self):
+        response = Mock(status_code=451)
+        with patch.object(
+            binance_live_evidence._SESSION, "get", return_value=response
+        ):
+            result = binance_live_evidence.fetch_json(
+                "/fapi/v1/exchangeInfo", timeout=0.1, attempts=3
+            )
+        self.assertEqual(result["_transport_error"], "HTTP_451")
+        self.assertEqual(result["_endpoint"], "/fapi/v1/exchangeInfo")
+        self.assertEqual(result["_attempt"], 1)
+        self.assertEqual(
+            binance_live_evidence._SESSION.get.call_count, 1
+        )
+
     def test_normalizes_book_flow_oi_and_funding(self):
         row = {"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}
         books = {
