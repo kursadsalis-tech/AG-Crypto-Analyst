@@ -129,8 +129,19 @@ def operator_view(snapshot):
         decided = event.get("decision_time_ms")
         if not all(isinstance(value, (int, float)) for value in (observed, window, decided)):
             return "zaman zinciri henüz yok"
-        return (f"Canlı olay {int(observed)} · bağlam başlangıcı {int(window)} · "
-                f"karar {int(decided)} · olay→karar {int(decided-observed)} ms")
+        details = [
+            f"Canlı olay {int(observed)}",
+            f"bağlam başlangıcı {int(window)}",
+            f"karar {int(decided)}",
+            f"olay→karar {int(decided-observed)} ms",
+        ]
+        queue_delay = event.get("queue_delay_ms")
+        evaluation = event.get("evaluation_ms")
+        if isinstance(queue_delay, (int, float)):
+            details.append(f"kuyruk {int(queue_delay)} ms")
+        if isinstance(evaluation, (int, float)):
+            details.append(f"değerlendirme {int(evaluation)} ms")
+        return " · ".join(details)
     brain_view = {
         "aşama": brain.get("phase") or "BİLİNMİYOR",
         "mesaj": brain.get("message") or "Canlı beyin telemetrisi henüz yok",
