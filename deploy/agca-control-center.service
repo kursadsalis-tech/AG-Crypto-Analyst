@@ -1,0 +1,24 @@
+[Unit]
+Description=AGCA Live Control Center (read-only)
+After=agca-paper-realtime-worker.service
+Wants=agca-paper-realtime-worker.service
+
+[Service]
+Type=simple
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m control_center.server
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
