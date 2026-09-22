@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,106 @@ class TradeLearningTests(unittest.TestCase):
             (index, index, "BTCUSDT", 4, "LONG", stamp.isoformat(), 100.0,
              pnl, "CLOSED", eligible, cohort, "POLICY", "SOURCE"),
         )
+
+    def _add_technical_review(self, position_id, *, alignment, pnl,
+                              net_return_pct, economics_final=True,
+                              technical_authority=False):
+        self.con.executescript("""
+            CREATE TABLE IF NOT EXISTS paper_agent_decision_theses(
+                position_id INTEGER PRIMARY KEY,
+                validation_cohort TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS paper_agent_experience_reviews(
+                position_id INTEGER PRIMARY KEY,
+                net_pnl REAL NOT NULL,
+                review_json TEXT NOT NULL
+            );
+        """)
+        authority = {
+            "direction_input": technical_authority,
+            "ranking_input": False,
+            "confidence_input": False,
+            "sizing_input": False,
+            "stop_input": False,
+        }
+        payload = {
+            "evidence_assessment": {
+                "execution_complete": True,
+                "economics_final": economics_final,
+            },
+            "economic_result": {
+                "net_return_pct": net_return_pct,
+            },
+            "frozen_thesis": {
+                "technical_context_observed": {
+                    "observation_only": True,
+                    "authority": authority,
+                    "summary": {
+                        "alignment": alignment,
+                        "trend_1h": "BULLISH",
+                        "trend_4h": "BULLISH",
+                    },
+                },
+            },
+        }
+        self.con.execute(
+            "INSERT INTO paper_agent_decision_theses VALUES(?,?)",
+            (position_id, "CLEAN"),
+        )
+        self.con.execute(
+            "INSERT INTO paper_agent_experience_reviews VALUES(?,?,?)",
+            (position_id, pnl, json.dumps(payload)),
+        )
+
+    def test_technical_shadow_review_is_forward_association_only(self):
+        values = [
+            (1, "ALIGNED_BULLISH", 2.0, 2.0),
+            (2, "ALIGNED_BULLISH", 1.0, 1.0),
+            (3, "ALIGNED_BEARISH", -1.0, -1.0),
+            (4, "MIXED", -0.5, -0.5),
+        ]
+        for index, alignment, pnl, net_return in values:
+            self.add(index, pnl=pnl)
+            self._add_technical_review(
+                index, alignment=alignment, pnl=pnl,
+                net_return_pct=net_return,
+            )
+        review = trade_learning.technical_shadow_review(self.con, "CLEAN")
+        self.assertEqual(review["status"], "COLLECTING_FORWARD_EVIDENCE")
+        self.assertEqual(review["overall"]["trades"], 4)
+        self.assertEqual(
+            review["groups"]["RELATION:SUPPORTS_DIRECTION"]["trades"], 2
+        )
+        self.assertEqual(
+            review["groups"]["RELATION:OPPOSES_DIRECTION"]["trades"], 1
+        )
+        self.assertEqual(
+            review["groups"]["RELATION:MIXED_OR_UNALIGNED"]["trades"], 1
+        )
+        self.assertGreater(
+            review["comparison"]["supports_minus_opposes_mean_net_return_pct"],
+            0.0,
+        )
+        self.assertFalse(review["authority"]["direction"])
+        self.assertFalse(review["authority"]["promotion_allowed"])
+        self.assertEqual(
+            review["claim_level"], "FORWARD_ASSOCIATION_NOT_CAUSATION"
+        )
+
+    def test_technical_shadow_excludes_nonfinal_or_authoritative_context(self):
+        self.add(10, pnl=1.0)
+        self._add_technical_review(
+            10, alignment="ALIGNED_BULLISH", pnl=1.0,
+            net_return_pct=1.0, economics_final=False,
+        )
+        self.add(11, pnl=1.0)
+        self._add_technical_review(
+            11, alignment="ALIGNED_BULLISH", pnl=1.0,
+            net_return_pct=1.0, technical_authority=True,
+        )
+        review = trade_learning.technical_shadow_review(self.con, "CLEAN")
+        self.assertEqual(review["status"], "NO_TECHNICAL_SHADOW_EVIDENCE")
+        self.assertEqual(review["overall"]["trades"], 0)
 
     def test_zero_clean_closed_is_collecting(self):
         result = trade_learning.run(self.con, "CLEAN")
