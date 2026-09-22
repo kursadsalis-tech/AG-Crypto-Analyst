@@ -19,7 +19,9 @@ from paper_trading.crypto_profit_agent import (
     DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
     fill_pending_from_live_state, select_new_positions,
 )
-from paper_trading.exchange_metadata import load_cache, rules_for
+from paper_trading.exchange_metadata import (
+    ExchangeMetadataError, load_cache, rules_for,
+)
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import behavior_decision_core, experience_memory, position_management, realtime_market, trade_learning
@@ -121,6 +123,40 @@ def stale_quote_symbols(active_symbols, live_states, wall_clock_ms, max_age_ms=3
         ):
             stale.append((symbol, market_type))
     return stale
+
+
+def latest_monitoring_symbols(db, usdm_metadata):
+    """Keep market observation alive independently of current risk permission.
+
+    The latest known asset-risk universe is only a discovery/subscription hint.
+    Fresh risk policy is still required later by the decision core before any
+    new PAPER position can be authorised.
+    """
+    try:
+        row = db.execute(
+            "SELECT MAX(policy_snapshot_id) FROM asset_risk_snapshots"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return ()
+    snapshot_id = row[0] if row else None
+    if snapshot_id is None:
+        return ()
+    rows = db.execute(
+        """SELECT DISTINCT symbol FROM asset_risk_snapshots
+           WHERE policy_snapshot_id=? ORDER BY symbol""",
+        (snapshot_id,),
+    ).fetchall()
+    monitored = []
+    for (symbol,) in rows:
+        value = str(symbol or "").upper()
+        if not value.endswith("USDT") or "-" in value:
+            continue
+        try:
+            rules_for(usdm_metadata, value)
+        except (ExchangeMetadataError, KeyError, TypeError):
+            continue
+        monitored.append((value, "USD_M_PERPETUAL"))
+    return tuple(monitored)
 
 
 def write_health(status, **details):
@@ -309,20 +345,13 @@ async def run():
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
-        monitored = set()
-        # The current, risk-covered Binance universe authorises subscriptions.
-        # Historical minute evidence is learning material, never the discovery
-        # clock or the subscription gate.
-        try:
-            risks = behavior_decision_core._latest_risk(db, now())
-        except sqlite3.OperationalError as exc:
-            if "no such table" not in str(exc):
-                raise
-            risks = {}
-        for symbol, risk in risks.items():
-            if (risk["allowed"] and symbol.endswith("USDT") and "-" not in symbol
-                    and rules_for(metadata["USD_M_PERPETUAL"], symbol) is not None):
-                monitored.add((symbol, "USD_M_PERPETUAL"))
+        # Observation must not stop merely because the current risk policy is
+        # stale or blocks new positions. Keep watching the latest known
+        # Binance-native universe; evaluate_live() still requires fresh risk
+        # before it can authorise any new PAPER position.
+        monitored = set(latest_monitoring_symbols(
+            db, metadata["USD_M_PERPETUAL"]
+        ))
         return tuple(sorted(active | monitored))
 
     def live_decision_context(state, observed_ms):
