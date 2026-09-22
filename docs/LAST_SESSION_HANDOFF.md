@@ -1,3 +1,38 @@
+# 2026-09-22 — P0 execution/economics correctness checkpoint
+
+Canonical `main` now contains the five mandatory P0 repairs discovered from
+the 22 September live PAPER audit:
+
+- `c4e393229b0b579288162c36d8e3153d8c26c438`: stop-risk evidence plumbing;
+- `2c26912ca852d074614bb8919f755d667dd26c88`: evidence-mature
+  negative-expectancy suspension;
+- `6b25fb41017b2cebf28339e46c2d46b3948a7eb9`: evidence-aware adverse
+  same-setup re-entry gate;
+- `0bd91c3b82bc938163b10327faff1695440d0b75`: pending SPOT subscription and
+  runtime-source attestation;
+- `42645f47a196224f0ce860dd55f61c30f2c90851`: venue-specific shared PAPER
+  fee economics.
+
+The last P0 PR passed 107 focused PAPER integration tests and 384 broad offline
+regression tests. One first-attempt broad-suite failure was a newly added test
+reading a nonexistent thesis column; the product patch was not merged until the
+test was corrected to inspect `thesis_json.execution_risk` and the full suite
+passed.
+
+No claim is made that `42645f47...` is deployed on the canonical VM. The next
+operational step is one controlled deployment to `agca-runtime`, followed by a
+fresh cloud attestation proving the exact git SHA/clean checkout and runtime
+health. Do not begin P1 decision-path changes on the VM before this P0 acceptance
+is complete.
+
+After P0 live acceptance, P1 is research-gated: reuse existing causal technical
+and multi-timeframe feature infrastructure for candidate-only analysis, benchmark
+latency/resources first, keep 4h as context rather than direction authority, and
+do not promote historical technical/multi-timeframe research models merely
+because they already exist.
+
+---
+
 # 2026-09-21 — Atomic realtime JSON writer race fix
 
 Current priority supersedes the historical instructions below.
