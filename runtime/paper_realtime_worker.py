@@ -540,12 +540,12 @@ async def run():
                 )
                 evaluation_ms = int((time.monotonic() - evaluation_started) * 1000)
                 latest_scan = work_con.execute(
-                """SELECT core_status,candidate_count,selected_count,
-                          active_position_count,capacity,available_exposure,
-                          reason_counts_json
-                   FROM paper_behavior_selection_runs
-                   ORDER BY run_id DESC LIMIT 1"""
-            ).fetchone()
+                    """SELECT core_status,candidate_count,selected_count,
+                              active_position_count,capacity,available_exposure,
+                              reason_counts_json
+                       FROM paper_behavior_selection_runs
+                       ORDER BY run_id DESC LIMIT 1"""
+                ).fetchone()
                 brain_state, _ = latest_execution_state(state, observed_ms)
                 decision_finished_ms = int(now().timestamp() * 1000)
                 write_brain_state({
