@@ -16,7 +16,7 @@ from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_a
 
 
 DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
-ATTESTATION_VERSION = "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER"
+ATTESTATION_VERSION = "AGCA_RUNTIME_ATTESTATION_V4_PROCESS_BOUND_PAPER"
 MARKET_BEHAVIOR_HEALTH_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V1"
 EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
 SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
@@ -55,17 +55,27 @@ def paper_realtime_health(now=None, path=None, open_positions=0):
         "AGCA_PAPER_REALTIME_HEALTH", "/var/lib/agca/paper-realtime-health.json"
     ))
     base = {"state": "MISSING", "status": None, "age_seconds": None,
-            "required": int(open_positions) > 0, "real_order_allowed": False}
+            "required": int(open_positions) > 0, "real_order_allowed": False,
+            "process_runtime_source": None}
     if not path.is_file():
         return base
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         written = datetime.fromisoformat(str(raw["at"]).replace("Z", "+00:00"))
         age = max(0.0, (now - written.astimezone(timezone.utc)).total_seconds())
+        source = raw.get("process_runtime_source")
+        source_valid = (
+            isinstance(source, dict)
+            and isinstance(source.get("git_sha"), str)
+            and len(source["git_sha"]) == 40
+            and all(ch in string.hexdigits for ch in source["git_sha"])
+            and source.get("git_dirty") is False
+        )
         valid = (
             raw.get("execution_mode") == "PAPER_ONLY"
             and raw.get("real_order_allowed") is False
             and raw.get("status") in {"CONNECTED", "IDLE", "STARTING", "DEGRADED"}
+            and source_valid
         )
         max_age = float(os.getenv("AGCA_PAPER_REALTIME_HEALTH_MAX_AGE_SECONDS", "30"))
         state = "INVALID" if not valid else ("STALE" if age > max_age else "CURRENT")
@@ -73,7 +83,8 @@ def paper_realtime_health(now=None, path=None, open_positions=0):
             state = "UNHEALTHY"
         return {"state": state, "status": raw.get("status"),
                 "age_seconds": round(age, 3), "required": int(open_positions) > 0,
-                "real_order_allowed": False}
+                "real_order_allowed": False,
+                "process_runtime_source": source if source_valid else None}
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return {**base, "state": "INVALID"}
 
@@ -276,6 +287,14 @@ def build(
         policy_version=AUTHORIZED_POLICY_VERSION,
         initial_capital=float(portfolio[0]),
     )
+    realtime_health = paper_realtime_health(
+        now=now, path=paper_realtime_health_path,
+        open_positions=counts.get("OPEN", 0),
+    )
+    checkout_source = runtime_source_state()
+    process_source = realtime_health.get("process_runtime_source") or {
+        "git_sha": None, "git_dirty": None,
+    }
     payload = {
         "attestation_version": ATTESTATION_VERSION,
         "created_at": iso(now),
@@ -283,7 +302,12 @@ def build(
         "worker_status": worker_status,
         "execution_mode": mode,
         "may_send_real_orders": bool(authority["may_send_real_orders"]),
-        "runtime_source": runtime_source_state(),
+        "runtime_source": {
+            "git_sha": process_source.get("git_sha"),
+            "git_dirty": process_source.get("git_dirty"),
+            "checkout_git_sha": checkout_source.get("git_sha"),
+            "checkout_git_dirty": checkout_source.get("git_dirty"),
+        },
         "sqlite_quick_check": str(integrity),
         "sqlite_integrity_evidence": integrity_evidence,
         "validation_cohort": str(portfolio[4]),
@@ -305,10 +329,7 @@ def build(
         "exact_macro_observer": exact_macro_health(
             now=now, path=exact_macro_health_path
         ),
-        "paper_realtime_manager": paper_realtime_health(
-            now=now, path=paper_realtime_health_path,
-            open_positions=counts.get("OPEN", 0),
-        ),
+        "paper_realtime_manager": realtime_health,
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return payload, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
