@@ -8,6 +8,7 @@ import signal
 import sqlite3
 import tempfile
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -243,6 +244,9 @@ async def run():
     decision_wakeup = asyncio.Event()
     symbol_cache_lock = threading.Lock()
     cached_symbols = ()
+    pattern_cache_lock = threading.Lock()
+    cached_patterns = behavior_decision_core.learned_patterns(con, now())
+    cached_patterns_at = time.monotonic()
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -423,9 +427,14 @@ async def run():
         return db
 
     def refresh_symbol_cache_once():
-        nonlocal cached_symbols
+        nonlocal cached_symbols, cached_patterns, cached_patterns_at
         try:
-            refreshed = load_symbols(universe_connection())
+            db = universe_connection()
+            refreshed = load_symbols(db)
+            refreshed_patterns = None
+            current = time.monotonic()
+            if current - cached_patterns_at >= 30.0:
+                refreshed_patterns = behavior_decision_core.learned_patterns(db, now())
         except Exception:
             db = getattr(universe_local, "connection", None)
             if db is not None:
@@ -441,7 +450,15 @@ async def run():
             raise
         with symbol_cache_lock:
             cached_symbols = refreshed
+        if refreshed_patterns is not None:
+            with pattern_cache_lock:
+                cached_patterns = refreshed_patterns
+                cached_patterns_at = current
         return refreshed
+
+    def live_patterns_snapshot():
+        with pattern_cache_lock:
+            return dict(cached_patterns)
 
     async def refresh_symbol_cache():
         while not stop_event.is_set():
@@ -495,57 +512,82 @@ async def run():
             and (key not in last_selection_by_symbol
                  or (observed_at - last_selection_by_symbol[key]).total_seconds() >= 30.0)
         ):
-            selection_result = {}
-            selected = select_new_positions(
-                work_con, now(), metadata, telemetry=selection_result,
-                live_context=live_context,
-            )
-            latest_scan = work_con.execute(
+            decision_started_at = now()
+            decision_started_ms = int(decision_started_at.timestamp() * 1000)
+            event_ms = int(live_context.get("observed_event_ms") or 0)
+            queue_delay_ms = decision_started_ms - event_ms
+            if queue_delay_ms < -500 or queue_delay_ms > realtime_market.MAX_EVENT_AGE_MS:
+                write_brain_state({
+                    "phase": "OPPORTUNITY_SCAN",
+                    "message": "Canlı fırsat olayı karar kuyruğunda eskidi; işlem yetkisi verilmedi.",
+                    "observed_symbol": state.symbol,
+                    "observed_market_type": state.market_type,
+                    "observed_price": state.last_price,
+                    "observed_event_ms": event_ms,
+                    "context_window_start_ms": live_context.get("window_start_ms"),
+                    "decision_time_ms": decision_started_ms,
+                    "queue_delay_ms": queue_delay_ms,
+                    "evaluation_ms": 0,
+                    "decision": "LIVE_EVENT_STALE_BEFORE_DECISION",
+                })
+            else:
+                selection_result = {}
+                evaluation_started = time.monotonic()
+                selected = select_new_positions(
+                    work_con, decision_started_at, metadata,
+                    telemetry=selection_result, live_context=live_context,
+                    live_patterns=live_patterns_snapshot(), freshness_now=now,
+                )
+                evaluation_ms = int((time.monotonic() - evaluation_started) * 1000)
+                latest_scan = work_con.execute(
                 """SELECT core_status,candidate_count,selected_count,
                           active_position_count,capacity,available_exposure,
                           reason_counts_json
                    FROM paper_behavior_selection_runs
                    ORDER BY run_id DESC LIMIT 1"""
             ).fetchone()
-            brain_state, _ = latest_execution_state(state, observed_ms)
-            write_brain_state({
-                "phase": "OPPORTUNITY_SCAN",
-                "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
-                "observed_symbol": brain_state.symbol,
-                "observed_market_type": brain_state.market_type,
-                "observed_price": brain_state.last_price,
-                "observed_event_ms": live_context["observed_event_ms"],
-                "context_window_start_ms": live_context["window_start_ms"],
-                "decision_time_ms": int(now().timestamp() * 1000),
-                "monitored_symbols": len(load_symbols(work_con)),
-                "scan": ({
-                    "core_status": latest_scan[0],
-                    "candidate_count": latest_scan[1],
-                    "selected_count": latest_scan[2],
-                    "active_position_count": latest_scan[3],
-                    "capacity": latest_scan[4],
-                    "available_exposure": latest_scan[5],
-                    "reason_counts": json.loads(latest_scan[6] or "{}"),
-                } if latest_scan else None),
-                "candidates": selection_result.get("candidates", []),
-                "open_positions": selection_result.get("open_positions", []),
-                "portfolio_capacity": selection_result.get(
-                    "portfolio_capacity", {}
-                ),
-                "rejection_reasons": selection_result.get(
-                    "rejection_reasons", {}
-                ),
-                "decision": (
-                    "NEW_POSITION_SELECTED"
-                    if selected else "CONTINUE_SCANNING"
-                ),
-            })
-            # Cadence is based on completion time, not the event that started
-            # a potentially slow scan. Otherwise a multi-second scan retriggers
-            # immediately and starves position/fill management.
-            last_selection_attempt_at = now()
-            if selected:
-                last_selection_by_symbol[key] = last_selection_attempt_at
+                brain_state, _ = latest_execution_state(state, observed_ms)
+                decision_finished_ms = int(now().timestamp() * 1000)
+                write_brain_state({
+                    "phase": "OPPORTUNITY_SCAN",
+                    "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
+                    "observed_symbol": brain_state.symbol,
+                    "observed_market_type": brain_state.market_type,
+                    "observed_price": brain_state.last_price,
+                    "observed_event_ms": live_context["observed_event_ms"],
+                    "context_window_start_ms": live_context["window_start_ms"],
+                    "decision_time_ms": decision_finished_ms,
+                    "queue_delay_ms": queue_delay_ms,
+                    "evaluation_ms": evaluation_ms,
+                    "monitored_symbols": len(symbols()),
+                    "scan": ({
+                        "core_status": latest_scan[0],
+                        "candidate_count": latest_scan[1],
+                        "selected_count": latest_scan[2],
+                        "active_position_count": latest_scan[3],
+                        "capacity": latest_scan[4],
+                        "available_exposure": latest_scan[5],
+                        "reason_counts": json.loads(latest_scan[6] or "{}"),
+                    } if latest_scan else None),
+                    "candidates": selection_result.get("candidates", []),
+                    "open_positions": selection_result.get("open_positions", []),
+                    "portfolio_capacity": selection_result.get(
+                        "portfolio_capacity", {}
+                    ),
+                    "rejection_reasons": selection_result.get(
+                        "rejection_reasons", {}
+                    ),
+                    "decision": (
+                        "NEW_POSITION_SELECTED"
+                        if selected else "CONTINUE_SCANNING"
+                    ),
+                })
+                # Cadence is based on completion time, not the event that started
+                # a potentially slow scan. Otherwise a multi-second scan retriggers
+                # immediately and starves position/fill management.
+                last_selection_attempt_at = now()
+                if selected:
+                    last_selection_by_symbol[key] = last_selection_attempt_at
 
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
