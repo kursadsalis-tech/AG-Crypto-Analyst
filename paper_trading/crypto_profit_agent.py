@@ -505,6 +505,34 @@ def portfolio_snapshot(con, now=None):
     }
 
 
+def cancel_expired_pending_entries(con, now):
+    """Cancel stale PAPER intents before a worker restart can resubscribe them."""
+    rows = con.execute("""
+        SELECT position_id,symbol,planned_entry_time,direction,market_type
+        FROM paper_agent_positions
+        WHERE status='PENDING_ENTRY'
+        ORDER BY selected_at,position_id
+    """).fetchall()
+    cancelled = 0
+    for position_id, symbol, planned_entry_time, direction, market_type in rows:
+        planned = parse_time(planned_entry_time)
+        if now - planned <= execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
+            continue
+        record_execution(
+            con, position_id, now, "ENTRY", symbol,
+            "BUY" if direction == "LONG" else "SELL", market_type,
+            ExecutionDecision("REJECTED", "ENTRY_OBSERVATION_WINDOW_EXPIRED"),
+        )
+        con.execute("""
+            UPDATE paper_agent_positions
+            SET status='CANCELLED',cancel_reason=?
+            WHERE position_id=? AND status='PENDING_ENTRY'
+        """, (f"EXACT_{market_type}_ENTRY_CAPTURE_EXPIRED", position_id))
+        cancelled += 1
+    con.commit()
+    return cancelled
+
+
 def fill_pending(con, now, exchange_metadata=None):
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
