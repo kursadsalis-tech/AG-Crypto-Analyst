@@ -2,6 +2,7 @@
 from pathlib import Path
 import sqlite3
 import unittest
+from unittest.mock import Mock, patch
 
 from runtime import paper_realtime_worker
 
@@ -41,6 +42,18 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
             text.index('exec env AGCA_DEPLOY_REEXEC=1'),
             text.index('canonical_units=('),
         )
+
+    def test_worker_process_source_is_captured_from_process_checkout(self):
+        clean = Mock(returncode=0, stdout="e" * 40 + "\n", stderr="")
+        dirty = Mock(returncode=0, stdout="", stderr="")
+        with patch.object(
+            paper_realtime_worker.subprocess,
+            "run",
+            side_effect=[clean, dirty],
+        ):
+            source = paper_realtime_worker.worker_process_source_state("/tmp/repo")
+        self.assertEqual(source["git_sha"], "e" * 40)
+        self.assertFalse(source["git_dirty"])
 
     def test_pending_spot_entry_is_part_of_realtime_subscription_universe(self):
         con = sqlite3.connect(":memory:")
