@@ -18,7 +18,7 @@ class ObserverServiceContractTests(unittest.TestCase):
 
     def test_behavior_observer_is_bound_to_canonical_binance_source(self):
         service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text()
-        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3", service)
+        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=8", service)\n        self.assertIn("AGCA_BINANCE_REQUEST_ATTEMPTS=3", service)
         self.assertNotIn("AGCA_OKX_REQUEST_TIMEOUT_SECONDS", service)
 
     def test_observer_timers_are_not_installed_by_repository_files(self):
@@ -27,6 +27,7 @@ class ObserverServiceContractTests(unittest.TestCase):
         self.assertIn("OnUnitInactiveSec=1min", macro)
         self.assertIn("Persistent=false", macro)
         self.assertIn("Persistent=false", behavior)
+        self.assertIn("OnUnitInactiveSec=10s", behavior)
 
     def test_attestation_service_declares_both_observer_freshness_limits(self):
         service = (ROOT / "deploy/agca-cloud-attestation.service").read_text()
