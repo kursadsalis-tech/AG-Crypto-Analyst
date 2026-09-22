@@ -43,6 +43,11 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
     "/var/lib/agca/paper-realtime-brain-timeline.json",
 ))
+DYNAMIC_BEHAVIOR_REPORT_PATH = Path(os.getenv(
+    "AGCA_LIVE_BEHAVIOR_REPORT",
+    "/var/lib/agca/reports/live_behavior_closed_minute.json",
+))
+MAX_DYNAMIC_MONITORING_SYMBOLS = 6
 WORKER_DB_TIMEOUT_SECONDS = max(
     1.0, float(os.getenv("AGCA_PAPER_DB_TIMEOUT_SECONDS", "5"))
 )
@@ -125,38 +130,78 @@ def stale_quote_symbols(active_symbols, live_states, wall_clock_ms, max_age_ms=3
     return stale
 
 
-def latest_monitoring_symbols(db, usdm_metadata):
-    """Keep market observation alive independently of current risk permission.
-
-    The latest known asset-risk universe is only a discovery/subscription hint.
-    Fresh risk policy is still required later by the decision core before any
-    new PAPER position can be authorised.
-    """
-    try:
-        row = db.execute(
-            "SELECT MAX(policy_snapshot_id) FROM asset_risk_snapshots"
-        ).fetchone()
-    except sqlite3.OperationalError:
-        return ()
-    snapshot_id = row[0] if row else None
-    if snapshot_id is None:
-        return ()
-    rows = db.execute(
-        """SELECT DISTINCT symbol FROM asset_risk_snapshots
-           WHERE policy_snapshot_id=? ORDER BY symbol""",
-        (snapshot_id,),
-    ).fetchall()
-    monitored = []
-    for (symbol,) in rows:
-        value = str(symbol or "").upper()
-        if not value.endswith("USDT") or "-" in value:
+def _validated_monitoring_rows(rows, usdm_metadata):
+    symbols = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = str(row.get("instrument") or "").upper()
+        if not value.endswith("USDT") or "-" in value or value in symbols:
             continue
         try:
             rules_for(usdm_metadata, value)
         except (ExchangeMetadataError, KeyError, TypeError):
             continue
-        monitored.append((value, "USD_M_PERPETUAL"))
-    return tuple(monitored)
+        symbols.append(value)
+    if not symbols or len(symbols) > MAX_DYNAMIC_MONITORING_SYMBOLS:
+        return ()
+    return tuple((symbol, "USD_M_PERPETUAL") for symbol in symbols)
+
+
+def dynamic_monitoring_symbols(db, usdm_metadata, report_path=DYNAMIC_BEHAVIOR_REPORT_PATH):
+    """Read the canonical dynamic attention route, never the legacy risk basket.
+
+    The closed-minute observer broadly scans Binance USD-M and writes the exact
+    deep-stream instruments it actually observed.  That route controls market
+    observation only. Fresh risk policy remains a separate mandatory gate for
+    any new PAPER position.
+
+    If the atomic report is temporarily unavailable during rotation, fall back
+    only to the latest persisted behavior minute.  Never fall back to
+    asset_risk_snapshots because those also contain the legacy reference basket.
+    """
+    try:
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+        coverage = report.get("universe_coverage") or {}
+        expected = int(coverage.get("deep_stream_instrument_count") or 0)
+        rows = report.get("rows") or []
+        if (
+            report.get("source_exchange") == "BINANCE_USD_M"
+            and 0 < expected <= MAX_DYNAMIC_MONITORING_SYMBOLS
+            and len(rows) == expected
+        ):
+            validated = _validated_monitoring_rows(rows, usdm_metadata)
+            if len(validated) == expected:
+                return validated
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+
+    try:
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='market_behavior_minute_features'"
+        ).fetchone()
+        if not exists:
+            return ()
+        latest = db.execute(
+            "SELECT MAX(minute_end_timestamp_ms) "
+            "FROM market_behavior_minute_features"
+        ).fetchone()[0]
+        if latest is None:
+            return ()
+        rows = db.execute(
+            """SELECT instrument FROM market_behavior_minute_features
+               WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1
+               ORDER BY instrument""",
+            (latest,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return ()
+    if not rows or len(rows) > MAX_DYNAMIC_MONITORING_SYMBOLS:
+        return ()
+    return _validated_monitoring_rows(
+        [{"instrument": row[0]} for row in rows], usdm_metadata
+    )
 
 
 def write_health(status, **details):
@@ -345,11 +390,10 @@ async def run():
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
-        # Observation must not stop merely because the current risk policy is
-        # stale or blocks new positions. Keep watching the latest known
-        # Binance-native universe; evaluate_live() still requires fresh risk
-        # before it can authorise any new PAPER position.
-        monitored = set(latest_monitoring_symbols(
+        # Observation follows the dynamic Binance attention route, not the
+        # Risk Manager's legacy reference basket. evaluate_live() separately
+        # requires fresh risk before it can authorise any new PAPER position.
+        monitored = set(dynamic_monitoring_symbols(
             db, metadata["USD_M_PERPETUAL"]
         ))
         return tuple(sorted(active | monitored))
