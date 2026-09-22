@@ -39,6 +39,13 @@ class RealtimeTechnicalContextTests(unittest.TestCase):
         self.assertTrue(context["observation_only"])
         self.assertFalse(context["real_order_allowed"])
         self.assertEqual(context["timeframes"], ["1h", "4h"])
+        self.assertGreater(context["reference_price"], 0)
+        self.assertLess(
+            context["levels"]["support_1h_72"], context["reference_price"]
+        )
+        self.assertGreater(
+            context["levels"]["resistance_1h_72"], context["reference_price"]
+        )
         self.assertGreaterEqual(context["structure_4h"]["bar_count"], 40)
         self.assertLess(
             datetime.fromisoformat(context["structure_4h"]["as_of"]),
