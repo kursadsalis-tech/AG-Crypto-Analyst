@@ -80,6 +80,22 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
 
+    def test_missing_stop_reference_is_rejected_before_position_write(self):
+        candidate = self.candidate()
+        candidate.pop("stop_reference_pct")
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            selected = agent.select_new_positions(self.con, NOW)
+        self.assertEqual(selected, 0)
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM paper_agent_positions").fetchone()[0], 0,
+        )
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertEqual(reasons, {"STOP_REFERENCE_MISSING_OR_INVALID": 1})
+
     def test_tiny_risk_cap_can_open_small_paper_learning_experiment(self):
         candidate = self.candidate()
         candidate["risk_cap_pct"] = 0.25

@@ -386,14 +386,42 @@ def _latest_risk(con):
         return {}
     if not math.isfinite(trade_risk_pct) or trade_risk_pct <= 0:
         return {}
-    return {row[0]: {"allowed": bool(row[1]), "cap_pct": float(row[2]),
-                     "price": float(row[3]), "risk_as_of": str(row[4]),
-                     "risk_per_trade_pct": trade_risk_pct,
-                     "policy_created_at": str(policy[0])}
-            for row in con.execute("""
-                SELECT symbol,new_position_allowed,max_position_pct,price,as_of
-                FROM asset_risk_snapshots WHERE policy_snapshot_id=?
-            """, (latest,)).fetchall()}
+
+    # The protective stop must come from the same fresh asset-risk snapshot.
+    # A missing legacy column or invalid stop is not permission to invent the
+    # former 0.5% default downstream.
+    asset_columns = {
+        row[1] for row in con.execute("PRAGMA table_info(asset_risk_snapshots)")
+    }
+    if "volatility_stop_reference_pct" not in asset_columns:
+        return {}
+    risks = {}
+    rows = con.execute("""
+        SELECT symbol,new_position_allowed,max_position_pct,price,as_of,
+               volatility_stop_reference_pct
+        FROM asset_risk_snapshots WHERE policy_snapshot_id=?
+    """, (latest,)).fetchall()
+    for row in rows:
+        try:
+            cap_pct = float(row[2])
+            price = float(row[3])
+            stop_reference_pct = float(row[5])
+        except (TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(cap_pct) or cap_pct < 0
+            or not math.isfinite(price) or price <= 0
+            or not math.isfinite(stop_reference_pct) or stop_reference_pct <= 0
+        ):
+            continue
+        risks[row[0]] = {
+            "allowed": bool(row[1]), "cap_pct": cap_pct,
+            "price": price, "risk_as_of": str(row[4]),
+            "risk_per_trade_pct": trade_risk_pct,
+            "stop_reference_pct": stop_reference_pct,
+            "policy_created_at": str(policy[0]),
+        }
+    return risks
 
 
 def evaluate(con, now=None):
@@ -641,6 +669,7 @@ def _candidate_for_hypothesis(
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
         "risk_cap_pct": risk["cap_pct"],
         "risk_per_trade_pct": float(risk.get("risk_per_trade_pct") or 0.0),
+        "stop_reference_pct": float(risk["stop_reference_pct"]),
         "evidence": evidence,
         "evidence_sha256": digest,
     }]

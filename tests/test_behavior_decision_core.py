@@ -42,7 +42,8 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             );
             CREATE TABLE asset_risk_snapshots(
                 policy_snapshot_id INTEGER,symbol TEXT,new_position_allowed INTEGER,
-                max_position_pct REAL,price REAL,as_of TEXT
+                max_position_pct REAL,price REAL,as_of TEXT,
+                volatility_stop_reference_pct REAL
             );
             CREATE TABLE paper_agent_positions(
                 position_id INTEGER PRIMARY KEY,decision_reference_id INTEGER,
@@ -51,7 +52,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             );
             INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1,0.75);
             INSERT INTO asset_risk_snapshots VALUES(
-                1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00'
+                1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00',2.0
             );
         """)
 
@@ -86,11 +87,26 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["experiment_tier"], "EXPLORATORY_LEARNING")
         # Actual policy budget must reach the PAPER position sizing path.
         self.assertEqual(result["candidates"][0]["risk_per_trade_pct"], 0.75)
+        self.assertEqual(result["candidates"][0]["stop_reference_pct"], 2.0)
         self.assertEqual(result["candidates"][0]["evidence"]["risk"]["risk_per_trade_pct"], 0.75)
+        self.assertEqual(result["candidates"][0]["evidence"]["risk"]["stop_reference_pct"], 2.0)
         pattern = result["review"]["patterns"][0]
         self.assertTrue(pattern["exploration_eligible"])
         self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
+
+    def test_missing_or_invalid_stop_reference_fails_closed(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE asset_risk_snapshots SET volatility_stop_reference_pct=0"
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        missed = self.con.execute(
+            "SELECT rejection_reason FROM paper_behavior_missed_opportunities"
+        ).fetchone()
+        self.assertEqual(missed[0], "RISK_COVERAGE_MISSING")
 
     def test_zero_trade_risk_policy_fails_closed(self):
         self.add_history(days=1)
