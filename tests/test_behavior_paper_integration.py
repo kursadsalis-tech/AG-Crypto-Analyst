@@ -575,6 +575,40 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             ("OPEN", "USD_M_PERPETUAL"),
         )
 
+    def test_live_recovery_cancels_expired_pending_instead_of_late_fill(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 13,
+            "symbol": "BTCUSDT",
+            "instrument": "BTCUSDT",
+            "market_type": "USD_M_PERPETUAL",
+            "evidence_sha256": "b" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW,
+                    exchange_metadata={"USD_M_PERPETUAL": object()},
+                ),
+                1,
+            )
+        live = SimpleNamespace(
+            symbol="BTCUSDT", market_type="USD_M_PERPETUAL",
+        )
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW + timedelta(minutes=11), live,
+            exchange_metadata={"USD_M_PERPETUAL": object()},
+        )
+        self.assertEqual((filled, cancelled), (0, 1))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,cancel_reason FROM paper_agent_positions"
+            ).fetchone(),
+            ("CANCELLED", "EXACT_USD_M_PERPETUAL_ENTRY_CAPTURE_EXPIRED"),
+        )
+
     def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 10, "symbol": "UNIUSDT",
