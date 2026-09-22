@@ -134,6 +134,23 @@ class TradeLearningTests(unittest.TestCase):
             11, alignment="ALIGNED_BULLISH", pnl=1.0,
             net_return_pct=1.0, technical_authority=True,
         )
+        self.add(12, pnl=1.0)
+        self._add_technical_review(
+            12, alignment="ALIGNED_BULLISH", pnl=1.0,
+            net_return_pct=1.0,
+        )
+        payload = json.loads(self.con.execute(
+            "SELECT review_json FROM paper_agent_experience_reviews "
+            "WHERE position_id=12"
+        ).fetchone()[0])
+        payload["frozen_thesis"]["technical_trade_plan"] = {
+            "version": "ACTIVE_PLAN"
+        }
+        self.con.execute(
+            "UPDATE paper_agent_experience_reviews SET review_json=? "
+            "WHERE position_id=12",
+            (json.dumps(payload),),
+        )
         review = trade_learning.technical_shadow_review(self.con, "CLEAN")
         self.assertEqual(review["status"], "NO_TECHNICAL_SHADOW_EVIDENCE")
         self.assertEqual(review["overall"]["trades"], 0)
