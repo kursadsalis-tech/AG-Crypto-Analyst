@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import signal
+import sqlite3
 import tempfile
 import threading
 from collections import deque
@@ -14,8 +15,8 @@ from pathlib import Path
 
 from database.runtime_store import connect
 from paper_trading.crypto_profit_agent import (
-    DB_NAME, FORWARD_COHORT, ensure_tables, fill_pending_from_live_state,
-    select_new_positions,
+    DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
+    fill_pending_from_live_state, select_new_positions,
 )
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
@@ -39,6 +40,37 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
     "/var/lib/agca/paper-realtime-brain-timeline.json",
 ))
+WORKER_DB_TIMEOUT_SECONDS = max(
+    1.0, float(os.getenv("AGCA_PAPER_DB_TIMEOUT_SECONDS", "5"))
+)
+
+
+def worker_connect(stop_requested=None):
+    db = connect(DB_NAME, timeout=WORKER_DB_TIMEOUT_SECONDS)
+    db.execute(
+        f"PRAGMA busy_timeout={int(WORKER_DB_TIMEOUT_SECONDS * 1000)}"
+    )
+    if stop_requested is not None:
+        db.set_progress_handler(lambda: int(stop_requested.is_set()), 1000)
+    return db
+
+
+async def run_until_stopped(stop_event, *coroutines):
+    """Cancel idle sockets/backoff immediately when the service receives TERM."""
+    tasks = [asyncio.create_task(coro) for coro in coroutines]
+    stopped = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            [*tasks, stopped], return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            if task is not stopped:
+                task.result()
+    finally:
+        stop_event.set()
+        for task in [*tasks, stopped]:
+            task.cancel()
+        await asyncio.gather(*tasks, stopped, return_exceptions=True)
 
 
 def now():
@@ -170,7 +202,8 @@ async def run():
             "SPOT", max_age_seconds=max_metadata_age,
         ),
     }
-    con = connect(DB_NAME, timeout=30)
+    shutdown_requested = threading.Event()
+    con = worker_connect(shutdown_requested)
     ensure_tables(con)
     position_management.ensure_tables(con)
     decision_executor = ThreadPoolExecutor(
@@ -178,6 +211,9 @@ async def run():
     )
     universe_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-symbol-universe"
+    )
+    learning_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="agca-paper-learning"
     )
     decision_local = threading.local()
     universe_local = threading.local()
@@ -244,16 +280,19 @@ async def run():
         write_market_state(live_state_snapshot())
 
     last_selection_attempt_at = None
-    last_learning_at = None
     loop = asyncio.get_running_loop()
+    def request_stop():
+        shutdown_requested.set()
+        stop_event.set()
+
     for name in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(name, stop_event.set)
+        loop.add_signal_handler(name, request_stop)
 
     def load_symbols(db):
         position_management.initialize_open_positions(db, now())
         active = {tuple(row) for row in db.execute(
             """SELECT symbol,market_type FROM paper_agent_positions
-            WHERE status='OPEN' ORDER BY symbol"""
+            WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
         latest = db.execute(
             "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
@@ -265,14 +304,12 @@ async def run():
                 WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
                 (latest,),
             ).fetchall():
-                symbol = str(instrument).replace(
-                    "-USDT-SWAP", "USDT"
-                ).replace("-", "")
-                market_type = (
-                    "USD_M_PERPETUAL"
-                    if str(instrument).endswith("-SWAP") else "SPOT"
-                )
-                monitored.add((symbol, market_type))
+                symbol = str(instrument).upper()
+                # Only exact Binance-native USD-M IDs authorise a new quote
+                # subscription. Historical OKX instruments remain in SQLite
+                # for learning/audit, not as inferred Binance contracts.
+                if symbol.endswith("USDT") and "-" not in symbol:
+                    monitored.add((symbol, "USD_M_PERPETUAL"))
         return tuple(sorted(active | monitored))
 
     def symbols():
@@ -343,7 +380,7 @@ async def run():
     def universe_connection():
         db = getattr(universe_local, "connection", None)
         if db is None:
-            db = connect(DB_NAME, timeout=30)
+            db = worker_connect(shutdown_requested)
             ensure_tables(db)
             position_management.ensure_tables(db)
             universe_local.connection = db
@@ -351,7 +388,21 @@ async def run():
 
     def refresh_symbol_cache_once():
         nonlocal cached_symbols
-        refreshed = load_symbols(universe_connection())
+        try:
+            refreshed = load_symbols(universe_connection())
+        except Exception:
+            db = getattr(universe_local, "connection", None)
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                universe_local.connection = None
+            raise
         with symbol_cache_lock:
             cached_symbols = refreshed
         return refreshed
@@ -380,7 +431,7 @@ async def run():
     def decision_connection():
         db = getattr(decision_local, "connection", None)
         if db is None:
-            db = connect(DB_NAME, timeout=30)
+            db = worker_connect(shutdown_requested)
             ensure_tables(db)
             position_management.ensure_tables(db)
             decision_local.connection = db
@@ -393,7 +444,7 @@ async def run():
 
     def process_state(state, observed_ms):
         """Run DB/decision/PAPER work off the websocket event loop."""
-        nonlocal last_health_at, last_selection_attempt_at, last_learning_at
+        nonlocal last_health_at, last_selection_attempt_at
         work_con = decision_connection()
         observed_at = datetime.fromtimestamp(
             observed_ms / 1000, tz=timezone.utc
@@ -450,14 +501,6 @@ async def run():
             # immediately and starves position/fill management.
             last_selection_attempt_at = now()
 
-        if (
-            last_learning_at is None
-            or (observed_at - last_learning_at).total_seconds() >= 60.0
-        ):
-            trade_learning.run(work_con, FORWARD_COHORT, observed_at)
-            strategy_allocator.rebalance(work_con, observed_at)
-            last_learning_at = now()
-
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
         # any PAPER execution or position-management action.
@@ -510,11 +553,8 @@ async def run():
             reviews = experience_memory.review_closed_positions(
                 work_con, execution_at
             )
-            learning = trade_learning.run(
-                work_con, FORWARD_COHORT, execution_at
-            )
             result["new_experience_reviews"] = reviews
-            result["learning_status"] = learning["status"]
+            result["learning_status"] = "DEFERRED_TO_BACKGROUND_REVIEW"
 
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
@@ -533,6 +573,55 @@ async def run():
                 last_action={"status": "HOLD"},
             )
             last_health_at = observed_at
+
+    def learning_once():
+        """Run non-authoritative learning off the execution path."""
+        db = None
+        try:
+            db = worker_connect(shutdown_requested)
+            trade_learning.run(db, FORWARD_COHORT, now())
+            strategy_allocator.rebalance(db, now())
+            return None
+        except sqlite3.OperationalError as exc:
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            return f"LEARNING_SQLITE_{str(exc).upper().replace(' ', '_')}"
+        except Exception as exc:
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            return f"LEARNING_{type(exc).__name__}"
+        finally:
+            if db is not None:
+                db.close()
+
+    def process_state_guarded(state, observed_ms):
+        try:
+            process_state(state, observed_ms)
+            return None
+        except Exception as exc:
+            db = getattr(decision_local, "connection", None)
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                decision_local.connection = None
+            prefix = (
+                "DECISION_SQLITE"
+                if isinstance(exc, sqlite3.OperationalError)
+                else "DECISION"
+            )
+            return f"{prefix}_{type(exc).__name__}:{exc}"
 
     async def on_state(state, observed_ms):
         nonlocal last_quote_received_ms
@@ -576,27 +665,52 @@ async def run():
                 > realtime_market.MAX_EVENT_AGE_MS
             ):
                 continue
-            await loop.run_in_executor(
-                decision_executor, process_state, state, observed_ms
+            decision_error = await loop.run_in_executor(
+                decision_executor, process_state_guarded, state, observed_ms
             )
+            if decision_error:
+                emit_health("DEGRADED", error=decision_error)
 
     def maintenance_once():
-        maintenance_con = connect(DB_NAME, timeout=30)
+        maintenance_con = worker_connect(shutdown_requested)
         try:
-            ensure_tables(maintenance_con)
+            # Startup already installed the schema; do not repeat DDL/backfill
+            # in the recurring funding path.
             reconciled = position_management.reconcile_pending_funding(
                 maintenance_con,
                 lambda **kwargs: fetch_funding_history_via_postgres(
-                    database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""), **kwargs,
+                    database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
+                    timeout_seconds=5, **kwargs,
                 ),
-                now(),
+                now(), stop_requested=shutdown_requested.is_set,
             )
             if reconciled["resolved"]:
                 experience_memory.review_closed_positions(maintenance_con, now())
-                trade_learning.run(maintenance_con, FORWARD_COHORT, now())
             return reconciled
         finally:
             maintenance_con.close()
+
+    async def learning_loop():
+        # Execution/fill/position management always has priority over research.
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=30)
+            return
+        except asyncio.TimeoutError:
+            pass
+        while not stop_event.is_set():
+            learning_error = await loop.run_in_executor(
+                learning_executor, learning_once
+            )
+            if learning_error:
+                write_brain_state({
+                    "phase": "LEARNING_REVIEW",
+                    "message": "Öğrenme incelemesi ertelendi; işlem yolu etkilenmedi.",
+                    "decision": learning_error,
+                })
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
 
     async def maintenance():
         while not stop_event.is_set():
@@ -619,22 +733,27 @@ async def run():
             except asyncio.TimeoutError:
                 pass
 
+    expired_on_startup = cancel_expired_pending_entries(con, now())
     with symbol_cache_lock:
         cached_symbols = load_symbols(con)
     emit_health(
         "STARTING", active_symbols=symbols(),
     )
     try:
-        await asyncio.gather(
+        await run_until_stopped(
+            stop_event,
             realtime_market.stream(
                 symbols, on_state, stop_event, health, quote_metrics=quote_metrics,
             ),
             decision_loop(),
             refresh_symbol_cache(),
             maintenance(),
+            learning_loop(),
             heartbeat(),
         )
     finally:
+        request_stop()
+
         def close_decision_connection():
             db = getattr(decision_local, "connection", None)
             if db is not None:
@@ -657,6 +776,7 @@ async def run():
         finally:
             decision_executor.shutdown(wait=True)
             universe_executor.shutdown(wait=True)
+            learning_executor.shutdown(wait=True)
             con.close()
             emit_health("STOPPED")
 

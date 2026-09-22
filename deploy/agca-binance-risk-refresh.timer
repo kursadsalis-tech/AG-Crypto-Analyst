@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AGCA PAPER risk evidence every 15 minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=15min
+AccuracySec=10s
+Persistent=false
+Unit=agca-binance-risk-refresh.service
+
+[Install]
+WantedBy=timers.target

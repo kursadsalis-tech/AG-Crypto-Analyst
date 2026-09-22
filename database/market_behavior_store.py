@@ -77,9 +77,22 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
     minute_end = int(report["minute_end_timestamp_ms"])
     cutoff = minute_end - int(retention_days) * 86_400_000
     created_at = datetime.now(timezone.utc).isoformat()
+    # For the Binance-native observer, an incomplete sample may carry numeric
+    # placeholders for the legacy NOT NULL schema. These are NOT observations.
+    # Keep its quality gates in the closed-minute report, but never persist
+    # placeholder metrics as genuine Binance OI/funding/flow evidence.
+    binance_native = report.get("source_exchange") == "BINANCE_USD_M"
+    skipped_ineligible = 0
     with connect(database_path) as connection:
         ensure_table(connection)
         for row in report.get("rows", []):
+            if binance_native and not row.get("eligible_for_learning"):
+                connection.execute(
+                    f"DELETE FROM {TABLE} WHERE instrument=? AND minute_end_timestamp_ms=?",
+                    (row["instrument"], minute_end),
+                )
+                skipped_ineligible += 1
+                continue
             connection.execute(f"""
                 INSERT INTO {TABLE} (
                     instrument,minute_end_timestamp_ms,minute_start_timestamp_ms,
@@ -162,8 +175,9 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
         forward_outcomes = settle_outcomes_for_closed_minute(
             connection, minute_end
         )
-    return {"upserted": len(report.get("rows", [])), "pruned": deleted,
-            "row_count": count, "retention_days": int(retention_days),
+    return {"upserted": len(report.get("rows", [])) - skipped_ineligible,
+            "ineligible_binance_rows_skipped": skipped_ineligible,
+            "pruned": deleted, "row_count": count, "retention_days": int(retention_days),
             "external_evidence_upserted": len(external.get("events", [])),
             "external_evidence_pruned": external_deleted,
             "external_evidence_row_count": external_count,

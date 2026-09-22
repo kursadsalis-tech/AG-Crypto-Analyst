@@ -13,7 +13,10 @@ MINUTE_MS = 60_000
 
 
 def _average(values):
-    return sum(values) / len(values) if values else 0.0
+    # Unavailable source observations are NULL, not zero or an average
+    # silently computed from a subset of otherwise required samples.
+    return (None if any(value is None for value in values)
+            else sum(values) / len(values) if values else 0.0)
 
 
 def _mid_price(row):
@@ -57,12 +60,22 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                   if event["instrument"] == instrument]
         first_oi = instrument_samples[0]["open_interest"]["usd"]
         last_oi = instrument_samples[-1]["open_interest"]["usd"]
+        # Missing native Binance OI remains NULL in the report, not a
+        # fabricated flat positioning signal. Ineligible rows are not stored.
+        oi_change = (
+            last_oi - first_oi if first_oi is not None and last_oi is not None
+            else None
+        )
         first_mid = _mid_price(instrument_samples[0])
         last_mid = _mid_price(instrument_samples[-1])
         gates = {
             "minimum_samples": len(instrument_samples) >= min_samples,
             "maximum_gap": not gaps or max(gaps) <= max_gap_ms,
             "required_sources": len(complete) == len(instrument_samples),
+            "open_interest_present": all(
+                row["open_interest"]["usd"] is not None for row in instrument_samples),
+            "funding_present": all(
+                row["funding"]["rate"] is not None for row in instrument_samples),
             "liquidation_channel": bool(channel_states) and all(channel_states),
             "valid_mid_price": first_mid is not None and last_mid is not None,
         }
@@ -86,7 +99,7 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
             "mid_price_last": last_mid,
             "open_interest_usd_first": first_oi,
             "open_interest_usd_last": last_oi,
-            "open_interest_usd_change": last_oi - first_oi,
+            "open_interest_usd_change": oi_change,
             "funding_rate_last": instrument_samples[-1]["funding"]["rate"],
             "long_liquidation_notional_usd_estimate": sum(
                 event["notional_usd_estimate"] for event in events

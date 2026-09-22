@@ -50,7 +50,13 @@ def fetch_funding_history_via_postgres(
         raise FuturesCostError("SUPABASE_DATABASE_URL_UNAVAILABLE")
     try:
         import psycopg
-        with psycopg.connect(database_url, connect_timeout=max(1, int(timeout_seconds))) as con:
+        timeout_ms = max(1000, int(float(timeout_seconds) * 1000))
+        with psycopg.connect(
+            database_url,
+            connect_timeout=max(1, int(timeout_seconds)),
+            tcp_user_timeout=timeout_ms,
+            options=f"-c statement_timeout={timeout_ms}",
+        ) as con:
             with con.cursor() as cursor:
                 cursor.execute(
                     "SELECT status, content_type, content FROM extensions.http_get(%s)",

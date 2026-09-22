@@ -32,6 +32,8 @@ MIN_EXECUTION_TRADES_FOR_PROMOTION = 10
 MIN_EXECUTION_DAYS_FOR_PROMOTION = 3
 EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
+MAX_RISK_POLICY_AGE_SECONDS = 1800
+MAX_ASSET_RISK_AGE_SECONDS = 7200
 ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
 
@@ -282,7 +284,10 @@ def _applies(symbols_json, instrument):
         symbols = [str(value).upper() for value in json.loads(symbols_json or "[]")]
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
-    base = str(instrument).split("-")[0].upper()
+    value = str(instrument).upper()
+    # For native Binance IDs only, use the literal base-asset spelling.
+    # A "1000" prefix is a contract identity, never a guessed alias.
+    base = value[:-4] if value.endswith("USDT") and "-" not in value else value.split("-")[0]
     return not symbols or base in symbols or _symbol(instrument) in symbols
 
 
@@ -367,33 +372,83 @@ def learned_patterns(con, now=None):
     }
 
 
-def _latest_risk(con):
+def _latest_risk(con, now):
     latest = con.execute("SELECT MAX(id) FROM risk_policy_snapshots").fetchone()[0]
     if latest is None:
         return {}
     policy = con.execute("""
-        SELECT created_at,new_positions_allowed,risk_per_trade_pct
+        SELECT created_at,new_positions_allowed,risk_per_trade_pct,
+               max_total_exposure_pct,max_alt_exposure_pct,
+               max_single_position_pct,daily_loss_limit_pct,max_new_positions
         FROM risk_policy_snapshots WHERE id=?
     """, (latest,)).fetchone()
     if not policy or not bool(policy[1]):
+        return {}
+    # Unlike historical evidence, a past risk snapshot does not authorise
+    # a current position. The existing signal gate uses a 30-minute policy
+    # window; preserve the same limit in the PAPER behavior path.
+    try:
+        policy_at = datetime.fromisoformat(str(policy[0]).replace("Z", "+00:00"))
+        if policy_at.tzinfo is None:
+            return {}
+        policy_age = (now - policy_at.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return {}
+    if not -60 <= policy_age <= MAX_RISK_POLICY_AGE_SECONDS:
         return {}
     # The global per-trade risk limit is the authoritative sizing input.
     # Missing, zero or invalid policy limits fail closed; never infer a
     # positive budget from the asset's maximum notional allocation.
     try:
         trade_risk_pct = float(policy[2])
-    except (TypeError, ValueError):
+        max_total_exposure_pct = float(policy[3])
+        max_alt_exposure_pct = float(policy[4])
+        max_single_position_pct = float(policy[5])
+        daily_loss_limit_pct = float(policy[6])
+        max_new_positions = int(policy[7])
+    except (TypeError, ValueError, OverflowError):
         return {}
-    if not math.isfinite(trade_risk_pct) or trade_risk_pct <= 0:
+    numeric_limits = (
+        trade_risk_pct, max_total_exposure_pct, max_alt_exposure_pct,
+        max_single_position_pct, daily_loss_limit_pct,
+    )
+    if (any(not math.isfinite(value) or value <= 0 for value in numeric_limits)
+            or max_new_positions <= 0):
         return {}
-    return {row[0]: {"allowed": bool(row[1]), "cap_pct": float(row[2]),
-                     "price": float(row[3]), "risk_as_of": str(row[4]),
-                     "risk_per_trade_pct": trade_risk_pct,
-                     "policy_created_at": str(policy[0])}
-            for row in con.execute("""
-                SELECT symbol,new_position_allowed,max_position_pct,price,as_of
-                FROM asset_risk_snapshots WHERE policy_snapshot_id=?
-            """, (latest,)).fetchall()}
+    global_limits = {
+        "risk_per_trade_pct": trade_risk_pct,
+        "max_total_exposure_pct": max_total_exposure_pct,
+        "max_alt_exposure_pct": max_alt_exposure_pct,
+        "max_single_position_pct": max_single_position_pct,
+        "daily_loss_limit_pct": daily_loss_limit_pct,
+        "max_new_positions": max_new_positions,
+    }
+    assets = {}
+    for symbol, allowed, cap, price, as_of in con.execute("""
+        SELECT symbol,new_position_allowed,max_position_pct,price,as_of
+        FROM asset_risk_snapshots WHERE policy_snapshot_id=?
+    """, (latest,)).fetchall():
+        try:
+            asset_time = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+            if asset_time.tzinfo is None:
+                continue
+            age = (now - asset_time.astimezone(timezone.utc)).total_seconds()
+            cap_value, price_value = float(cap), float(price)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        # Closed 1h risk bars may be up to ~1 hour old; stale/future/missing
+        # asset references cannot be used to size a new PAPER position.
+        if (not -60 <= age <= MAX_ASSET_RISK_AGE_SECONDS
+                or not math.isfinite(cap_value) or cap_value <= 0
+                or not math.isfinite(price_value) or price_value <= 0):
+            continue
+        assets[symbol] = {
+            "allowed": bool(allowed), "cap_pct": cap_value,
+            "price": price_value, "risk_as_of": str(as_of),
+            **global_limits,
+            "policy_created_at": str(policy[0]),
+        }
+    return assets
 
 
 def evaluate(con, now=None):
@@ -456,7 +511,7 @@ def evaluate(con, now=None):
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
-    risks = _latest_risk(con)
+    risks = _latest_risk(con, now)
     events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
         FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
         ORDER BY kind,event_id""", (latest,)).fetchall()
@@ -481,8 +536,12 @@ def evaluate(con, now=None):
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
          long_liq, short_liq, liq_count, quality_json, mid_first) = raw
+        # Historical OKX features remain available for audit/research,
+        # but cannot authorise Binance PAPER candidates via guessed aliases.
+        if not str(instrument).endswith("USDT") or "-" in str(instrument):
+            continue
         pattern = _flow_pattern(float(book), float(taker))
-        symbol = _symbol(instrument)
+        symbol = str(instrument).upper()
         risk = risks.get(symbol)
         if not pattern or mid is None:
             continue
@@ -631,7 +690,8 @@ def _candidate_for_hypothesis(
     risk = evidence["risk"]
     return [{
         "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",
-        "symbol": symbol, "instrument": instrument, "horizon": 4,
+        "symbol": symbol, "instrument": instrument,
+        "market_type": "USD_M_PERPETUAL", "horizon": 4,
         "direction": learned["direction"], "confidence": learned["calibrated_win_rate"],
         "expected_net_edge_pct": learned["calibrated_net_edge_pct"],
         "execution_size_multiplier": learned["execution_size_multiplier"],
@@ -641,6 +701,13 @@ def _candidate_for_hypothesis(
             * max(learned["calibrated_net_edge_pct"], 0.01) / 100.0),
         "risk_cap_pct": risk["cap_pct"],
         "risk_per_trade_pct": float(risk.get("risk_per_trade_pct") or 0.0),
+        "risk_policy_limits": {
+            key: risk[key] for key in (
+                "max_total_exposure_pct", "max_alt_exposure_pct",
+                "max_single_position_pct", "daily_loss_limit_pct",
+                "max_new_positions",
+            )
+        },
         "evidence": evidence,
         "evidence_sha256": digest,
     }]

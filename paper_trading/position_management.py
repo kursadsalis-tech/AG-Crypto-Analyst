@@ -582,7 +582,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
             "quantity": closed_qty, "net_pnl": net, "final": final}
 
 
-def reconcile_pending_funding(con, funding_loader, now):
+def reconcile_pending_funding(con, funding_loader, now, *, stop_requested=None):
     """Apply previously unavailable funding without reopening trade outcomes."""
     # Schema setup belongs to startup/migration.  This reconciliation runs from
     # the realtime maintenance loop, so repeating DDL/backfill here creates an
@@ -598,6 +598,8 @@ def reconcile_pending_funding(con, funding_loader, now):
     for row in rows:
         grouped.setdefault(row[1], []).append(row)
     for position_id, segments in grouped.items():
+        if stop_requested is not None and stop_requested():
+            break
         symbol = con.execute(
             "SELECT symbol FROM paper_agent_positions WHERE position_id=?", (position_id,)
         ).fetchone()
@@ -612,6 +614,8 @@ def reconcile_pending_funding(con, funding_loader, now):
         except FuturesCostError:
             blocked += len(segments)
             continue
+        if stop_requested is not None and stop_requested():
+            break
         total_cost = 0.0
         for segment_id, _, start_at, end_at, direction, quantity in segments:
             start_ms = int(parse(start_at).timestamp() * 1000)
@@ -642,6 +646,10 @@ def reconcile_pending_funding(con, funding_loader, now):
             con.execute("""UPDATE paper_agent_positions SET
                 funding_source='BINANCE_USD_M_FUNDING_HISTORY'
                 WHERE position_id=?""", (position_id,))
+        # Commit the complete position accounting atomically BEFORE the next
+        # network request. Holding this writer lock across funding I/O blocks
+        # the execution and learning connections.
+        con.commit()
         resolved += len(segments)
     con.commit()
     return {"resolved": resolved, "blocked": blocked}

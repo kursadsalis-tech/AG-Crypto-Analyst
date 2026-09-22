@@ -1,0 +1,22 @@
+[Unit]
+Description=AGCA PAPER risk refresh via validated Binance SPOT/USD-M and independent BTC
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+EnvironmentFile=-/etc/agca/remote-database.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m risk_manager.risk_cycle
+TimeoutStartSec=240
+Nice=10
+MemoryMax=384M
+CPUQuota=50%
+UMask=0077

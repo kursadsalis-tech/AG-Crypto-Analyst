@@ -7,6 +7,8 @@ must obey. Missing data tightens or blocks risk; it never increases permission.
 from __future__ import annotations
 
 import json
+import os
+import re
 import sqlite3
 from database.runtime_store import connect as runtime_connect
 import statistics
@@ -14,6 +16,9 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from data.binance_risk_private_feeds import (
+    btc_independent_validation, spot_closed_hourly,
+)
 from data.truth_engine import (
     audited_validation,
     fetch_and_validate_btc_anchor,
@@ -21,7 +26,7 @@ from data.truth_engine import (
 )
 
 
-DB_NAME = "crypto_data.db"
+DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_USD_M_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
@@ -136,10 +141,11 @@ def behavior_risk_symbols(con, now=None):
     symbols = []
     for (instrument,) in instruments:
         value = str(instrument).upper()
-        if value.endswith("-USDT-SWAP"):
-            symbol = value[:-10].replace("-", "") + "USDT"
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
+        # Binance-native minute rows keep the exact exchangeInfo symbol.
+        # Historical OKX rows are NOT eligible to authorise Binance risk
+        # coverage by guessing another venue's contract identity.
+        if value.endswith("USDT") and "-" not in value and value not in symbols:
+            symbols.append(value)
     return tuple(symbols)
 
 
@@ -224,21 +230,57 @@ def fetch_okx_closed_1h_klines(symbol):
 
 
 def fetch_dynamic_closed_1h_klines(symbol):
-    """Use derivatives-native evidence for the dynamic OKX swap universe."""
+    """Same-venue risk candles through AGCA's existing private DB egress.
+
+    Actual GCE VM rejects direct fapi REST with HTTP 451; never mask its
+    failure with OKX candles or the dissimilar Binance spot contract. Only
+    recent CLOSED Binance USD-M 1h rows authorise dynamic risk coverage.
+    """
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{1,26}USDT", symbol):
+        raise RuntimeError("INVALID_BINANCE_USD_M_RISK_SYMBOL")
+    database_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
+    if not database_url:
+        raise RuntimeError("BINANCE_USD_M_PRIVATE_EGRESS_UNAVAILABLE")
+    from urllib.parse import urlencode
+    url = BINANCE_USD_M_KLINES_URL + "?" + urlencode({
+        "symbol": symbol, "interval": "1h", "limit": KLINE_LIMIT,
+    })
     try:
-        return fetch_closed_1h_klines(
-            symbol,
-            url=BINANCE_USD_M_KLINES_URL,
-            source_prefix="BINANCE_USD_M_KLINES",
-        )
-    except Exception as binance_exc:
-        try:
-            return fetch_okx_closed_1h_klines(symbol)
-        except Exception as okx_exc:
-            raise RuntimeError(
-                f"{symbol}: derivatives risk evidence unavailable; "
-                f"binance={binance_exc}; okx={okx_exc}"
-            ) from okx_exc
+        import psycopg
+        with psycopg.connect(database_url, connect_timeout=5) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL statement_timeout = '20000ms'")
+                cursor.execute(
+                    "SELECT extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', %s)",
+                    ("15000",),
+                )
+                cursor.execute(
+                    "SELECT status, content_type, content FROM extensions.http_get(%s)",
+                    (url,),
+                )
+                result = cursor.fetchone()
+    except Exception as exc:
+        raise RuntimeError("BINANCE_USD_M_KLINES_PRIVATE_EGRESS_ERROR") from exc
+    if (not result or result[0] != 200 or
+            str(result[1] or "").split(";", 1)[0].lower() != "application/json"):
+        raise RuntimeError("BINANCE_USD_M_KLINES_HTTP_UNAVAILABLE")
+    try:
+        rows = json.loads(result[2])
+        if not isinstance(rows, list):
+            raise ValueError("expected kline array")
+        now_ms = int(time.time()*1000)
+        closed = [row for row in rows if isinstance(row, list)
+                  and len(row) >= 8 and int(row[6]) < now_ms]
+    except (ValueError, TypeError, IndexError, OverflowError) as exc:
+        raise RuntimeError("BINANCE_USD_M_KLINES_INVALID_RESPONSE") from exc
+    if len(closed) < MIN_CLOSED_CANDLES:
+        raise RuntimeError("BINANCE_USD_M_KLINES_INSUFFICIENT_CLOSED_CANDLES")
+    # Validate source and close-clock semantics; no symbol aliases.
+    return validate_closed_klines(
+        closed[-MIN_CLOSED_CANDLES:],
+        source=f"BINANCE_USD_M_KLINES_PRIVATE_EGRESS:{symbol}",
+        minimum_rows=MIN_CLOSED_CANDLES,
+    )
 
 
 def candle_metrics(symbol, candles):
@@ -657,6 +699,7 @@ def main():
     created_at = iso(utcnow())
     assets = []
     source_errors = {}
+    private_url = os.getenv("AGCA_REMOTE_DATABASE_URL", "")
     con = runtime_connect(DB_NAME)
     try:
         dynamic_symbols = behavior_risk_symbols(con)
@@ -665,7 +708,10 @@ def main():
                 con,
                 gate_name="RISK_REFERENCE_PRICE",
                 source="BINANCE_VS_COINGECKO:BTCUSD",
-                validator=fetch_and_validate_btc_anchor,
+                validator=(
+                    (lambda: btc_independent_validation(private_url))
+                    if private_url else fetch_and_validate_btc_anchor
+                ),
             )
         except Exception as exc:
             source_errors["CROSS_SOURCE_BTC"] = str(exc)
@@ -676,8 +722,9 @@ def main():
         try:
             candles = (
                 fetch_dynamic_closed_1h_klines(symbol)
-                if symbol in dynamic_symbols and symbol not in SYMBOLS
-                else fetch_closed_1h_klines(symbol)
+                if symbol in dynamic_symbols
+                else spot_closed_hourly(private_url, symbol)
+                if private_url else fetch_closed_1h_klines(symbol)
             )
             metrics = candle_metrics(symbol, candles)
             assets.append(classify_asset_risk(metrics))

@@ -46,9 +46,13 @@ REQUIRED_FILES = (
     "data/causal_minute_evidence.py",
     "data/federal_reserve_exact_events.py",
     "data/live_behavior_evidence_bundle.py",
-    "data/okx_liquidation_channel.py",
-    "data/okx_live_evidence.py",
-    "data/okx_market_universe.py",
+    "data/binance_liquidation_channel.py",
+    "data/binance_live_evidence.py",
+    "data/binance_market_universe.py",
+    "data/binance_ws_market_universe.py",
+    "data/binance_ws_live_evidence.py",
+    "data/binance_ws_market_collector.py",
+    "data/binance_oi_postgres.py",
     "data/rolling_behavior_window.py",
     "paper_trading/governance.py",
     "requirements-runtime.txt",
@@ -92,6 +96,22 @@ def build_readiness(root=PROJECT_ROOT):
             f"SERVICE_CONTRACT:{name}:{key}"
             for key, passed in checks.items() if not passed
         )
+
+    # The current GCE execution VM returned HTTP 451 from every direct
+    # Binance futures REST endpoint. A source tree that still requires those
+    # blocked collector paths cannot be described as deployment-ready, even
+    # when its isolated offline unit tests pass. Remove this gate ONLY once
+    # the executable observer consumes validated WS + bounded private OI.
+    collector_path = root / "scripts/collect_closed_behavior_minute.py"
+    collector = collector_path.read_text(encoding="utf-8") if collector_path.is_file() else ""
+    if ("from data.binance_live_evidence import collect" in collector
+            or 'fetch_market_overview("exchangeInfo")' in collector):
+        failures.append("BINANCE_DIRECT_REST_451_OBSERVER_NOT_DEPLOYABLE")
+    elif "from data.binance_ws_market_collector import BinanceWsMinuteCollector" in collector:
+        # Offline tests only prove source-level invariants. Do not permit the
+        # systemd service to replace the old live worker before observing
+        # a full read-only minute and its OI request budget on the actual VM.
+        failures.append("BINANCE_WS_OI_VM_ACCEPTANCE_PENDING")
 
     requirements_path = root / "requirements-runtime.txt"
     requirements = (

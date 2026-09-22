@@ -49,6 +49,13 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "experiment_tier": "EXPLORATORY_LEARNING",
             "current_price": 100.0, "target_price": 100.3, "risk_cap_pct": 10.0,
             "stop_reference_pct": 2.0, "risk_per_trade_pct": 0.75,
+            "risk_policy_limits": {
+                "max_total_exposure_pct": 60.0,
+                "max_alt_exposure_pct": 25.0,
+                "max_single_position_pct": 10.0,
+                "daily_loss_limit_pct": 2.0,
+                "max_new_positions": 3,
+            },
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
@@ -253,6 +260,14 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "stop_reference_pct": 5.0, "risk_cap_pct": 100.0, "risk_per_trade_pct": 0.5,
             "evidence_sha256": "8" * 64,
         })
+        # This test isolates stop-distance sizing, not portfolio/alt caps.
+        for candidate in (tight, wide):
+            candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+            candidate["risk_policy_limits"].update({
+                "max_total_exposure_pct": 100.0,
+                "max_alt_exposure_pct": 100.0,
+                "max_new_positions": 2,
+            })
         # Remove the exploratory base-margin ceiling so this test isolates
         # stop-distance risk sizing rather than conviction sizing.
         fake_tier = SimpleNamespace(
@@ -272,6 +287,79 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 50.0, places=6)
+
+    def test_global_risk_max_new_positions_overrides_agent_constant(self):
+        rows = []
+        for index, symbol in enumerate(("AAAUSDT", "BBBUSDT", "CCCUSDT"), start=1):
+            candidate = self.candidate()
+            candidate.update({
+                "decision_id": 200 + index, "symbol": symbol,
+                "evidence_sha256": f"{index}" * 64,
+            })
+            candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+            candidate["risk_policy_limits"]["max_new_positions"] = 2
+            rows.append(candidate)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": rows, "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 2)
+        self.assertEqual(
+            self.con.execute(
+                "SELECT COUNT(*) FROM paper_agent_positions WHERE status='PENDING_ENTRY'"
+            ).fetchone()[0], 2
+        )
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertEqual(reasons.get("GLOBAL_RISK_MAX_NEW_POSITIONS_REACHED"), 1)
+
+    def test_global_total_and_alt_exposure_caps_are_authoritative(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 210, "symbol": "ALTUSDT",
+            "risk_cap_pct": 100.0, "evidence_sha256": "f" * 64,
+        })
+        candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+        candidate["risk_policy_limits"].update({
+            "max_total_exposure_pct": 40.0,
+            "max_alt_exposure_pct": 0.4,
+            "max_new_positions": 2,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        notional = self.con.execute(
+            "SELECT notional FROM paper_agent_positions WHERE symbol='ALTUSDT'"
+        ).fetchone()[0]
+        self.assertLessEqual(notional, 40.0 + 1e-9)
+
+    def test_daily_loss_limit_blocks_new_paper_selection(self):
+        self.con.execute("""INSERT INTO paper_agent_positions(
+            forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
+            status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
+            p_up,p_down,target_price,model_version,artifact_hash,selection_reason,
+            market_type,validation_cohort,evidence_eligible,strategy_id,decision_source,
+            decision_reference_id,leverage,margin_allocated,risk_tier,
+            independent_signal_count,signal_sources_json,exit_time,net_pnl
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            -300,"test","test","LOSSUSDT",1,"LONG","CLOSED",
+            NOW.isoformat(),NOW.isoformat(),NOW.isoformat(),NOW.isoformat(),
+            100,.6,.6,.4,100,"test","0"*64,"test","USD_M_PERPETUAL",
+            agent.FORWARD_COHORT,1,"test","MARKET_BEHAVIOR_CORE",300,1,100,
+            "TEST",1,"[]",NOW.isoformat(),-250.0,
+        ))
+        candidate = self.candidate()
+        candidate["risk_policy_limits"] = dict(candidate["risk_policy_limits"])
+        candidate["risk_policy_limits"]["daily_loss_limit_pct"] = 2.0
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 0)
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs"
+        ).fetchone()[0])
+        self.assertIn("DAILY_LOSS_LIMIT_REACHED", reasons)
 
     def test_full_portfolio_still_exports_ranked_opportunity_telemetry(self):
         for index in range(agent.MAX_OPEN_POSITIONS):
@@ -443,6 +531,114 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0],
             "OPEN",
+        )
+
+    def test_live_usdm_pending_entry_reaches_simulated_fill_and_opens(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 12,
+            "symbol": "BTCUSDT",
+            "instrument": "BTCUSDT",
+            "market_type": "USD_M_PERPETUAL",
+            "evidence_sha256": "a" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW,
+                    exchange_metadata={"USD_M_PERPETUAL": object()},
+                ),
+                1,
+            )
+        ms = int(NOW.timestamp() * 1000)
+        live = SimpleNamespace(
+            symbol="BTCUSDT", market_type="USD_M_PERPETUAL",
+            market_timestamp_ms=ms, last_price=100.0,
+            visible_quote_volume=1_000_000.0,
+            best_bid=99.9, best_ask=100.1,
+            book_imbalance=0.1, taker_imbalance=0.1,
+            ask_quote_volume=500_000.0, bid_quote_volume=500_000.0,
+            quote_timestamp_ms=ms, liquidity_timestamp_ms=ms,
+            quote_source="TEST_BINANCE_USDM_BOOK",
+        )
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW, live,
+            exchange_metadata={"USD_M_PERPETUAL": object()},
+        )
+        self.assertEqual((filled, cancelled), (1, 0))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,market_type FROM paper_agent_positions"
+            ).fetchone(),
+            ("OPEN", "USD_M_PERPETUAL"),
+        )
+
+    def test_startup_cleanup_cancels_expired_pending_before_stream(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 14,
+            "symbol": "BTCUSDT",
+            "instrument": "BTCUSDT",
+            "market_type": "USD_M_PERPETUAL",
+            "evidence_sha256": "c" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW,
+                    exchange_metadata={"USD_M_PERPETUAL": object()},
+                ),
+                1,
+            )
+        self.assertEqual(
+            agent.cancel_expired_pending_entries(
+                self.con, NOW + timedelta(minutes=11)
+            ),
+            1,
+        )
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,cancel_reason FROM paper_agent_positions"
+            ).fetchone(),
+            ("CANCELLED", "EXACT_USD_M_PERPETUAL_ENTRY_CAPTURE_EXPIRED"),
+        )
+
+    def test_live_recovery_cancels_expired_pending_instead_of_late_fill(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 13,
+            "symbol": "BTCUSDT",
+            "instrument": "BTCUSDT",
+            "market_type": "USD_M_PERPETUAL",
+            "evidence_sha256": "b" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW,
+                    exchange_metadata={"USD_M_PERPETUAL": object()},
+                ),
+                1,
+            )
+        live = SimpleNamespace(
+            symbol="BTCUSDT", market_type="USD_M_PERPETUAL",
+        )
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW + timedelta(minutes=11), live,
+            exchange_metadata={"USD_M_PERPETUAL": object()},
+        )
+        self.assertEqual((filled, cancelled), (0, 1))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,cancel_reason FROM paper_agent_positions"
+            ).fetchone(),
+            ("CANCELLED", "EXACT_USD_M_PERPETUAL_ENTRY_CAPTURE_EXPIRED"),
         )
 
     def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):

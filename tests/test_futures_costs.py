@@ -38,6 +38,10 @@ class FuturesCostsTests(unittest.TestCase):
                 database_url="postgres://example", symbol="BTCUSDT", start=start, end=end,
             )
         self.assertEqual(len(events), 1)
+        connect_kwargs = fake_psycopg.connect.call_args.kwargs
+        self.assertEqual(connect_kwargs["connect_timeout"], 20)
+        self.assertEqual(connect_kwargs["tcp_user_timeout"], 20000)
+        self.assertIn("statement_timeout=20000", connect_kwargs["options"])
         _, parameters = cursor.execute.call_args.args
         self.assertTrue(parameters[0].startswith(FUNDING_ENDPOINT + "?"))
         self.assertNotIn("postgres://example", parameters[0])

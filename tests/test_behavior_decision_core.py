@@ -38,7 +38,10 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             );
             CREATE TABLE risk_policy_snapshots(
                 id INTEGER PRIMARY KEY,created_at TEXT,
-                new_positions_allowed INTEGER,risk_per_trade_pct REAL
+                new_positions_allowed INTEGER,risk_per_trade_pct REAL,
+                max_total_exposure_pct REAL,max_alt_exposure_pct REAL,
+                max_single_position_pct REAL,daily_loss_limit_pct REAL,
+                max_new_positions INTEGER
             );
             CREATE TABLE asset_risk_snapshots(
                 policy_snapshot_id INTEGER,symbol TEXT,new_position_allowed INTEGER,
@@ -49,7 +52,9 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 decision_source TEXT,status TEXT,evidence_eligible INTEGER,
                 net_pnl REAL,notional REAL,exit_time TEXT,direction TEXT
             );
-            INSERT INTO risk_policy_snapshots VALUES(1,'2026-09-04T12:00:00+00:00',1,0.75);
+            INSERT INTO risk_policy_snapshots VALUES(
+                1,'2026-09-04T12:00:00+00:00',1,0.75,60,25,10,2,3
+            );
             INSERT INTO asset_risk_snapshots VALUES(
                 1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00'
             );
@@ -61,7 +66,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             self.con.execute(
                 "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (int(stamp.timestamp() * 1000), f"event:{index}",
-                 "BTC-USDT-SWAP", "NEWS", 240, 1.0, .3, .4, 1.0,
+                 "BTCUSDT", "NEWS", 240, 1.0, .3, .4, 1.0,
                  (stamp + timedelta(hours=4)).isoformat(), f"history:{index}"),
             )
 
@@ -69,7 +74,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
         self.con.execute(
             "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("BTC-USDT-SWAP", minute, 1, .25, .35, 1.0, 100.0, 1_000_000,
+            ("BTCUSDT", minute, 1, .25, .35, 1.0, 100.0, 1_000_000,
              25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
         )
         self.con.execute(
@@ -91,6 +96,39 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertTrue(pattern["exploration_eligible"])
         self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
+
+    def test_legacy_okx_instrument_not_actionable_on_binance(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE market_behavior_minute_features SET instrument='BTC-USDT-SWAP'"
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+
+    def test_stale_global_risk_snapshot_blocks_new_paper_entry(self):
+        self.add_history(days=1)
+        self.add_current()
+        stale = NOW - timedelta(minutes=31)
+        self.con.execute("UPDATE risk_policy_snapshots SET created_at=?",
+                         (stale.isoformat(),))
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["status"], "NO_ACTIONABLE_PATTERN")
+
+    def test_future_or_stale_asset_risk_cannot_size_paper_entry(self):
+        self.add_history(days=1)
+        self.add_current()
+        for at in (NOW - timedelta(hours=3), NOW + timedelta(minutes=2)):
+            with self.subTest(at=at):
+                self.con.execute("UPDATE asset_risk_snapshots SET as_of=?",
+                                 (at.isoformat(),))
+                self.assertEqual(core.evaluate(self.con, NOW)["candidates"], [])
+
+    def test_current_asset_risk_and_policy_remain_eligible(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.assertTrue(core.evaluate(self.con, NOW)["candidates"])
 
     def test_zero_trade_risk_policy_fails_closed(self):
         self.add_history(days=1)
@@ -147,6 +185,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(candidate["direction"], "LONG")
         self.assertEqual(candidate["experiment_tier"], "EXPLORATORY_LEARNING")
         self.assertEqual(candidate["decision_source"], "MARKET_BEHAVIOR_CORE")
+        self.assertEqual(candidate["market_type"], "USD_M_PERPETUAL")
         self.assertFalse(candidate["evidence"]["unified_forecast_used"])
         self.assertTrue(
             candidate["evidence"]["learned_pattern"]["observational_promotion_ready"]
@@ -210,7 +249,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         newer = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
         self.con.execute(
             "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("BTC-USDT-SWAP", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
+            ("BTCUSDT", newer, 1, .25, .35, 1.0, 100.0, 1_000_000,
              25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
         )
         result = core.evaluate(self.con, NOW)
@@ -273,7 +312,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
         self.con.execute(
             "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (minute, "news:1", "BTC-USDT-SWAP", "NEWS", 240, 1.0,
+            (minute, "news:1", "BTCUSDT", "NEWS", 240, 1.0,
              .25, .35, 1.0, (NOW + timedelta(hours=4)).isoformat(), "news:1"),
         )
         self.assertEqual(core.settle_missed_opportunities(self.con), 1)

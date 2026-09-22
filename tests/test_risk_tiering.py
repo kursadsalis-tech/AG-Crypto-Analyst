@@ -45,6 +45,18 @@ class RiskTieringTests(unittest.TestCase):
         self.assertEqual(tier.independent_signal_count, 2)
         self.assertEqual(tier.leverage, 1.0)
 
+    def test_explicit_binance_usdm_long_stays_on_same_market_even_at_one_x(self):
+        candidate = self.candidate()
+        candidate["market_type"] = "USD_M_PERPETUAL"
+        tier = tier_for(candidate)
+        self.assertEqual((tier.leverage, tier.market_type), (1.0, "USD_M_PERPETUAL"))
+
+    def test_invalid_explicit_market_fails_closed(self):
+        candidate = self.candidate()
+        candidate["market_type"] = "OTHER"
+        with self.assertRaisesRegex(ValueError, "UNSUPPORTED_CANDIDATE_MARKET_TYPE"):
+            tier_for(candidate)
+
     def test_single_source_short_stays_one_x_perpetual(self):
         candidate = self.candidate()
         candidate["direction"] = "SHORT"
