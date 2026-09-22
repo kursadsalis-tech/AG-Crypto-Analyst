@@ -1837,7 +1837,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
     """, (live.symbol, live.market_type)).fetchall()
     filled = cancelled = 0
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type) in rows:
+         market_type, thesis_json) in rows:
         planned = parse_time(planned_entry_time)
         if now < planned:
             continue
@@ -1855,17 +1855,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
                 (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
             cancelled += 1
             continue
-        result = execution_market_data.capture_live_reference(
-            con, position_id=position_id, symbol=symbol, purpose="ENTRY",
-            live=live, observed_at=now,
-        )
-        if result is None:
-            continue
-        entry_time, reference_price, _audit_quote_volume = result
         side = "BUY" if direction == "LONG" else "SELL"
-        # The last trade/reference price above is audit context only. A PAPER
-        # entry must execute from the fresh side of the live quote and only the
-        # visible liquidity on that same side (BUY=ask, SELL=bid).
         executable_price = live.best_ask if side == "BUY" else live.best_bid
         side_quote_volume = (
             live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
@@ -1894,6 +1884,16 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
                 # observation window. Price must come to the technical entry
                 # zone; the agent does not chase the market.
                 continue
+        # Persist the entry reference only after the current executable side
+        # has entered the frozen technical zone. Out-of-zone quotes are not
+        # entry evidence.
+        result = execution_market_data.capture_live_reference(
+            con, position_id=position_id, symbol=symbol, purpose="ENTRY",
+            live=live, observed_at=now,
+        )
+        if result is None:
+            continue
+        entry_time, reference_price, _audit_quote_volume = result
         fill = simulated_fill(
             reference_price=float(executable_price) if executable_price is not None else 0.0,
             requested_notional=float(notional), side=side,
