@@ -39,6 +39,7 @@ from paper_trading import behavior_decision_core
 from paper_trading import execution_market_data
 from paper_trading import position_management
 from paper_trading import risk_tiering
+from analysis import realtime_technical_context
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -1190,6 +1191,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
+            row["technical_context"] = realtime_technical_context.load_latest(
+                con, row["symbol"], now=now
+            )
             row["execution_risk"] = {
                 "risk_tier": tier.tier, "leverage": tier.leverage,
                 "margin_allocated": notional / tier.leverage,

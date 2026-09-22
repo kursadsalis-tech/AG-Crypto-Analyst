@@ -96,6 +96,56 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
 
+    def test_shadow_technical_context_is_frozen_but_not_a_decision_input(self):
+        context = {
+            "version": agent.realtime_technical_context.VERSION,
+            "symbol": "BTCUSDT",
+            "generated_at": (NOW - timedelta(minutes=5)).isoformat(),
+            "as_of": (NOW - timedelta(hours=1)).isoformat(),
+            "market_scope": "TEST",
+            "observation_only": True,
+            "real_order_allowed": False,
+            "timeframes": ["1h", "4h"],
+            "advanced_1h": {"rsi14": 0.2},
+            "structure_4h": {"trend": "BULLISH"},
+            "summary": {"alignment": "ALIGNED_BULLISH"},
+            "authority": {
+                "direction_input": False,
+                "ranking_input": False,
+                "confidence_input": False,
+                "sizing_input": False,
+                "stop_input": False,
+                "purpose": "FORWARD_OBSERVATION_AND_LATER_CHALLENGER_EVIDENCE",
+            },
+        }
+        agent.realtime_technical_context.save_latest(self.con, context, 0.5)
+        self.con.commit()
+        candidate = self.candidate()
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+
+        artifact_hash = self.con.execute(
+            "SELECT artifact_hash FROM paper_agent_positions"
+        ).fetchone()[0]
+        self.assertEqual(artifact_hash, candidate["evidence_sha256"])
+        thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        self.assertEqual(
+            thesis["technical_context_observed"]["summary"]["alignment"],
+            "ALIGNED_BULLISH",
+        )
+        self.assertIn(
+            "TECHNICAL_CONTEXT_SHADOW",
+            thesis["capabilities_observed_but_not_decision_inputs"],
+        )
+        self.assertNotIn(
+            "TECHNICAL_CONTEXT_SHADOW",
+            thesis["capabilities_under_test"],
+        )
+
     def test_missing_stop_reference_is_rejected_before_position_write(self):
         candidate = self.candidate()
         candidate.pop("stop_reference_pct")

@@ -20,6 +20,7 @@ from data.truth_engine import (
     fetch_and_validate_btc_anchor,
     validate_closed_klines,
 )
+from analysis import realtime_technical_context
 
 
 DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
@@ -496,6 +497,7 @@ def build_global_policy(assets, source_errors, created_at=None):
 
 
 def ensure_tables(con):
+    realtime_technical_context.ensure_table(con)
     con.execute("""
         CREATE TABLE IF NOT EXISTS risk_policy_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -545,7 +547,7 @@ def ensure_tables(con):
     con.commit()
 
 
-def save_snapshot(con, policy, assets, source_errors):
+def save_snapshot(con, policy, assets, source_errors, technical_contexts=None):
     detail = dict(policy)
     detail["assets"] = assets
     detail["source_errors"] = source_errors
@@ -602,6 +604,8 @@ def save_snapshot(con, policy, assets, source_errors):
             json.dumps(asset["risk_reasons"], ensure_ascii=False),
             policy["created_at"],
         ))
+    for context, compute_ms in (technical_contexts or []):
+        realtime_technical_context.save_latest(con, context, compute_ms)
     con.commit()
     return snapshot_id
 
@@ -658,6 +662,9 @@ def main():
     created_at = iso(utcnow())
     assets = []
     source_errors = {}
+    technical_contexts = []
+    technical_context_errors = {}
+    technical_compute_ms = 0.0
     con = runtime_connect(DB_NAME)
     try:
         dynamic_symbols = behavior_risk_symbols(con)
@@ -682,6 +689,24 @@ def main():
             )
             metrics = candle_metrics(symbol, candles)
             assets.append(classify_asset_risk(metrics))
+            tech_started = time.perf_counter()
+            try:
+                market_scope = (
+                    "DYNAMIC_DERIVATIVES"
+                    if symbol in dynamic_symbols and symbol not in SYMBOLS
+                    else "REFERENCE_SPOT"
+                )
+                technical = realtime_technical_context.build(
+                    candles, symbol=symbol, generated_at=utcnow(),
+                    market_scope=market_scope,
+                )
+                elapsed_ms = (time.perf_counter() - tech_started) * 1000.0
+                technical_compute_ms += elapsed_ms
+                technical_contexts.append((technical, elapsed_ms))
+            except Exception as tech_exc:
+                technical_context_errors[symbol] = (
+                    f"{type(tech_exc).__name__}:{tech_exc}"
+                )
         except Exception as exc:
             source_errors[symbol] = str(exc)
 
@@ -689,7 +714,9 @@ def main():
     con = runtime_connect(DB_NAME)
     try:
         ensure_tables(con)
-        snapshot_id = save_snapshot(con, policy, assets, source_errors)
+        snapshot_id = save_snapshot(
+            con, policy, assets, source_errors, technical_contexts
+        )
     finally:
         con.close()
 
@@ -700,6 +727,10 @@ def main():
         "assets": assets,
         "source_errors": source_errors,
         "requested_symbols": requested_symbols,
+        "technical_context_count": len(technical_contexts),
+        "technical_context_compute_ms": round(technical_compute_ms, 3),
+        "technical_context_errors": technical_context_errors,
+        "technical_context_authority": "OBSERVATION_ONLY",
     })
     return result
 
