@@ -124,15 +124,23 @@ def behavior_risk_symbols(con, now=None):
     if not con.execute("""SELECT 1 FROM sqlite_master
         WHERE type='table' AND name='market_behavior_minute_features'""").fetchone():
         return ()
+    columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(market_behavior_minute_features)"
+    )}
+    if "market_data_provider" not in columns:
+        return ()
     latest = con.execute("""SELECT MAX(minute_end_timestamp_ms)
-        FROM market_behavior_minute_features WHERE eligible_for_learning=1""").fetchone()[0]
+        FROM market_behavior_minute_features
+        WHERE market_data_provider='BINANCE'
+          AND eligible_for_learning=1""").fetchone()[0]
     if latest is None or now.timestamp() * 1000 - int(latest) > (
         BEHAVIOR_UNIVERSE_MAX_AGE_SECONDS * 1000
     ):
         return ()
     instruments = con.execute("""SELECT DISTINCT instrument
         FROM market_behavior_minute_features
-        WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1
+        WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
+          AND eligible_for_learning=1
         ORDER BY instrument""", (latest,)).fetchall()
     symbols = []
     for (instrument,) in instruments:
