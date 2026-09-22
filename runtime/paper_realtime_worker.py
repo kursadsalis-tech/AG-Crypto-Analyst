@@ -183,14 +183,24 @@ def subscription_symbols(con):
         """SELECT symbol,market_type FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN') ORDER BY symbol,market_type"""
     ).fetchall()}
-    latest = con.execute(
-        "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
-    ).fetchone()[0]
+    feature_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(market_behavior_minute_features)"
+    )}
+    latest = (
+        con.execute(
+            """SELECT MAX(minute_end_timestamp_ms)
+               FROM market_behavior_minute_features
+               WHERE market_data_provider='BINANCE'
+                 AND eligible_for_learning=1"""
+        ).fetchone()[0]
+        if "market_data_provider" in feature_columns else None
+    )
     monitored = set()
     if latest is not None:
         for (instrument,) in con.execute(
             """SELECT DISTINCT instrument FROM market_behavior_minute_features
-            WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
+            WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
+              AND eligible_for_learning=1""",
             (latest,),
         ).fetchall():
             symbol = str(instrument).replace(
