@@ -16,6 +16,11 @@ class ObserverServiceContractTests(unittest.TestCase):
         self.assertNotIn("systemctl enable", service)
         self.assertNotIn("may_send_real_orders", service)
 
+    def test_behavior_observer_is_bound_to_canonical_binance_source(self):
+        service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text()
+        self.assertIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3", service)
+        self.assertNotIn("AGCA_OKX_REQUEST_TIMEOUT_SECONDS", service)
+
     def test_observer_timers_are_not_installed_by_repository_files(self):
         macro = (ROOT / "deploy/agca-exact-macro-observer.timer").read_text()
         behavior = (ROOT / "deploy/agca-market-behavior-observer.timer").read_text()
