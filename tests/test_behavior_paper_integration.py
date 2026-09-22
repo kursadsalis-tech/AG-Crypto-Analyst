@@ -360,10 +360,40 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT symbol,notional FROM paper_agent_positions"
         ).fetchall())
         self.assertGreater(notionals["TIGHTSIZEUSDT"], notionals["WIDESIZEUSDT"])
-        tight_risk = notionals["TIGHTSIZEUSDT"] * (0.01 + 2 * agent.FEE_RATE)
-        wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * agent.FEE_RATE)
+        fee_rate = agent.taker_fee_rate("SPOT")
+        tight_risk = notionals["TIGHTSIZEUSDT"] * (0.01 + 2 * fee_rate)
+        wide_risk = notionals["WIDESIZEUSDT"] * (0.05 + 2 * fee_rate)
         self.assertAlmostEqual(tight_risk, wide_risk, places=6)
         self.assertAlmostEqual(tight_risk, 50.0, places=6)
+
+    def test_selection_uses_same_venue_fee_contract_as_execution(self):
+        candidate = self.candidate()
+        fake_tier = SimpleNamespace(
+            margin_fraction=1.0, leverage=1.0, market_type="SPOT",
+            tier="TEST", independent_signal_count=1, signal_sources=("TEST",),
+        )
+        with patch.dict("os.environ", {
+            "AGCA_PAPER_SPOT_TAKER_FEE_BPS": "20",
+        }, clear=False), patch.object(
+            agent.behavior_decision_core, "evaluate",
+            return_value={"status": "ACTIONABLE", "candidates": [candidate], "review": {}},
+        ), patch.object(agent.risk_tiering, "tier_for", return_value=fake_tier):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        row = self.con.execute(
+            "SELECT notional,selection_reason FROM paper_agent_positions"
+        ).fetchone()
+        expected = 75.0 / (0.02 + 2 * 0.002)
+        self.assertAlmostEqual(float(row[0]), expected, places=6)
+        self.assertIn("taker_fee_bps=20.000", row[1])
+        thesis = json.loads(self.con.execute(
+            "SELECT risk_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        self.assertAlmostEqual(thesis["taker_fee_rate"], 0.002)
+        self.assertAlmostEqual(
+            thesis["planned_stop_and_fee_risk_usdt"],
+            float(row[0]) * (0.02 + 2 * 0.002),
+            places=6,
+        )
 
     def test_full_portfolio_still_exports_ranked_opportunity_telemetry(self):
         for index in range(agent.MAX_OPEN_POSITIONS):
