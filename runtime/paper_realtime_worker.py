@@ -537,25 +537,29 @@ async def run():
 
     def learning_once():
         """Run non-authoritative learning off the execution path."""
-        db = worker_connect()
+        db = None
         try:
+            db = worker_connect()
             trade_learning.run(db, FORWARD_COHORT, now())
             strategy_allocator.rebalance(db, now())
             return None
         except sqlite3.OperationalError as exc:
-            try:
-                db.rollback()
-            except Exception:
-                pass
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             return f"LEARNING_SQLITE_{str(exc).upper().replace(' ', '_')}"
         except Exception as exc:
-            try:
-                db.rollback()
-            except Exception:
-                pass
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             return f"LEARNING_{type(exc).__name__}"
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def process_state_guarded(state, observed_ms):
         try:
