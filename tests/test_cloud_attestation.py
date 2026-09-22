@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from runtime import cloud_attestation
 
@@ -41,12 +41,15 @@ class CloudAttestationTests(unittest.TestCase):
                 "paper_agent": {"status": "SUCCESS"},
             },
         }
-        with patch.dict(os.environ, {"AGCA_EXECUTION_MODE": "PAPER_ONLY"}):
+        source = {"git_sha": "a" * 40, "git_dirty": False}
+        with patch.dict(os.environ, {"AGCA_EXECUTION_MODE": "PAPER_ONLY"}), \
+                patch.object(cloud_attestation, "runtime_source_state", return_value=source):
             payload, encoded, digest = cloud_attestation.build(
                 self.con, "HEALTHY", results, now
             )
         self.assertEqual(payload["execution_mode"], "PAPER_ONLY")
         self.assertFalse(payload["may_send_real_orders"])
+        self.assertEqual(payload["runtime_source"], source)
         self.assertEqual(payload["sqlite_quick_check"], "ok")
         self.assertEqual(payload["positions"]["open"], 1)
         self.assertEqual(payload["attestation_version"], "AGCA_RUNTIME_ATTESTATION_V3_REALTIME_PAPER")
@@ -54,6 +57,18 @@ class CloudAttestationTests(unittest.TestCase):
         self.assertNotIn("product_cycle_status", payload)
         self.assertEqual(hashlib.sha256(encoded.encode()).hexdigest(), digest)
         self.assertEqual(json.loads(encoded), payload)
+
+    def test_runtime_source_state_reports_commit_and_dirty_checkout(self):
+        clean = Mock(
+            returncode=0, stdout="b" * 40 + "\n", stderr=""
+        )
+        dirty = Mock(
+            returncode=0, stdout=" M paper_trading/risk_tiering.py\n", stderr=""
+        )
+        with patch.object(cloud_attestation.subprocess, "run", side_effect=[clean, dirty]):
+            state = cloud_attestation.runtime_source_state("/tmp/repo")
+        self.assertEqual(state["git_sha"], "b" * 40)
+        self.assertTrue(state["git_dirty"])
 
     def test_non_paper_mode_fails_closed(self):
         with patch.dict(os.environ, {"AGCA_EXECUTION_MODE": "LIVE"}):

@@ -22,6 +22,33 @@ EXACT_MACRO_HEALTH_VERSION = "AGCA_EXACT_MACRO_OBSERVER_HEALTH_V1"
 SQLITE_INTEGRITY_CACHE_VERSION = "AGCA_SQLITE_INTEGRITY_CACHE_V1"
 
 
+def runtime_source_state(repo_path=None):
+    """Best-effort identity of the exact git checkout used by the cloud runtime."""
+    root = Path(
+        repo_path
+        or os.getenv("AGCA_RUNTIME_SOURCE_DIR", "")
+        or Path(__file__).resolve().parents[1]
+    )
+    base = {"git_sha": None, "git_dirty": None}
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            check=False, capture_output=True, text=True, timeout=2,
+        )
+        if sha.returncode != 0 or dirty.returncode != 0:
+            return base
+        value = sha.stdout.strip()
+        if len(value) != 40 or any(ch not in string.hexdigits for ch in value):
+            return base
+        return {"git_sha": value.lower(), "git_dirty": bool(dirty.stdout.strip())}
+    except (OSError, subprocess.SubprocessError):
+        return base
+
+
 def paper_realtime_health(now=None, path=None, open_positions=0):
     now = now or datetime.now(timezone.utc)
     path = Path(path or os.getenv(
@@ -256,6 +283,7 @@ def build(
         "worker_status": worker_status,
         "execution_mode": mode,
         "may_send_real_orders": bool(authority["may_send_real_orders"]),
+        "runtime_source": runtime_source_state(),
         "sqlite_quick_check": str(integrity),
         "sqlite_integrity_evidence": integrity_evidence,
         "validation_cohort": str(portfolio[4]),

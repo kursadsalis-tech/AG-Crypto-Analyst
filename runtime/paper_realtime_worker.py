@@ -145,6 +145,40 @@ def write_market_state(states):
         pass
 
 
+def subscription_symbols(con):
+    """Return every market route the canonical realtime worker must currently observe.
+
+    Pending entries are execution obligations, not optional telemetry.  In
+    particular a 1x LONG may be routed to SPOT while its originating behavior
+    evidence came from a USD-M swap.  Excluding PENDING_ENTRY would therefore
+    strand the selected SPOT order and silently bias the runtime back toward
+    derivatives.
+    """
+    active = {tuple(row) for row in con.execute(
+        """SELECT symbol,market_type FROM paper_agent_positions
+        WHERE status IN ('PENDING_ENTRY','OPEN') ORDER BY symbol,market_type"""
+    ).fetchall()}
+    latest = con.execute(
+        "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
+    ).fetchone()[0]
+    monitored = set()
+    if latest is not None:
+        for (instrument,) in con.execute(
+            """SELECT DISTINCT instrument FROM market_behavior_minute_features
+            WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
+            (latest,),
+        ).fetchall():
+            symbol = str(instrument).replace(
+                "-USDT-SWAP", "USDT"
+            ).replace("-", "")
+            market_type = (
+                "USD_M_PERPETUAL"
+                if str(instrument).endswith("-SWAP") else "SPOT"
+            )
+            monitored.add((symbol, market_type))
+    return tuple(sorted(active | monitored))
+
+
 async def run():
     validate_agent_authority(
         execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
@@ -251,29 +285,7 @@ async def run():
 
     def load_symbols(db):
         position_management.initialize_open_positions(db, now())
-        active = {tuple(row) for row in db.execute(
-            """SELECT symbol,market_type FROM paper_agent_positions
-            WHERE status='OPEN' ORDER BY symbol"""
-        ).fetchall()}
-        latest = db.execute(
-            "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
-        ).fetchone()[0]
-        monitored = set()
-        if latest is not None:
-            for (instrument,) in db.execute(
-                """SELECT DISTINCT instrument FROM market_behavior_minute_features
-                WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
-                (latest,),
-            ).fetchall():
-                symbol = str(instrument).replace(
-                    "-USDT-SWAP", "USDT"
-                ).replace("-", "")
-                market_type = (
-                    "USD_M_PERPETUAL"
-                    if str(instrument).endswith("-SWAP") else "SPOT"
-                )
-                monitored.add((symbol, market_type))
-        return tuple(sorted(active | monitored))
+        return subscription_symbols(db)
 
     def symbols():
         # Pure in-memory hot-path read. No SQLite work is allowed here because
