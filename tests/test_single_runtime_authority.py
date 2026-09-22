@@ -29,6 +29,19 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
                 offenders.extend(f"{path.relative_to(ROOT)}:{token}" for token in forbidden if token in text)
         self.assertEqual(offenders,[])
 
+    def test_cloud_installer_reexecs_from_refreshed_checkout(self):
+        text=(ROOT/"deploy/install_gce_free_worker.sh").read_text(encoding="utf-8")
+        self.assertIn('if [[ "${AGCA_DEPLOY_REEXEC:-0}" != "1" ]]', text)
+        self.assertIn('git pull --ff-only origin main', text)
+        self.assertIn(
+            'exec env AGCA_DEPLOY_REEXEC=1 bash "$DEPLOY/deploy/install_gce_free_worker.sh"',
+            text,
+        )
+        self.assertLess(
+            text.index('exec env AGCA_DEPLOY_REEXEC=1'),
+            text.index('canonical_units=('),
+        )
+
     def test_pending_spot_entry_is_part_of_realtime_subscription_universe(self):
         con = sqlite3.connect(":memory:")
         try:
