@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from paper_trading import crypto_profit_agent as agent
 from paper_trading.execution_contract import MarketSnapshot, ExecutionRules
+from paper_trading.realtime_market import LiveState
 
 
 def quote(at, price=100, market_type="USD_M_PERPETUAL"):
@@ -52,6 +53,50 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
+    def technical_plan(self, *, relation="SUPPORTS_DIRECTION", quality=1.10):
+        return {
+            "version": "TECHNICAL_TRADE_PLAN_V1_MULTISKILL",
+            "symbol": "BTCUSDT",
+            "direction": "LONG",
+            "market_type": "SPOT",
+            "generated_at": NOW.isoformat(),
+            "source": "BINANCE_CANONICAL",
+            "timeframes_used": ["1m", "5m", "15m", "1h", "4h"],
+            "technical_score": 0.50 if quality >= 1 else -0.50,
+            "relation_to_behavior_direction": relation,
+            "quality_multiplier": quality,
+            "entry": {
+                "low": 99.7, "high": 100.1, "anchor": 99.9,
+                "basis": "TEST",
+            },
+            "risk": {
+                "invalidation_price": 98.5,
+                "stop_distance_pct": 1.6,
+                "risk_compatible": True,
+                "maximum_policy_stop_pct": 5.0,
+                "basis": "TEST",
+            },
+            "targets": {
+                "tp1_price": 101.2,
+                "tp2_price": 103.4,
+                "tp1_reward_pct": 1.3,
+                "tp2_reward_pct": 3.5,
+                "basis": "TEST",
+            },
+            "frames": {},
+            "higher_context": {"trend_1h": "BULLISH", "trend_4h": "BULLISH"},
+            "authority": {
+                "direction_override": False,
+                "ranking_input": True,
+                "sizing_input": True,
+                "entry_input": True,
+                "stop_input": True,
+                "take_profit_input": True,
+                "single_indicator_hard_veto": False,
+            },
+            "real_order_allowed": False,
+        }
+
     def fingerprinted_candidate(self, decision_id, current_price=100.0):
         candidate = self.candidate()
         candidate["decision_id"] = decision_id
@@ -95,6 +140,91 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
         ).fetchone()
         self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
+
+    def test_canonical_realtime_selection_uses_multiskill_technical_plan(self):
+        candidate = self.candidate()
+        plan = self.technical_plan()
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }), patch.object(
+            agent.technical_trade_plan, "build_for_candidate", return_value=plan
+        ):
+            selected = agent.select_new_positions(
+                self.con, NOW, self.metadata, technical_planning=True
+            )
+        self.assertEqual(selected, 1)
+        notional, target = self.con.execute(
+            "SELECT notional,target_price FROM paper_agent_positions"
+        ).fetchone()
+        self.assertAlmostEqual(notional, 55.0)
+        self.assertAlmostEqual(target, 103.4)
+        thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        self.assertEqual(
+            thesis["technical_trade_plan"]["timeframes_used"],
+            ["1m", "5m", "15m", "1h", "4h"],
+        )
+        self.assertEqual(
+            thesis["execution_risk"]["stop_basis"],
+            "MULTITIMEFRAME_TECHNICAL_STRUCTURE",
+        )
+        self.assertAlmostEqual(
+            thesis["execution_risk"]["planned_stop_price"], 98.5
+        )
+        self.assertIn(
+            "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            thesis["capabilities_under_test"],
+        )
+
+    def test_pending_entry_waits_for_frozen_technical_entry_zone(self):
+        candidate = self.candidate()
+        plan = self.technical_plan(quality=1.0)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }), patch.object(
+            agent.technical_trade_plan, "build_for_candidate", return_value=plan
+        ):
+            self.assertEqual(
+                agent.select_new_positions(
+                    self.con, NOW, self.metadata, technical_planning=True
+                ),
+                1,
+            )
+
+        def live(price, seconds):
+            at = NOW + timedelta(seconds=seconds)
+            ms = int(at.timestamp() * 1000)
+            return LiveState(
+                "BTCUSDT", market_type="SPOT", last_price=price,
+                best_bid=price - 0.01, best_ask=price + 0.01,
+                visible_quote_volume=1_000_000,
+                bid_quote_volume=1_000_000, ask_quote_volume=1_000_000,
+                quote_source="TEST_BINANCE",
+                market_timestamp_ms=ms, quote_timestamp_ms=ms,
+                liquidity_timestamp_ms=ms,
+            )
+
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW + timedelta(seconds=1), live(101.0, 1), self.metadata
+        )
+        self.assertEqual((filled, cancelled), (0, 0))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status FROM paper_agent_positions"
+            ).fetchone()[0],
+            "PENDING_ENTRY",
+        )
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, NOW + timedelta(seconds=2), live(100.0, 2), self.metadata
+        )
+        self.assertEqual((filled, cancelled), (1, 0))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status FROM paper_agent_positions"
+            ).fetchone()[0],
+            "OPEN",
+        )
 
     def test_shadow_technical_context_is_frozen_but_not_a_decision_input(self):
         context = {
