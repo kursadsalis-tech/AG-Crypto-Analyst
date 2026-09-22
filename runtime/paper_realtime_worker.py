@@ -16,8 +16,8 @@ from pathlib import Path
 
 from database.runtime_store import connect
 from paper_trading.crypto_profit_agent import (
-    DB_NAME, FORWARD_COHORT, ensure_tables, fill_pending_from_live_state,
-    select_new_positions,
+    DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
+    fill_pending_from_live_state, select_new_positions,
 )
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
@@ -310,7 +310,9 @@ async def run():
         loop.add_signal_handler(name, stop_event.set)
 
     def load_symbols(db):
-        position_management.initialize_open_positions(db, now())
+        observed_at = now()
+        cancel_expired_pending_entries(db, observed_at)
+        position_management.initialize_open_positions(db, observed_at)
         return subscription_symbols(db)
 
     def symbols():
