@@ -191,6 +191,9 @@ async def run():
     universe_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-symbol-universe"
     )
+    learning_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="agca-paper-learning"
+    )
     decision_local = threading.local()
     universe_local = threading.local()
     stop_event = asyncio.Event()
@@ -256,7 +259,6 @@ async def run():
         write_market_state(live_state_snapshot())
 
     last_selection_attempt_at = None
-    last_learning_at = None
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -403,7 +405,7 @@ async def run():
 
     def process_state(state, observed_ms):
         """Run DB/decision/PAPER work off the websocket event loop."""
-        nonlocal last_health_at, last_selection_attempt_at, last_learning_at
+        nonlocal last_health_at, last_selection_attempt_at
         work_con = decision_connection()
         observed_at = datetime.fromtimestamp(
             observed_ms / 1000, tz=timezone.utc
@@ -460,15 +462,6 @@ async def run():
             # immediately and starves position/fill management.
             last_selection_attempt_at = now()
 
-        if (
-            last_learning_at is None
-            or (observed_at - last_learning_at).total_seconds() >= 60.0
-        ):
-            learning_error = run_learning_best_effort(work_con, observed_at)
-            if learning_error:
-                emit_health("DEGRADED", error=learning_error)
-            last_learning_at = now()
-
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
         # any PAPER execution or position-management action.
@@ -521,13 +514,8 @@ async def run():
             reviews = experience_memory.review_closed_positions(
                 work_con, execution_at
             )
-            learning_error = run_learning_best_effort(
-                work_con, execution_at
-            )
             result["new_experience_reviews"] = reviews
-            result["learning_status"] = (
-                learning_error or "BEST_EFFORT_COMPLETE"
-            )
+            result["learning_status"] = "DEFERRED_TO_BACKGROUND_REVIEW"
 
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
@@ -547,11 +535,12 @@ async def run():
             )
             last_health_at = observed_at
 
-    def run_learning_best_effort(db, at):
-        """Research/learning must never terminate the realtime PAPER manager."""
+    def learning_once():
+        """Run non-authoritative learning off the execution path."""
+        db = worker_connect()
         try:
-            trade_learning.run(db, FORWARD_COHORT, at)
-            strategy_allocator.rebalance(db, at)
+            trade_learning.run(db, FORWARD_COHORT, now())
+            strategy_allocator.rebalance(db, now())
             return None
         except sqlite3.OperationalError as exc:
             try:
@@ -565,6 +554,8 @@ async def run():
             except Exception:
                 pass
             return f"LEARNING_{type(exc).__name__}"
+        finally:
+            db.close()
 
     def process_state_guarded(state, observed_ms):
         try:
@@ -646,10 +637,31 @@ async def run():
             )
             if reconciled["resolved"]:
                 experience_memory.review_closed_positions(maintenance_con, now())
-                trade_learning.run(maintenance_con, FORWARD_COHORT, now())
             return reconciled
         finally:
             maintenance_con.close()
+
+    async def learning_loop():
+        # Execution/fill/position management always has priority over research.
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=30)
+            return
+        except asyncio.TimeoutError:
+            pass
+        while not stop_event.is_set():
+            learning_error = await loop.run_in_executor(
+                learning_executor, learning_once
+            )
+            if learning_error:
+                write_brain_state({
+                    "phase": "LEARNING_REVIEW",
+                    "message": "Öğrenme incelemesi ertelendi; işlem yolu etkilenmedi.",
+                    "decision": learning_error,
+                })
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
 
     async def maintenance():
         while not stop_event.is_set():
@@ -686,6 +698,7 @@ async def run():
             decision_loop(),
             refresh_symbol_cache(),
             maintenance(),
+            learning_loop(),
             heartbeat(),
         )
     finally:
@@ -711,6 +724,7 @@ async def run():
         finally:
             decision_executor.shutdown(wait=True)
             universe_executor.shutdown(wait=True)
+            learning_executor.shutdown(wait=True)
             con.close()
             emit_health("STOPPED")
 
