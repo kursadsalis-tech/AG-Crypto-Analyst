@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import signal
+import sqlite3
 import tempfile
 import threading
 from collections import deque
@@ -39,6 +40,17 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_BRAIN_TIMELINE",
     "/var/lib/agca/paper-realtime-brain-timeline.json",
 ))
+WORKER_DB_TIMEOUT_SECONDS = max(
+    1.0, float(os.getenv("AGCA_PAPER_DB_TIMEOUT_SECONDS", "5"))
+)
+
+
+def worker_connect():
+    db = connect(DB_NAME, timeout=WORKER_DB_TIMEOUT_SECONDS)
+    db.execute(
+        f"PRAGMA busy_timeout={int(WORKER_DB_TIMEOUT_SECONDS * 1000)}"
+    )
+    return db
 
 
 def now():
@@ -170,7 +182,7 @@ async def run():
             "SPOT", max_age_seconds=max_metadata_age,
         ),
     }
-    con = connect(DB_NAME, timeout=30)
+    con = worker_connect()
     ensure_tables(con)
     position_management.ensure_tables(con)
     decision_executor = ThreadPoolExecutor(
@@ -341,7 +353,7 @@ async def run():
     def universe_connection():
         db = getattr(universe_local, "connection", None)
         if db is None:
-            db = connect(DB_NAME, timeout=30)
+            db = worker_connect()
             ensure_tables(db)
             position_management.ensure_tables(db)
             universe_local.connection = db
@@ -378,7 +390,7 @@ async def run():
     def decision_connection():
         db = getattr(decision_local, "connection", None)
         if db is None:
-            db = connect(DB_NAME, timeout=30)
+            db = worker_connect()
             ensure_tables(db)
             position_management.ensure_tables(db)
             decision_local.connection = db
@@ -452,8 +464,9 @@ async def run():
             last_learning_at is None
             or (observed_at - last_learning_at).total_seconds() >= 60.0
         ):
-            trade_learning.run(work_con, FORWARD_COHORT, observed_at)
-            strategy_allocator.rebalance(work_con, observed_at)
+            learning_error = run_learning_best_effort(work_con, observed_at)
+            if learning_error:
+                emit_health("DEGRADED", error=learning_error)
             last_learning_at = now()
 
         # A scan can take seconds. Never fill/manage against the state that
@@ -508,11 +521,13 @@ async def run():
             reviews = experience_memory.review_closed_positions(
                 work_con, execution_at
             )
-            learning = trade_learning.run(
-                work_con, FORWARD_COHORT, execution_at
+            learning_error = run_learning_best_effort(
+                work_con, execution_at
             )
             result["new_experience_reviews"] = reviews
-            result["learning_status"] = learning["status"]
+            result["learning_status"] = (
+                learning_error or "BEST_EFFORT_COMPLETE"
+            )
 
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
@@ -531,6 +546,43 @@ async def run():
                 last_action={"status": "HOLD"},
             )
             last_health_at = observed_at
+
+    def run_learning_best_effort(db, at):
+        """Research/learning must never terminate the realtime PAPER manager."""
+        try:
+            trade_learning.run(db, FORWARD_COHORT, at)
+            strategy_allocator.rebalance(db, at)
+            return None
+        except sqlite3.OperationalError as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return f"LEARNING_SQLITE_{str(exc).upper().replace(' ', '_')}"
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return f"LEARNING_{type(exc).__name__}"
+
+    def process_state_guarded(state, observed_ms):
+        try:
+            process_state(state, observed_ms)
+            return None
+        except Exception as exc:
+            db = getattr(decision_local, "connection", None)
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            prefix = (
+                "DECISION_SQLITE"
+                if isinstance(exc, sqlite3.OperationalError)
+                else "DECISION"
+            )
+            return f"{prefix}_{type(exc).__name__}:{exc}"
 
     async def on_state(state, observed_ms):
         nonlocal last_quote_received_ms
@@ -574,18 +626,21 @@ async def run():
                 > realtime_market.MAX_EVENT_AGE_MS
             ):
                 continue
-            await loop.run_in_executor(
-                decision_executor, process_state, state, observed_ms
+            decision_error = await loop.run_in_executor(
+                decision_executor, process_state_guarded, state, observed_ms
             )
+            if decision_error:
+                emit_health("DEGRADED", error=decision_error)
 
     def maintenance_once():
-        maintenance_con = connect(DB_NAME, timeout=30)
+        maintenance_con = worker_connect()
         try:
             ensure_tables(maintenance_con)
             reconciled = position_management.reconcile_pending_funding(
                 maintenance_con,
                 lambda **kwargs: fetch_funding_history_via_postgres(
-                    database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""), **kwargs,
+                    database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""),
+                    timeout_seconds=5, **kwargs,
                 ),
                 now(),
             )
