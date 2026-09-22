@@ -207,9 +207,10 @@ def evaluate_forward(con, now):
     return results
 
 
-def run(con, now=None):
+def run(con, now=None, *, ensure_schema=True):
     now = now or datetime.now(timezone.utc)
-    ensure_tables(con)
+    if ensure_schema:
+        ensure_tables(con)
     consensus = snapshot_consensus(con, now)
     created = discover_candidates(con, now)
     evaluations = evaluate_forward(con, now)
