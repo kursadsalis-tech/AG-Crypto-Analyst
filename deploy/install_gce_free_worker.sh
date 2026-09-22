@@ -57,6 +57,7 @@ retired=(
   agca-behavior-learning.service agca-behavior-learning.timer
   agca-derivatives-snapshot.service agca-derivatives-snapshot.timer
   agca-risk-snapshot.service agca-risk-snapshot.timer
+  agca-binance-risk-refresh.service agca-binance-risk-refresh.timer
   agca-hourly-forecast.service agca-hourly-forecast.timer
   agca-live-cycle.service agca-live-cycle.timer
 )
