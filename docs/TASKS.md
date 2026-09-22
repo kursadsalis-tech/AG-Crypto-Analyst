@@ -21,6 +21,29 @@ schedulers and research-for-research's-sake are not product objectives.
   runtime authorities and their dead regression tests.
 - [x] Make the cleaned validated product line canonical `main`.
 - [x] Establish clean CI baseline: 83 focused + 331 broad = 414 passing tests.
+- [x] P0-1: propagate fresh volatility-stop evidence into PAPER sizing/management
+  and fail closed instead of inventing a default stop.
+- [x] P0-2: suspend evidence-mature non-positive calibrated expectancy while
+  preserving small-sample exploratory sizing.
+- [x] P0-3: block adverse same-setup churn until materially new evidence or a
+  one-risk-unit market reset exists.
+- [x] P0-4: keep PENDING SPOT execution routes subscribed and attest exact
+  deployed git source identity.
+- [x] P0-5: unify selection and simulated fills under one venue-specific PAPER
+  taker-fee contract.
+- [ ] Deploy P0 canonical `main` to `agca-runtime` and verify fresh attestation
+  source SHA, clean checkout, worker/market health and `PAPER_ONLY`.
+- [ ] Verify natural post-deployment trades exercise the corrected stop, venue,
+  fee, negative-expectancy and re-entry contracts before adding decision-path
+  complexity.
+- [ ] P1 research gate: inventory existing causal technical/multi-timeframe
+  capabilities, benchmark their CPU/latency/storage cost, and design the minimal
+  candidate-only integration. Do not promote the historical multi-timeframe
+  research model.
+- [ ] P2 research gate: separate broad lightweight opportunity radar from scarce
+  deep-analysis slots so the shortlist cannot silently become the trade universe.
+- [ ] P3 research gate: define bounded autonomous challenger generation and
+  forward economic comparison without a second live execution authority.
 - [ ] Audit remaining runtime entry points for duplicate decision/execution
   authority; remove or demote obsolete loops.
 - [ ] Audit opportunity discovery for hidden fixed-cohort assumptions and make
