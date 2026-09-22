@@ -68,6 +68,9 @@ class ControlCenterServerTests(unittest.TestCase):
                 '"closedPanel"]',
                 html,
             )
+            self.assertIn("const arr=v=>Array.isArray(v)?v:[]", html)
+            self.assertIn("Control Center görünümü işlenemedi", html)
+            self.assertNotIn('\\n<div class="card"><div class="label">Son Gerçek İş', html)
             self.assertIn("market-data-mismatch", html)
             self.assertIn('method:"POST"', html)
         finally:
