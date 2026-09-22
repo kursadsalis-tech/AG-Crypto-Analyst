@@ -52,6 +52,22 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "evidence": evidence, "evidence_sha256": "a" * 64,
         }
 
+    def fingerprinted_candidate(self, decision_id, current_price=100.0):
+        candidate = self.candidate()
+        candidate["decision_id"] = decision_id
+        candidate["current_price"] = current_price
+        candidate["evidence_sha256"] = (f"{decision_id:x}"[-1] or "a") * 64
+        candidate["evidence"].update({
+            "primary_signal_source": "PRICE_ACTION",
+            "hypothesis_scope": "PRICE_ACTION_ONLY",
+            "event": {"kind": "PRICE_ACTION", "id": f"price:{decision_id}"},
+            "learned_pattern": {"flow_pattern": "PRICE_UP"},
+            "directional_signals": [
+                {"source": "PRICE_ACTION", "direction": "LONG"},
+            ],
+        })
+        return candidate
+
     def test_only_behavior_candidate_creates_position_and_frozen_thesis(self):
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [self.candidate()], "review": {},
@@ -95,6 +111,66 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT reason_counts_json FROM paper_behavior_selection_runs"
         ).fetchone()[0])
         self.assertEqual(reasons, {"STOP_REFERENCE_MISSING_OR_INVALID": 1})
+
+    def test_adverse_same_setup_reentry_requires_one_risk_unit_reset(self):
+        first = self.fingerprinted_candidate(70, 100.0)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [first], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.con.execute("""UPDATE paper_agent_positions SET
+            status='CLOSED',exit_time=?,exit_price=?,close_reason='PROTECTIVE_STOP'
+            WHERE decision_reference_id=?""", (
+            (NOW + timedelta(seconds=5)).isoformat(), 99.5, 70,
+        ))
+        self.con.commit()
+
+        repeated = self.fingerprinted_candidate(71, 99.5)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [repeated], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(self.con, NOW + timedelta(seconds=10)), 0
+            )
+        reasons = json.loads(self.con.execute(
+            "SELECT reason_counts_json FROM paper_behavior_selection_runs "
+            "ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()[0])
+        self.assertEqual(
+            reasons, {"ADVERSE_SAME_SETUP_REENTRY_WITHOUT_1R_RESET": 1}
+        )
+
+        reset = self.fingerprinted_candidate(72, 97.0)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [reset], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(self.con, NOW + timedelta(seconds=20)), 1
+            )
+
+    def test_materially_new_independent_signal_allows_immediate_reentry(self):
+        first = self.fingerprinted_candidate(73, 100.0)
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [first], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        self.con.execute("""UPDATE paper_agent_positions SET
+            status='CLOSED',exit_time=?,exit_price=?,close_reason='THESIS_INVALIDATED'
+            WHERE decision_reference_id=?""", (
+            (NOW + timedelta(seconds=5)).isoformat(), 100.0, 73,
+        ))
+        self.con.commit()
+
+        changed = self.fingerprinted_candidate(74, 100.0)
+        changed["evidence"]["directional_signals"].append(
+            {"source": "TECHNICAL", "direction": "LONG"}
+        )
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [changed], "review": {},
+        }):
+            self.assertEqual(
+                agent.select_new_positions(self.con, NOW + timedelta(seconds=10)), 1
+            )
 
     def test_tiny_risk_cap_can_open_small_paper_learning_experiment(self):
         candidate = self.candidate()
