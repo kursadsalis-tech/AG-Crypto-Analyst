@@ -1,3 +1,44 @@
+# 2026-09-23 — P1 shadow technical context live-accepted
+
+P1 is live-accepted on the canonical VM as observation-only technical context.
+
+Accepted runtime state:
+- process/checkout SHA:
+  `22debf3daa5f6d242aa4e3aecc1e73a12f531fe0`
+- worker: `CONNECTED`
+- live stale symbols: none
+- risk policy: `NORMAL`, new positions allowed, source errors empty
+- canonical risk timer active
+- legacy `agca-binance-risk-refresh.timer` masked
+- deployment-local `crypto_data.db` absent
+- PAPER_ONLY / real orders disabled
+
+P1 context uses the already-fetched 169 closed 1h risk candles. It computes the
+existing advanced 1h feature pack plus completed 4h structural context with zero
+additional market-data requests. The latest context per symbol is local-only and
+is not added to the Supabase runtime mirror. A fresh context can be frozen into
+a selected PAPER thesis after selection, but it is explicitly not a direction,
+ranking, confidence, sizing or stop input.
+
+Live cost benchmark: 23 contexts consumed 119.863 ms total in one 15-minute risk
+support cycle; the latest-cache checkpoint contained 25 symbols, 124.826 ms
+aggregate compute and 22.353 ms maximum per-symbol compute. This is outside the
+realtime decision hot path.
+
+Acceptance also closed two support defects: a legacy 15-minute risk timer could
+recreate a local DB with old path semantics, and transient SQLite writer
+contention could be mislabeled as BTC cross-source validation failure. The old
+timer is retired/masked, canonical risk refresh is env-bound, risk snapshots
+older than 30 minutes fail closed, and risk support now waits up to 30 seconds
+for transient SQLite contention while genuine source failures still fail closed.
+
+Next gate: collect natural forward PAPER theses carrying
+`technical_context_observed` and evaluate realized net-after-cost outcome by
+technical alignment/structure. Do not grant technical authority from backtest
+evidence, retrospective fit or a small forward sample.
+
+---
+
 # 2026-09-23 — P0 live acceptance complete
 
 P0 live acceptance is complete on canonical VM `agca-runtime`.
