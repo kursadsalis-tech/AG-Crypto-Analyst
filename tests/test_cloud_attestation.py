@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from runtime import cloud_attestation
 
@@ -59,10 +59,10 @@ class CloudAttestationTests(unittest.TestCase):
         self.assertEqual(json.loads(encoded), payload)
 
     def test_runtime_source_state_reports_commit_and_dirty_checkout(self):
-        clean = unittest.mock.Mock(
+        clean = Mock(
             returncode=0, stdout="b" * 40 + "\n", stderr=""
         )
-        dirty = unittest.mock.Mock(
+        dirty = Mock(
             returncode=0, stdout=" M paper_trading/risk_tiering.py\n", stderr=""
         )
         with patch.object(cloud_attestation.subprocess, "run", side_effect=[clean, dirty]):
