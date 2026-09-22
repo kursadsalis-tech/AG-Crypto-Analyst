@@ -123,10 +123,19 @@ def operator_view(snapshot):
         "NEW_POSITION_SELECTED": "YENİ FIRSAT SEÇİLDİ",
         "CONTINUE_SCANNING": "TARAMAYA DEVAM",
     }
+    def latency_chain(event):
+        observed = event.get("observed_event_ms")
+        window = event.get("context_window_start_ms")
+        decided = event.get("decision_time_ms")
+        if not all(isinstance(value, (int, float)) for value in (observed, window, decided)):
+            return "zaman zinciri henüz yok"
+        return (f"Canlı olay {int(observed)} · bağlam başlangıcı {int(window)} · "
+                f"karar {int(decided)} · olay→karar {int(decided-observed)} ms")
     brain_view = {
         "aşama": brain.get("phase") or "BİLİNMİYOR",
         "mesaj": brain.get("message") or "Canlı beyin telemetrisi henüz yok",
         "zaman": brain.get("at") or "—",
+        "gecikme_zinciri": latency_chain(brain),
         "gördüğü": (
             f'{brain.get("observed_symbol") or "—"} · '
             f'{brain.get("observed_market_type") or "—"} · '
@@ -242,6 +251,7 @@ def operator_view(snapshot):
             "piyasa": f'{row.get("symbol") or "—"} · {row.get("market_type") or "—"}',
             "fiyat": _price(row.get("price")),
             "mesaj": row.get("message") or "—",
+            "gecikme_zinciri": latency_chain(row),
             "karar": brain_decision_labels.get(
                 row.get("decision"), row.get("decision") or "—"
             ),

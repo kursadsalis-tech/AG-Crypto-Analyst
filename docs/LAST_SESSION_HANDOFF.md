@@ -1,3 +1,31 @@
+# 2026-09-22 — Live event-driven PAPER opportunity path
+
+Canonical repository: `/Users/elifzilan/Documents/AG-Crypto-Analyst`.
+Isolated branch: `fix/live-event-driven-paper-opportunities`, based on
+`76d29589843d77b12c85e506a18ba6f369ba063e`. Canonical checkout and
+PR #36/#37 were not modified. This change is awaiting review and VM deployment.
+
+The canonical realtime worker now subscribes to current risk-covered exact
+Binance USD-M contracts and evaluates each fresh WebSocket state through the
+existing behavior decision core. Five-second price movement and 30-second
+flow are causal rolling context, not minute-close gates. Historical minute
+outcomes remain the pattern-learning source. Existing selection, risk,
+exposure, daily loss, PAPER fill, position management, and 2-second stale
+execution guard remain in the same worker. Selection has a one-second global
+rate limit, 30-second selected-symbol cooldown, and durable five-second
+decision idempotency. Brain telemetry records live event, context, decision,
+selection, fill/cancel, and position-management times without gating execution.
+
+Local validation: 461/461 full tests pass; `git diff --check` clean. New tests
+cover no-minute live candidate, stale input, risk veto, decision idempotency,
+nonblocking ingest, and Control Center latency chain. First GitHub CI passed
+at commit `4c2504b`; final-head CI and live VM acceptance are pending.
+Only after review and green CI, deploy this PR's exact head to the canonical VM
+service checkout and restart `agca-paper-realtime-worker.service` once. Do not
+run cutover/installers, change `.cutover_stamp`, or enable real orders.
+
+--- Historical session records ---
+
 # 2026-09-22 — PR #36 SQLite contention and shutdown recovery
 
 Current priority supersedes historical instructions below. Canonical repository:

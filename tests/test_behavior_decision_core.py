@@ -83,6 +83,48 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
              (NOW - timedelta(minutes=1)).isoformat(), "positive"),
         )
 
+    def add_live_history(self):
+        for index in range(6):
+            stamp = NOW - timedelta(days=1, minutes=index)
+            self.con.execute(
+                "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (int(stamp.timestamp() * 1000), f"live:{index}",
+                 "BTCUSDT", "MARKET_STRUCTURE", 240, 1.0, .3, .4, 1.0,
+                 (stamp + timedelta(hours=4)).isoformat(), f"history:live:{index}"),
+            )
+
+    def live_context(self):
+        observed = int(NOW.timestamp() * 1000) - 100
+        return {"symbol": "BTCUSDT", "market_type": "USD_M_PERPETUAL",
+                "observed_event_ms": observed, "quote_ms": observed,
+                "window_start_ms": observed - 5000, "mid": 100.0,
+                "book_imbalance": .3, "taker_imbalance": .4,
+                "spread_bps": 1.0, "move_5s_pct": .2}
+
+    def test_live_candidate_without_completed_minute(self):
+        self.add_live_history()
+        result = core.evaluate_live(self.con, NOW, self.live_context())
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(result["candidates"][0]["evidence"]["live_context"]["symbol"], "BTCUSDT")
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM market_behavior_minute_features"
+        ).fetchone()[0], 0)
+
+    def test_live_stale_and_risk_veto_fail_closed(self):
+        self.add_live_history()
+        stale = self.live_context()
+        stale["quote_ms"] -= 2001
+        self.assertEqual(core.evaluate_live(self.con, NOW, stale)["status"], "LIVE_STATE_STALE")
+        self.con.execute("UPDATE asset_risk_snapshots SET new_position_allowed=0")
+        self.assertEqual(core.evaluate_live(self.con, NOW, self.live_context())["candidates"], [])
+
+    def test_live_bucket_is_idempotent(self):
+        self.add_live_history()
+        first = core.evaluate_live(self.con, NOW, self.live_context())
+        second = core.evaluate_live(self.con, NOW, self.live_context())
+        self.assertEqual(first["candidates"][0]["decision_id"],
+                         second["candidates"][0]["decision_id"])
+
     def test_promotion_thresholds_do_not_block_small_paper_learning_experiment(self):
         self.add_history(days=1)
         self.add_current()

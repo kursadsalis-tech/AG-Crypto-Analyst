@@ -1,4 +1,4 @@
-"""Single-process real-time manager for open PAPER positions."""
+"""Single-process real-time manager for open PAPER positions and opportunities."""
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +21,7 @@ from paper_trading.crypto_profit_agent import (
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
-from paper_trading import experience_memory, position_management, realtime_market, trade_learning
+from paper_trading import behavior_decision_core, experience_memory, position_management, realtime_market, trade_learning
 from paper_trading import strategy_allocator
 
 
@@ -145,6 +145,7 @@ def write_brain_state(payload):
             event.get("phase"), event.get("observed_symbol"),
             event.get("decision"), (event.get("scan") or {}).get("candidate_count"),
             (event.get("scan") or {}).get("selected_count"),
+            (event.get("observed_event_ms") or 0) // 5000,
         )
         if not timeline or tuple(timeline[-1].get("signature", [])) != signature:
             timeline.append({
@@ -155,6 +156,10 @@ def write_brain_state(payload):
                 "price": event.get("observed_price"),
                 "decision": event.get("decision"),
                 "scan": event.get("scan"),
+                "observed_event_ms": event.get("observed_event_ms"),
+                "context_window_start_ms": event.get("context_window_start_ms"),
+                "decision_time_ms": event.get("decision_time_ms"),
+                "rejection_reasons": event.get("rejection_reasons"),
                 "signature": list(signature),
             })
             _atomic_json_write(BRAIN_TIMELINE_PATH, timeline[-100:])
@@ -226,6 +231,8 @@ async def run():
     }
     last_action_status = None
     last_selection_attempt_at = None
+    last_selection_by_symbol = {}
+    rolling_states = {}
     live_states = {}
     last_market_state_publish_at = 0.0
     latest_execution_states = {}
@@ -294,23 +301,52 @@ async def run():
             """SELECT symbol,market_type FROM paper_agent_positions
             WHERE status IN ('OPEN','PENDING_ENTRY') ORDER BY symbol"""
         ).fetchall()}
-        latest = db.execute(
-            "SELECT MAX(minute_end_timestamp_ms) FROM market_behavior_minute_features"
-        ).fetchone()[0]
         monitored = set()
-        if latest is not None:
-            for (instrument,) in db.execute(
-                """SELECT DISTINCT instrument FROM market_behavior_minute_features
-                WHERE minute_end_timestamp_ms=? AND eligible_for_learning=1""",
-                (latest,),
-            ).fetchall():
-                symbol = str(instrument).upper()
-                # Only exact Binance-native USD-M IDs authorise a new quote
-                # subscription. Historical OKX instruments remain in SQLite
-                # for learning/audit, not as inferred Binance contracts.
-                if symbol.endswith("USDT") and "-" not in symbol:
-                    monitored.add((symbol, "USD_M_PERPETUAL"))
+        # The current, risk-covered Binance universe authorises subscriptions.
+        # Historical minute evidence is learning material, never the discovery
+        # clock or the subscription gate.
+        try:
+            risks = behavior_decision_core._latest_risk(db, now())
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            risks = {}
+        for symbol, risk in risks.items():
+            if (risk["allowed"] and symbol.endswith("USDT") and "-" not in symbol
+                    and rules_for(metadata["USD_M_PERPETUAL"], symbol) is not None):
+                monitored.add((symbol, "USD_M_PERPETUAL"))
         return tuple(sorted(active | monitored))
+
+    def live_decision_context(state, observed_ms):
+        """Build causal rolling context on the ingest loop without I/O."""
+        key = (state.symbol, state.market_type)
+        history = rolling_states.setdefault(key, deque(maxlen=1600))
+        if state.last_price is None:
+            return None
+        if not history or observed_ms - history[-1][0] >= 200:
+            history.append((observed_ms, state.last_price, state.taker_imbalance))
+        if (state.best_bid is None or state.best_ask is None
+                or state.book_imbalance is None or state.taker_imbalance is None):
+            return None
+        reference = next((sample for sample in reversed(history)
+                          if sample[0] <= observed_ms - 5000), None)
+        if reference is None or reference[1] <= 0:
+            return None
+        recent_flow = [sample[2] for sample in history
+                       if sample[0] >= observed_ms - 30000 and sample[2] is not None]
+        if not recent_flow:
+            return None
+        mid = (state.best_bid + state.best_ask) / 2
+        return {
+            "symbol": state.symbol, "market_type": state.market_type,
+            "observed_event_ms": state.market_timestamp_ms,
+            "quote_ms": state.quote_timestamp_ms,
+            "window_start_ms": reference[0], "mid": mid,
+            "book_imbalance": state.book_imbalance,
+            "taker_imbalance": sum(recent_flow) / len(recent_flow),
+            "spread_bps": 10000 * (state.best_ask - state.best_bid) / mid,
+            "move_5s_pct": 100 * (mid / reference[1] - 1),
+        }
 
     def symbols():
         # Pure in-memory hot-path read. No SQLite work is allowed here because
@@ -442,22 +478,27 @@ async def run():
         with latest_execution_lock:
             return latest_execution_states.get(key, (state, observed_ms))
 
-    def process_state(state, observed_ms):
+    def process_state(state, observed_ms, live_context=None):
         """Run DB/decision/PAPER work off the websocket event loop."""
         nonlocal last_health_at, last_selection_attempt_at
         work_con = decision_connection()
         observed_at = datetime.fromtimestamp(
             observed_ms / 1000, tz=timezone.utc
         )
-        # The decision core still consumes completed causal minute evidence;
-        # this exact latest normalized state is used for fill/management.
+        # Candidate evaluation is triggered by the live state. Rolling windows
+        # add context; no minute-close record is needed.
+        key = (state.symbol, state.market_type)
         if (
-            last_selection_attempt_at is None
-            or (observed_at - last_selection_attempt_at).total_seconds() >= 1.0
+            live_context is not None
+            and (last_selection_attempt_at is None
+                 or (observed_at - last_selection_attempt_at).total_seconds() >= 1.0)
+            and (key not in last_selection_by_symbol
+                 or (observed_at - last_selection_by_symbol[key]).total_seconds() >= 30.0)
         ):
             selection_result = {}
             selected = select_new_positions(
-                work_con, observed_at, metadata, telemetry=selection_result
+                work_con, now(), metadata, telemetry=selection_result,
+                live_context=live_context,
             )
             latest_scan = work_con.execute(
                 """SELECT core_status,candidate_count,selected_count,
@@ -473,6 +514,9 @@ async def run():
                 "observed_symbol": brain_state.symbol,
                 "observed_market_type": brain_state.market_type,
                 "observed_price": brain_state.last_price,
+                "observed_event_ms": live_context["observed_event_ms"],
+                "context_window_start_ms": live_context["window_start_ms"],
+                "decision_time_ms": int(now().timestamp() * 1000),
                 "monitored_symbols": len(load_symbols(work_con)),
                 "scan": ({
                     "core_status": latest_scan[0],
@@ -500,6 +544,8 @@ async def run():
             # a potentially slow scan. Otherwise a multi-second scan retriggers
             # immediately and starves position/fill management.
             last_selection_attempt_at = now()
+            if selected:
+                last_selection_by_symbol[key] = last_selection_attempt_at
 
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
@@ -528,6 +574,18 @@ async def run():
             work_con, execution_at, execution_state, metadata
         )
         if live_filled or live_cancelled:
+            write_brain_state({
+                "phase": "PAPER_EXECUTION",
+                "message": "Canlı fiyatla PAPER giriş sonucu işlendi.",
+                "observed_symbol": execution_state.symbol,
+                "observed_market_type": execution_state.market_type,
+                "observed_price": execution_state.last_price,
+                "observed_event_ms": execution_stamp_ms,
+                "decision_time_ms": int(now().timestamp() * 1000),
+                "decision": "PAPER_FILLED" if live_filled else "PAPER_CANCELLED",
+                "filled_count": live_filled, "cancelled_count": live_cancelled,
+            })
+        if live_filled or live_cancelled:
             position_management.initialize_open_positions(
                 work_con, execution_at
             )
@@ -555,6 +613,20 @@ async def run():
             )
             result["new_experience_reviews"] = reviews
             result["learning_status"] = "DEFERRED_TO_BACKGROUND_REVIEW"
+
+        if result.get("status") not in {
+            "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
+        }:
+            write_brain_state({
+                "phase": "POSITION_MANAGEMENT",
+                "message": "Açık PAPER pozisyon canlı fiyatla yönetildi.",
+                "observed_symbol": execution_state.symbol,
+                "observed_market_type": execution_state.market_type,
+                "observed_price": execution_state.last_price,
+                "observed_event_ms": execution_stamp_ms,
+                "decision_time_ms": int(now().timestamp() * 1000),
+                "decision": result.get("status"),
+            })
 
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
@@ -600,9 +672,9 @@ async def run():
             if db is not None:
                 db.close()
 
-    def process_state_guarded(state, observed_ms):
+    def process_state_guarded(state, observed_ms, live_context=None):
         try:
-            process_state(state, observed_ms)
+            process_state(state, observed_ms, live_context)
             return None
         except Exception as exc:
             db = getattr(decision_local, "connection", None)
@@ -633,7 +705,8 @@ async def run():
         key = (state.symbol, state.market_type)
         with latest_execution_lock:
             latest_execution_states[key] = (state, observed_ms)
-        pending_decision_states[key] = (state, observed_ms)
+        pending_decision_states[key] = (state, observed_ms,
+                                        live_decision_context(state, observed_ms))
         if key not in pending_decision_keys:
             pending_decision_order.append(key)
             pending_decision_keys.add(key)
@@ -656,7 +729,7 @@ async def run():
             item = pending_decision_states.pop(key, None)
             if item is None:
                 continue
-            state, observed_ms = item
+            state, observed_ms, live_context = item
             stamp_ms = state.market_timestamp_ms
             wall_clock_ms = int(now().timestamp() * 1000)
             if (
@@ -666,7 +739,8 @@ async def run():
             ):
                 continue
             decision_error = await loop.run_in_executor(
-                decision_executor, process_state_guarded, state, observed_ms
+                decision_executor, process_state_guarded, state, observed_ms,
+                live_context,
             )
             if decision_error:
                 emit_health("DEGRADED", error=decision_error)
