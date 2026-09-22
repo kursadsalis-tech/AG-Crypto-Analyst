@@ -120,6 +120,7 @@ def main():
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    result["market_data_provider"] = "BINANCE"
     result["causal_external_evidence"] = (
         evidence_for_closed_minute(args.database, minute_end_ms)
         if args.database else {
