@@ -1738,6 +1738,20 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
          market_type) in rows:
         planned = parse_time(planned_entry_time)
+        # The realtime route must obey the same bounded entry window as the
+        # fallback path. A worker restart must never resurrect a stale PAPER
+        # intent at a materially later market price.
+        if now - planned > execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
+            record_execution(
+                con, position_id, now, "ENTRY", symbol,
+                "BUY" if direction == "LONG" else "SELL", market_type,
+                ExecutionDecision("REJECTED", "ENTRY_OBSERVATION_WINDOW_EXPIRED"),
+            )
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                cancel_reason=? WHERE position_id=? AND status='PENDING_ENTRY'""",
+                (f"EXACT_{market_type}_ENTRY_CAPTURE_EXPIRED", position_id))
+            cancelled += 1
+            continue
         if now < planned:
             continue
         metadata = (
