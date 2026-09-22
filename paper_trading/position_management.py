@@ -35,6 +35,8 @@ def ensure_tables(con):
             last_market_at TEXT NOT NULL,
             stop_distance_pct REAL NOT NULL,
             current_stop_price REAL NOT NULL,
+            tp1_price REAL,
+            tp2_price REAL,
             best_price REAL NOT NULL,
             original_quantity REAL NOT NULL,
             remaining_quantity REAL NOT NULL,
@@ -99,6 +101,10 @@ def ensure_tables(con):
             funding_reconciliation_required INTEGER NOT NULL DEFAULT 0""")
     if "last_exit_attempt_at" not in columns:
         con.execute("ALTER TABLE paper_position_management ADD COLUMN last_exit_attempt_at TEXT")
+    if "tp1_price" not in columns:
+        con.execute("ALTER TABLE paper_position_management ADD COLUMN tp1_price REAL")
+    if "tp2_price" not in columns:
+        con.execute("ALTER TABLE paper_position_management ADD COLUMN tp2_price REAL")
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"
     )}
@@ -184,6 +190,7 @@ def initialize_open_positions(con, now):
             except (TypeError, ValueError):
                 invalidation_stop = None
         frozen_risk = thesis.get("execution_risk") or {}
+        technical_plan = thesis.get("technical_trade_plan") or {}
         frozen_stop = frozen_risk.get("planned_stop_distance_pct")
         if frozen_stop is not None:
             try:
@@ -196,19 +203,40 @@ def initialize_open_positions(con, now):
             blocked.append((int(position_id), "INVALID_FROZEN_STOP_PLAN"))
             continue
         # The risk budget and stop must refer to the SAME frozen selection
-        # plan.  An unvalidated invalidation price must not silently tighten
-        # the stop after sizing; legacy positions retain the volatility plan.
+        # plan. Technical plans freeze exact structure levels; legacy positions
+        # retain the volatility envelope.
         stop_reference = frozen_stop if frozen_stop is not None else volatility_stop
-        state = initialize(direction, float(entry_price), stop_reference)
+        planned_stop_price = frozen_risk.get("planned_stop_price")
+        planned_tp1_price = frozen_risk.get("planned_tp1_price")
+        planned_tp2_price = frozen_risk.get("planned_tp2_price")
+        try:
+            planned_stop_price = (
+                float(planned_stop_price) if planned_stop_price is not None else None
+            )
+            planned_tp1_price = (
+                float(planned_tp1_price) if planned_tp1_price is not None else None
+            )
+            planned_tp2_price = (
+                float(planned_tp2_price) if planned_tp2_price is not None else None
+            )
+            state = initialize(
+                direction, float(entry_price), stop_reference,
+                stop_price=planned_stop_price,
+                tp1_price=planned_tp1_price,
+                tp2_price=planned_tp2_price,
+            )
+        except (TypeError, ValueError):
+            blocked.append((int(position_id), "INVALID_TECHNICAL_EXECUTION_PLAN"))
+            continue
         con.execute("""INSERT INTO paper_position_management(
             position_id,manager_version,initialized_at,last_market_at,
-            stop_distance_pct,current_stop_price,best_price,original_quantity,
-            remaining_quantity,remaining_cost_basis,remaining_entry_fee,last_funding_at,
-            last_thesis_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            stop_distance_pct,current_stop_price,tp1_price,tp2_price,best_price,
+            original_quantity,remaining_quantity,remaining_cost_basis,
+            remaining_entry_fee,last_funding_at,last_thesis_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
             position_id, VERSION, iso(now), entry_time, state.stop_distance_pct,
-            state.stop_price, state.best_price, quantity, quantity, margin_allocated, fee,
-            entry_time, entry_time,
+            state.stop_price, state.tp1_price, state.tp2_price, state.best_price,
+            quantity, quantity, margin_allocated, fee, entry_time, entry_time,
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
                ("STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
@@ -227,6 +255,10 @@ def initialize_open_positions(con, now):
                    "planned_stop_and_fee_risk_usdt": frozen_risk.get(
                        "planned_stop_and_fee_risk_usdt"
                    ),
+                   "technical_trade_plan_version": technical_plan.get("version"),
+                   "technical_stop_price": state.stop_price,
+                   "technical_tp1_price": state.tp1_price,
+                   "technical_tp2_price": state.tp2_price,
                    "entry_price": float(entry_price),
                    "direction": direction,
                    "margin_allocated": float(margin_allocated or 0),
@@ -295,8 +327,8 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     market_at = datetime.fromtimestamp(live.market_timestamp_ms / 1000, tz=timezone.utc)
     row = con.execute("""
         SELECT p.position_id,p.direction,p.entry_price,p.due_time,p.status,
-               m.stop_distance_pct,m.current_stop_price,m.best_price,
-               m.original_quantity,m.remaining_quantity,m.remaining_cost_basis,
+               m.stop_distance_pct,m.current_stop_price,m.tp1_price,m.tp2_price,
+               m.best_price,m.original_quantity,m.remaining_quantity,m.remaining_cost_basis,
                m.remaining_entry_fee,m.unallocated_funding,m.last_funding_at,
                m.realized_net_pnl,m.realized_gross_pnl,m.tp1_done,m.tp2_done,
                m.opposing_events,m.last_market_at,m.last_thesis_at,m.last_exit_attempt_at,
@@ -308,7 +340,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     if not row:
         return {"status": "NO_OPEN_POSITION"}
     (position_id, direction, entry_price, due_time, _, stop_distance, stop_price,
-     best_price, original_qty, remaining_qty, remaining_basis, remaining_entry_fee,
+     tp1_price, tp2_price, best_price, original_qty, remaining_qty, remaining_basis, remaining_entry_fee,
      unallocated_funding, last_funding_at, realized_net, realized_gross,
      tp1_done, tp2_done, opposing_events, last_market_at, last_thesis_at,
      last_exit_attempt_at, liquidation_threshold, leverage, signal_count,
@@ -334,7 +366,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         direction=direction, entry_price=float(entry_price),
         remaining_fraction=float(remaining_qty) / float(original_qty),
         stop_distance_pct=float(stop_distance), stop_price=float(stop_price),
-        best_price=float(best_price), tp1_done=bool(tp1_done), tp2_done=bool(tp2_done),
+        best_price=float(best_price),
+        tp1_price=(float(tp1_price) if tp1_price is not None else None),
+        tp2_price=(float(tp2_price) if tp2_price is not None else None),
+        tp1_done=bool(tp1_done), tp2_done=bool(tp2_done),
         opposing_events=int(opposing_events),
     )
     decision = evaluate(
@@ -452,8 +487,12 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
             tp1_done=?,tp2_done=?,last_thesis_at=? WHERE position_id=?""", (
             iso(market_at), decision.stop_price, decision.best_price,
             decision.opposing_events,
-            int(bool(tp1_done) or decision.reason == "TAKE_PROFIT_1R"),
-            int(bool(tp2_done) or decision.reason == "TAKE_PROFIT_2R"),
+            int(bool(tp1_done) or decision.reason in {
+                "TAKE_PROFIT_1R", "TAKE_PROFIT_TECHNICAL_1"
+            }),
+            int(bool(tp2_done) or decision.reason in {
+                "TAKE_PROFIT_2R", "TAKE_PROFIT_TECHNICAL_2"
+            }),
             next_thesis_at, position_id,
         ))
         _event(con, position_id, market_at, observed_at, "UPDATE_STOP",
@@ -545,8 +584,12 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         iso(market_at), iso(market_at), iso(market_at), decision.stop_price, decision.best_price,
         max(0.0, new_qty), float(remaining_basis) - cost_basis,
         float(remaining_entry_fee) - entry_fee_part, funding_pool - funding_part,
-        net, gross, int(bool(tp1_done) or decision.reason == "TAKE_PROFIT_1R"),
-        int(bool(tp2_done) or decision.reason == "TAKE_PROFIT_2R"),
+        net, gross, int(bool(tp1_done) or decision.reason in {
+            "TAKE_PROFIT_1R", "TAKE_PROFIT_TECHNICAL_1"
+        }),
+        int(bool(tp2_done) or decision.reason in {
+            "TAKE_PROFIT_2R", "TAKE_PROFIT_TECHNICAL_2"
+        }),
         decision.opposing_events, next_thesis_at, int(funding_pending), position_id,
     ))
     con.execute("""UPDATE paper_agent_portfolio SET cash=cash+?,
