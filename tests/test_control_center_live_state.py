@@ -123,13 +123,16 @@ class LiveControlStateTests(unittest.TestCase):
                 paper_realtime_worker.write_brain_state({
                     "phase": "OPPORTUNITY_SCAN", "observed_symbol": "BTCUSDT",
                     "observed_event_ms": 10000, "context_window_start_ms": 5000,
-                    "decision_time_ms": 10120, "decision": "CONTINUE_SCANNING",
+                    "decision_time_ms": 10120, "queue_delay_ms": 40,
+                    "evaluation_ms": 80, "decision": "CONTINUE_SCANNING",
                     "rejection_reasons": {"RISK_VETO": 1},
                 })
             row = json.loads(timeline_path.read_text())[0]
             self.assertEqual(row["observed_event_ms"], 10000)
             self.assertEqual(row["context_window_start_ms"], 5000)
             self.assertEqual(row["decision_time_ms"], 10120)
+            self.assertEqual(row["queue_delay_ms"], 40)
+            self.assertEqual(row["evaluation_ms"], 80)
             self.assertEqual(row["rejection_reasons"], {"RISK_VETO": 1})
 
     def test_live_payload_preserves_worker_market_state(self):
