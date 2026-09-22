@@ -773,6 +773,17 @@ def latest_candidates(con, now=None):
     return sorted(candidates, key=lambda item: item["score"], reverse=True)
 
 
+def _validated_stop_geometry(row):
+    """Return risk-snapshot stop geometry or fail closed on missing/invalid evidence."""
+    try:
+        raw_stop_pct = float(row["stop_reference_pct"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(raw_stop_pct) or raw_stop_pct <= 0:
+        return None
+    return raw_stop_pct, min(5.0, max(0.5, raw_stop_pct))
+
+
 def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con, now)
@@ -844,8 +855,11 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             * float(row.get("execution_size_multiplier", 1.0))
         )
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
-        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
+        stop_geometry = _validated_stop_geometry(row)
+        if stop_geometry is None:
+            reject("STOP_REFERENCE_MISSING_OR_INVALID")
+            continue
+        raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
@@ -980,8 +994,15 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        raw_stop_pct = float(row.get("stop_reference_pct") or 0.0)
-        effective_stop_pct = min(5.0, max(0.5, raw_stop_pct))
+        stop_geometry = _validated_stop_geometry(row)
+        if stop_geometry is None:
+            reject("STOP_REFERENCE_MISSING_OR_INVALID")
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ",
+                "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
+            }
+            continue
+        raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
