@@ -160,6 +160,8 @@ def write_brain_state(payload):
                 "observed_event_ms": event.get("observed_event_ms"),
                 "context_window_start_ms": event.get("context_window_start_ms"),
                 "decision_time_ms": event.get("decision_time_ms"),
+                "queue_delay_ms": event.get("queue_delay_ms"),
+                "evaluation_ms": event.get("evaluation_ms"),
                 "rejection_reasons": event.get("rejection_reasons"),
                 "signature": list(signature),
             })
