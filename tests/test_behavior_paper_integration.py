@@ -387,11 +387,12 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(float(row[0]), expected, places=6)
         self.assertIn("taker_fee_bps=20.000", row[1])
         thesis = json.loads(self.con.execute(
-            "SELECT risk_json FROM paper_agent_decision_theses"
+            "SELECT thesis_json FROM paper_agent_decision_theses"
         ).fetchone()[0])
-        self.assertAlmostEqual(thesis["taker_fee_rate"], 0.002)
+        execution_risk = thesis["execution_risk"]
+        self.assertAlmostEqual(execution_risk["taker_fee_rate"], 0.002)
         self.assertAlmostEqual(
-            thesis["planned_stop_and_fee_risk_usdt"],
+            execution_risk["planned_stop_and_fee_risk_usdt"],
             float(row[0]) * (0.02 + 2 * 0.002),
             places=6,
         )
