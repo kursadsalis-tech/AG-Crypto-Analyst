@@ -96,6 +96,17 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertFalse(pattern["promotion_ready"])
         self.assertFalse(result["review"]["unified_forecast_used"])
 
+    def test_noncanonical_behavior_rows_cannot_drive_decisions(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE market_behavior_minute_features "
+            "SET market_data_provider='LEGACY_UNKNOWN'"
+        )
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["status"], "NO_FRESH_ELIGIBLE_BEHAVIOR")
+
     def test_missing_or_invalid_stop_reference_fails_closed(self):
         self.add_history(days=1)
         self.add_current()
