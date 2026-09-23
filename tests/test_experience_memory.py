@@ -67,6 +67,26 @@ class ExperienceMemoryTests(unittest.TestCase):
                 "evidence_minute_end_ms": int(NOW.timestamp() * 1000),
                 "capabilities_used": ["ORDER_BOOK", "RISK_GATE"],
             },
+            "technical_context": {
+                "version": "SUPPORT",
+                "summary": {"alignment": "ALIGNED_BULLISH"},
+            },
+            "technical_plan": {
+                "version": "TECHNICAL_TEST",
+                "direction": "LONG",
+                "risk": {
+                    "invalidation_price": 98.0,
+                    "stop_distance_pct": 2.0,
+                    "risk_compatible": True,
+                },
+                "entry": {"low": 99.0, "high": 101.0, "anchor": 100.0},
+                "targets": {"tp1_price": 102.0, "tp2_price": 104.0},
+                "authority": {
+                    "ranking_input": True, "sizing_input": True,
+                    "entry_input": True, "stop_input": True,
+                    "take_profit_input": True,
+                },
+            },
             "expected_net_edge_pct": 1.25,
             "expected_profit_per_risk": 2.5,
             "expected_profit_usdt": 12.5,
@@ -82,6 +102,13 @@ class ExperienceMemoryTests(unittest.TestCase):
         self.assertEqual(thesis["selection_economics"]["expected_net_edge_pct"], 1.25)
         self.assertEqual(thesis["selection_economics"]["expected_profit_per_risk"], 2.5)
         self.assertEqual(thesis["selection_economics"]["expected_profit_usdt"], 12.5)
+        self.assertEqual(
+            thesis["technical_trade_plan"]["risk"]["invalidation_price"], 98.0
+        )
+        self.assertIn(
+            "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            thesis["capabilities_under_test"],
+        )
 
     def test_closed_trade_cannot_receive_retrofitted_thesis(self):
         self.add_pending()
