@@ -202,7 +202,7 @@ def adaptive_timeframes(candidate):
         horizon = 4
 
     if horizon >= 24 * 7:
-        requested = ["1h", "4h", "1d", "3d", "1w", "1M"]
+        requested = ["15m", "1h", "4h", "1d", "3d", "1w", "1M"]
         profile = "REGIME_LONG_HORIZON"
     elif horizon >= 24:
         requested = ["15m", "1h", "4h", "1d", "3d"]
@@ -303,14 +303,23 @@ def build_plan(
             # authoritative off-hot-path context exists. Never synthesize them.
             unavailable.append(frame)
 
-    required_lower = (
-        "1m" if profile["profile"] in {"FAST_PRICE_ACTION", "EVENT_SHOCK_CONFIRMATION"}
-        else "5m"
-    )
+    required_lower = {
+        "FAST_PRICE_ACTION": "1m",
+        "EVENT_SHOCK_CONFIRMATION": "1m",
+        "STRUCTURE_BREAKOUT": "5m",
+        "SWING_STRUCTURE": "15m",
+        "REGIME_LONG_HORIZON": "15m",
+    }[profile["profile"]]
     if required_lower not in metrics:
         raise ValueError(f"required adaptive frame unavailable: {required_lower}")
     if "1h" in profile["requested"] and "1h" not in metrics:
         raise ValueError("fresh 1h context unavailable")
+    if profile["profile"] == "SWING_STRUCTURE" and "1d" not in metrics:
+        raise ValueError("required 1d regime context unavailable")
+    if profile["profile"] == "REGIME_LONG_HORIZON" and (
+        "1d" not in metrics or "1w" not in metrics
+    ):
+        raise ValueError("required long-regime context unavailable")
 
     side = 1.0 if direction == "LONG" else -1.0
     weights = _frame_weights(profile["profile"])
