@@ -457,7 +457,8 @@ async def run():
         ):
             selection_result = {}
             selected = select_new_positions(
-                work_con, observed_at, metadata, telemetry=selection_result
+                work_con, observed_at, metadata, telemetry=selection_result,
+                technical_planning=True,
             )
             latest_scan = work_con.execute(
                 """SELECT core_status,candidate_count,selected_count,
