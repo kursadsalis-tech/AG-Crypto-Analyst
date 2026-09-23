@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
@@ -71,7 +72,6 @@ def save_state(con, status, message, success_at=None):
     con.commit()
 
 
-
 def runtime_connection():
     """Use the same bounded SQLite writer wait as the risk snapshot path."""
     con = runtime_connect(DB_NAME, timeout=30)
@@ -80,12 +80,7 @@ def runtime_connection():
 
 
 def persist_state(status, message, success_at=None, *, attempts=3):
-    """Write cycle state through a fresh bounded connection.
-
-    The risk cycle spends most of its lifetime outside SQLite.  Do not keep one
-    connection alive across that work, and do not lose the final state merely
-    because another legitimate runtime writer owns the database momentarily.
-    """
+    """Write cycle state through a fresh bounded connection."""
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         con = None
@@ -103,12 +98,12 @@ def persist_state(status, message, success_at=None, *, attempts=3):
         finally:
             if con is not None:
                 con.close()
-        import time
         time.sleep(min(0.5 * attempt, 2.0))
 
 
 def main(force=False):
     now = utcnow()
+
     con = runtime_connection()
     try:
         ensure_state_table(con)
@@ -121,22 +116,25 @@ def main(force=False):
 
     try:
         result = risk_manager.main()
+
         con = runtime_connection()
         try:
             behavior_symbols = risk_manager.behavior_risk_symbols(con, now)
         finally:
             con.close()
+
         try:
             technical_bootstrap = bootstrap_technical_bars(
                 DB_NAME, behavior_symbols, now=now, max_workers=4
             )
-            except Exception as bootstrap_exc:
-                technical_bootstrap = {
-                    "needed": len(behavior_symbols),
-                    "ready": 0,
-                    "bars": 0,
-                    "errors": {"SUPPORT_CYCLE": type(bootstrap_exc).__name__},
-                }
+        except Exception as bootstrap_exc:
+            technical_bootstrap = {
+                "needed": len(behavior_symbols),
+                "ready": 0,
+                "bars": 0,
+                "errors": {"SUPPORT_CYCLE": type(bootstrap_exc).__name__},
+            }
+
         result["technical_bar_bootstrap"] = technical_bootstrap
         source_errors = result.get("source_errors") or {}
         if result.get("market_state") == "DATA_BLOCKED":
