@@ -56,6 +56,38 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
             block = source[start:end]
             self.assertNotIn("ensure_tables(", block)
 
+    def test_realtime_thread_connections_use_plain_sqlite_after_startup(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("def _local_sqlite_connection(", source)
+        self.assertIn("sqlite3.connect(DB_NAME", source)
+
+        for name, end_name in (
+            ("universe_connection", "refresh_symbol_cache_once"),
+            ("decision_connection", "scan_connection"),
+            ("scan_connection", "latest_any_execution_state"),
+            ("maintenance_once", "maintenance"),
+        ):
+            start = source.index(f"    def {name}(")
+            end = source.index(f"    def {end_name}(", start)
+            block = source[start:end]
+            self.assertIn("_local_sqlite_connection(", block)
+            self.assertNotIn("connect(DB_NAME", block)
+            self.assertNotIn("ensure_tables(", block)
+
+    def test_scan_failure_updates_completion_and_duration_telemetry(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        start = source.index("    def scan_once():")
+        end = source.index("    async def scan_loop(", start)
+        block = source[start:end]
+        self.assertIn("finally:", block)
+        self.assertIn("last_scan_completed_at = completed.isoformat()", block)
+        self.assertIn("last_scan_duration_ms = round(", block)
+        self.assertIn("last_scan_error = type(exc).__name__", block)
+
     def test_scan_runtime_observability_is_exposed_in_health(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
             encoding="utf-8"
