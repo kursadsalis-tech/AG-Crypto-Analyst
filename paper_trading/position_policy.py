@@ -23,6 +23,8 @@ class PositionState:
     stop_distance_pct: float
     stop_price: float
     best_price: float
+    tp1_price: float | None = None
+    tp2_price: float | None = None
     tp1_done: bool = False
     tp2_done: bool = False
     opposing_events: int = 0
@@ -80,20 +82,52 @@ def evaluate(state: PositionState, price: float, *, thesis_supported: bool | Non
                         best, opposing)
 
     risk = state.stop_distance_pct
-    if not state.tp2_done and state.tp1_done and favorable >= TP2_R * risk:
+    technical_tp2_hit = (
+        state.tp2_price is not None
+        and (
+            price >= float(state.tp2_price)
+            if state.direction == "LONG"
+            else price <= float(state.tp2_price)
+        )
+    )
+    technical_tp1_hit = (
+        state.tp1_price is not None
+        and (
+            price >= float(state.tp1_price)
+            if state.direction == "LONG"
+            else price <= float(state.tp1_price)
+        )
+    )
+    if not state.tp2_done and state.tp1_done and (
+        technical_tp2_hit
+        if state.tp2_price is not None
+        else favorable >= TP2_R * risk
+    ):
         trail = price * (1.0 - TRAIL_R * risk / 100.0) if state.direction == "LONG" \
             else price * (1.0 + TRAIL_R * risk / 100.0)
         tightened = max(state.stop_price, trail) if state.direction == "LONG" \
             else min(state.stop_price, trail)
-        return Decision("REDUCE", min(TP2_FRACTION, state.remaining_fraction),
-                        "TAKE_PROFIT_2R", tightened, best, opposing)
-    if not state.tp1_done and favorable >= TP1_R * risk:
+        return Decision(
+            "REDUCE", min(TP2_FRACTION, state.remaining_fraction),
+            "TAKE_PROFIT_TECHNICAL_2" if state.tp2_price is not None
+            else "TAKE_PROFIT_2R",
+            tightened, best, opposing,
+        )
+    if not state.tp1_done and (
+        technical_tp1_hit
+        if state.tp1_price is not None
+        else favorable >= TP1_R * risk
+    ):
         breakeven = state.entry_price * (1.0 + round_trip_cost_pct / 100.0) \
             if state.direction == "LONG" else state.entry_price * (1.0 - round_trip_cost_pct / 100.0)
         tightened = max(state.stop_price, breakeven) if state.direction == "LONG" \
             else min(state.stop_price, breakeven)
-        return Decision("REDUCE", min(TP1_FRACTION, state.remaining_fraction),
-                        "TAKE_PROFIT_1R", tightened, best, opposing)
+        return Decision(
+            "REDUCE", min(TP1_FRACTION, state.remaining_fraction),
+            "TAKE_PROFIT_TECHNICAL_1" if state.tp1_price is not None
+            else "TAKE_PROFIT_1R",
+            tightened, best, opposing,
+        )
 
     if state.tp1_done:
         trail = best * (1.0 - TRAIL_R * risk / 100.0) if state.direction == "LONG" \
