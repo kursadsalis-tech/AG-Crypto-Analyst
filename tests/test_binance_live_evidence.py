@@ -1,4 +1,6 @@
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from data import binance_live_evidence as live
 
@@ -37,6 +39,35 @@ class BinanceLiveEvidenceTests(unittest.TestCase):
         self.assertEqual(row["funding"]["rate"], 0.0001)
         self.assertIn("20", row["order_book"]["depths"])
         self.assertEqual(result["transport"], "USD_M_ROUTED_WEBSOCKET_STREAMS")
+
+    def test_broad_snapshot_joins_market_ticker_with_public_book(self):
+        tickers = {
+            "BTCUSDT": {
+                "e": "24hrTicker", "s": "BTCUSDT", "st": 1,
+                "c": "100", "o": "95", "q": "10000000",
+            },
+            "CMUSDT": {
+                "e": "24hrTicker", "s": "CMUSDT", "st": 2,
+                "c": "10", "o": "9", "q": "10000000",
+            },
+        }
+        books = {
+            "BTCUSDT": {
+                "e": "bookTicker", "s": "BTCUSDT", "st": 1,
+                "b": "99.9", "B": "2", "a": "100.1", "A": "3",
+            }
+        }
+        with patch.object(
+            live, "_collect_ticker_rows", new=AsyncMock(return_value=tickers)
+        ), patch.object(
+            live, "_collect_book_rows", new=AsyncMock(return_value=books)
+        ):
+            rows = asyncio.run(live.fetch_market_tickers())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["s"], "BTCUSDT")
+        self.assertEqual(rows[0]["b"], "99.9")
+        self.assertEqual(rows[0]["a"], "100.1")
+        self.assertEqual(rows[0]["st"], 1)
 
     def test_current_routed_endpoints_are_split_by_channel_class(self):
         self.assertEqual(
