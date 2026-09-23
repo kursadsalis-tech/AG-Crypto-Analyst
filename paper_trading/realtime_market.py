@@ -549,10 +549,6 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
                         await on_state(state, received_ms)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
-            if market_type == "SPOT":
-                spot_endpoint_index = (
-                    spot_endpoint_index + 1
-                ) % len(BINANCE_SPOT_WS_URLS)
             if health_callback:
                 health_callback("DISCONNECTED", type(exc).__name__)
             await asyncio.sleep(backoff)
@@ -691,6 +687,15 @@ async def _binance_stream(
                         )
                         if parsed_states:
                             last_symbol_message_at = time.monotonic()
+                        elif (
+                            market_type == "SPOT"
+                            and last_symbol_message_at is None
+                            and time.monotonic() - connected_at
+                            >= BINANCE_SPOT_SILENCE_TIMEOUT_SECONDS
+                        ):
+                            # Subscription ACK/control traffic must not mask a
+                            # Spot endpoint that never emits market data.
+                            raise RuntimeError("BINANCE_SPOT_NO_MARKET_DATA")
                         for state in parsed_states:
                             if flow_sink is not None:
                                 flow_sink.publish(state)
@@ -786,6 +791,15 @@ async def _binance_stream(
                     await asyncio.gather(*tasks, return_exceptions=True)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
+            if market_type == "SPOT":
+                spot_endpoint_index = (
+                    spot_endpoint_index + 1
+                ) % len(BINANCE_SPOT_WS_URLS)
+                if metrics is not None:
+                    metrics["failover_count"] = (
+                        int(metrics.get("failover_count") or 0) + 1
+                    )
+                    metrics["last_disconnect_error"] = type(exc).__name__
             if health_callback:
                 health_callback("DISCONNECTED", type(exc).__name__)
             await asyncio.sleep(backoff)
@@ -795,7 +809,8 @@ async def _binance_stream(
 def new_quote_metrics():
     """In-memory diagnostics only; no extra feed or execution authority."""
     return {
-        "endpoint": None,
+        "endpoint": None, "failover_count": 0,
+        "last_disconnect_error": None,
         "received_total": 0, "accepted_total": 0,
         "stale_received_total": 0, "stale_dispatch_total": 0,
         "dispatched_total": 0, "last_received_ms": None,
