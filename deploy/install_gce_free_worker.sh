@@ -112,7 +112,12 @@ active_timers=(
 for timer in "${active_timers[@]}"; do
   sudo systemctl enable --now "$timer"
 done
-sudo systemctl enable --now agca-paper-realtime-worker.service
+
+# A deployment must replace the running worker process, not only ensure the
+# unit is enabled. enable --now leaves an already-running process on the old
+# checkout/commit, which makes runtime source attestation lie about the deploy.
+sudo systemctl enable agca-paper-realtime-worker.service
+sudo systemctl restart agca-paper-realtime-worker.service
 
 systemctl is-active --quiet agca-paper-realtime-worker.service
 test ! -e "$DEPLOY/crypto_data.db"
