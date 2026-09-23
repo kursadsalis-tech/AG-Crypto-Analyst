@@ -15,6 +15,14 @@ class DeployWorkerRestartTests(unittest.TestCase):
             "sudo systemctl enable --now agca-paper-realtime-worker.service",
             script,
         )
+        self.assertIn(
+            "sudo systemctl restart agca-technical-kline-worker.service",
+            script,
+        )
+        self.assertIn(
+            "systemctl is-active --quiet agca-technical-kline-worker.service",
+            script,
+        )
 
 
 if __name__ == "__main__":
