@@ -6,9 +6,6 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-from database.runtime_store import connect
-
-
 TABLE = "market_behavior_minute_features"
 EXTERNAL_EVIDENCE_TABLE = "causal_minute_external_evidence"
 DEFAULT_RETENTION_DAYS = 30
@@ -80,8 +77,41 @@ def ensure_table(connection):
     """)
 
 
+def _schema_ready(connection):
+    tables = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    required = {TABLE, EXTERNAL_EVIDENCE_TABLE, "behavior_event_forward_outcomes"}
+    if not required.issubset(tables):
+        return False
+    columns = {
+        row[1] for row in connection.execute(f"PRAGMA table_info({TABLE})")
+    }
+    return {
+        "market_data_provider", "mid_price_first", "mid_price_last"
+    }.issubset(columns)
+
+
+def bootstrap_schema(database_path):
+    """Install local-only observer schema outside the repeated minute hot path."""
+    connection = sqlite3.connect(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=30000")
+    try:
+        ensure_table(connection)
+        # Import here to keep table constants available without a module cycle.
+        from database.behavior_event_outcome_store import ensure_outcome_table
+        ensure_outcome_table(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def _writer_connection(database_path):
-    connection = connect(database_path, timeout=30)
+    # These tables are explicitly local-only. RuntimeConnection construction
+    # performs remote-outbox/trigger DDL and must not run on every minute cycle.
+    connection = sqlite3.connect(database_path, timeout=30)
     connection.execute("PRAGMA busy_timeout=30000")
     return connection
 
@@ -102,7 +132,8 @@ def _persist_closed_minute_once(
     cutoff = minute_end - int(retention_days) * 86_400_000
     created_at = datetime.now(timezone.utc).isoformat()
     with _writer_connection(database_path) as connection:
-        ensure_table(connection)
+        if not _schema_ready(connection):
+            raise RuntimeError("market behavior observer schema unavailable")
         for row in report.get("rows", []):
             connection.execute(f"""
                 INSERT INTO {TABLE} (
@@ -204,6 +235,16 @@ def persist_closed_minute(
     """Persist one already-collected closed minute with bounded lock retries."""
     if not report.get("minute_is_closed"):
         raise ValueError("only closed minutes may be persisted")
+    # Fresh/test databases may need a one-time bootstrap. Existing production
+    # databases take only the sqlite_master/table_info read path here, so the
+    # recurring observer never repeats schema DDL.
+    probe = sqlite3.connect(database_path, timeout=5)
+    try:
+        ready = _schema_ready(probe)
+    finally:
+        probe.close()
+    if not ready:
+        bootstrap_schema(database_path)
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         try:
