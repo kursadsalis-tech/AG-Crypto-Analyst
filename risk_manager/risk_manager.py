@@ -647,6 +647,47 @@ def runtime_connection():
     return con
 
 
+def _database_locked(exc):
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and "database is locked" in str(exc).lower()
+    )
+
+
+def persist_snapshot_with_retry(
+    policy, assets, source_errors, technical_contexts=None, *, attempts=4
+):
+    """Persist one prepared risk snapshot without repeating market-data fetches.
+
+    Realtime PAPER and the minute observer are legitimate concurrent SQLite
+    writers.  If one owns the writer lock, retry only the bounded local commit
+    with a fresh connection; never rerun the already-completed external data
+    acquisition just because SQLite was briefly busy.
+    """
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        con = None
+        try:
+            con = runtime_connection()
+            ensure_tables(con)
+            return save_snapshot(
+                con, policy, assets, source_errors, technical_contexts
+            )
+        except sqlite3.OperationalError as exc:
+            if con is not None:
+                try:
+                    con.rollback()
+                except sqlite3.Error:
+                    pass
+            if not _database_locked(exc) or attempt >= attempts:
+                raise
+        finally:
+            if con is not None:
+                con.close()
+        time.sleep(min(0.5 * attempt, 2.0))
+    raise RuntimeError("unreachable snapshot persistence retry state")
+
+
 def main():
     created_at = iso(utcnow())
     assets = []
@@ -704,14 +745,9 @@ def main():
             source_errors[symbol] = str(exc)
 
     policy = build_global_policy(assets, source_errors, created_at)
-    con = runtime_connection()
-    try:
-        ensure_tables(con)
-        snapshot_id = save_snapshot(
-            con, policy, assets, source_errors, technical_contexts
-        )
-    finally:
-        con.close()
+    snapshot_id = persist_snapshot_with_retry(
+        policy, assets, source_errors, technical_contexts
+    )
 
     render_result(policy, assets, source_errors, snapshot_id)
     result = dict(policy)
