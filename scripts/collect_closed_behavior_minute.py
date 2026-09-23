@@ -28,6 +28,7 @@ from data.binance_live_evidence import (
 from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
+from database.technical_bar_store import persist_bars as persist_technical_bars
 from database.causal_evidence_store import evidence_for_closed_minute
 
 
@@ -58,16 +59,20 @@ def write_json_atomic(path, payload):
 async def collect_minute(route, universe, contract_values, args, minute_end_ms):
     duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
     liquidation_task = asyncio.create_task(probe(duration, contract_values))
+    closed_bars = []
     market_task = asyncio.create_task(collect_minute_snapshots(
         route,
         universe,
         samples=args.samples,
         cadence_seconds=args.cadence_seconds,
+        closed_bar_sink=closed_bars,
+        observe_until_ms=minute_end_ms + 1_000,
     ))
     market_snapshots, liquidations = await asyncio.gather(
         market_task, liquidation_task
     )
-    return [build_bundle(market, liquidations) for market in market_snapshots]
+    bundles = [build_bundle(market, liquidations) for market in market_snapshots]
+    return bundles, closed_bars
 
 
 def main():
@@ -113,7 +118,7 @@ def main():
         now_ms = int(time.time() * 1000)
         minute_end_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
 
-    bundles = asyncio.run(
+    bundles, closed_technical_bars = asyncio.run(
         collect_minute(route, universe, contract_values, args, minute_end_ms))
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
@@ -135,7 +140,9 @@ def main():
         "market_data_provider": "BINANCE",
         "market_transport": "WEBSOCKET_ONLY",
         "broad_market_stream": "ALL_MARKET_24H_TICKER",
-        "deep_streams": ["DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING"],
+        "deep_streams": [
+            "DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING", "KLINE_1M"
+        ],
         "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
@@ -143,6 +150,17 @@ def main():
     if args.database:
         result["sqlite_persistence"] = persist_closed_minute(
             args.database, result, args.retention_days)
+        result["technical_bar_persistence"] = persist_technical_bars(
+            args.database,
+            closed_technical_bars,
+            now_ms=minute_end_ms,
+        )
+        result["collection_contract"]["closed_technical_bars"] = len(
+            closed_technical_bars
+        )
+        result["collection_contract"]["technical_bar_source"] = (
+            "BINANCE_USD_M_WS_KLINE_1M"
+        )
     write_json_atomic(args.output, result)
     if args.health_output:
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
