@@ -243,12 +243,16 @@ async def run():
     ensure_tables(con)
     position_management.ensure_tables(con)
     decision_executor = ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="agca-paper-decision"
+        max_workers=1, thread_name_prefix="agca-paper-execution"
+    )
+    scan_executor = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="agca-paper-scan"
     )
     universe_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-symbol-universe"
     )
     decision_local = threading.local()
+    scan_local = threading.local()
     universe_local = threading.local()
     stop_event = asyncio.Event()
     last_health_at = None
@@ -258,7 +262,6 @@ async def run():
         "USD_M_PERPETUAL": realtime_market.new_quote_metrics(),
     }
     last_action_status = None
-    last_selection_attempt_at = None
     live_states = {}
     last_market_state_publish_at = 0.0
     latest_execution_states = {}
@@ -435,6 +438,88 @@ async def run():
             decision_local.connection = db
         return db
 
+    def scan_connection():
+        db = getattr(scan_local, "connection", None)
+        if db is None:
+            db = connect(DB_NAME, timeout=30)
+            ensure_tables(db)
+            position_management.ensure_tables(db)
+            scan_local.connection = db
+        return db
+
+    def latest_any_execution_state():
+        with latest_execution_lock:
+            if not latest_execution_states:
+                return None
+            return max(
+                latest_execution_states.values(),
+                key=lambda item: item[1],
+            )
+
+    def scan_once():
+        """Discover/select opportunities without ever blocking execution ticks."""
+        work_con = scan_connection()
+        observed_at = now()
+        selection_result = {}
+        selected = select_new_positions(
+            work_con, observed_at, metadata, telemetry=selection_result
+        )
+        latest_scan = work_con.execute(
+            """SELECT core_status,candidate_count,selected_count,
+                      active_position_count,capacity,available_exposure,
+                      reason_counts_json
+               FROM paper_behavior_selection_runs
+               ORDER BY run_id DESC LIMIT 1"""
+        ).fetchone()
+        latest_state = latest_any_execution_state()
+        brain_state = latest_state[0] if latest_state else None
+        write_brain_state({
+            "phase": "OPPORTUNITY_SCAN",
+            "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
+            "observed_symbol": brain_state.symbol if brain_state else None,
+            "observed_market_type": (
+                brain_state.market_type if brain_state else None
+            ),
+            "observed_price": brain_state.last_price if brain_state else None,
+            "monitored_symbols": len(subscription_symbols(work_con)),
+            "scan": ({
+                "core_status": latest_scan[0],
+                "candidate_count": latest_scan[1],
+                "selected_count": latest_scan[2],
+                "active_position_count": latest_scan[3],
+                "capacity": latest_scan[4],
+                "available_exposure": latest_scan[5],
+                "reason_counts": json.loads(latest_scan[6] or "{}"),
+            } if latest_scan else None),
+            "candidates": selection_result.get("candidates", []),
+            "open_positions": selection_result.get("open_positions", []),
+            "portfolio_capacity": selection_result.get(
+                "portfolio_capacity", {}
+            ),
+            "rejection_reasons": selection_result.get(
+                "rejection_reasons", {}
+            ),
+            "decision": (
+                "NEW_POSITION_SELECTED" if selected else "CONTINUE_SCANNING"
+            ),
+        })
+        return selected
+
+    async def scan_loop():
+        """Completion-paced scanning on a dedicated worker thread."""
+        while not stop_event.is_set():
+            try:
+                await loop.run_in_executor(scan_executor, scan_once)
+            except Exception as exc:
+                emit_health(
+                    "DEGRADED",
+                    error=f"OPPORTUNITY_SCAN_{type(exc).__name__}",
+                )
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+
     def latest_execution_state(state, observed_ms):
         key = (state.symbol, state.market_type)
         with latest_execution_lock:
@@ -442,66 +527,16 @@ async def run():
 
     def process_state(state, observed_ms):
         """Run DB/decision/PAPER work off the websocket event loop."""
-        nonlocal last_health_at, last_selection_attempt_at
+        nonlocal last_health_at
         work_con = decision_connection()
         observed_at = datetime.fromtimestamp(
             observed_ms / 1000, tz=timezone.utc
         )
-        # The decision core still consumes completed causal minute evidence;
-        # this exact latest normalized state is used for fill/management.
-        if (
-            last_selection_attempt_at is None
-            or (observed_at - last_selection_attempt_at).total_seconds() >= 1.0
-        ):
-            selection_result = {}
-            selected = select_new_positions(
-                work_con, observed_at, metadata, telemetry=selection_result
-            )
-            latest_scan = work_con.execute(
-                """SELECT core_status,candidate_count,selected_count,
-                          active_position_count,capacity,available_exposure,
-                          reason_counts_json
-                   FROM paper_behavior_selection_runs
-                   ORDER BY run_id DESC LIMIT 1"""
-            ).fetchone()
-            brain_state, _ = latest_execution_state(state, observed_ms)
-            write_brain_state({
-                "phase": "OPPORTUNITY_SCAN",
-                "message": "Piyasa taranıyor; fırsatlar değerlendiriliyor.",
-                "observed_symbol": brain_state.symbol,
-                "observed_market_type": brain_state.market_type,
-                "observed_price": brain_state.last_price,
-                "monitored_symbols": len(load_symbols(work_con)),
-                "scan": ({
-                    "core_status": latest_scan[0],
-                    "candidate_count": latest_scan[1],
-                    "selected_count": latest_scan[2],
-                    "active_position_count": latest_scan[3],
-                    "capacity": latest_scan[4],
-                    "available_exposure": latest_scan[5],
-                    "reason_counts": json.loads(latest_scan[6] or "{}"),
-                } if latest_scan else None),
-                "candidates": selection_result.get("candidates", []),
-                "open_positions": selection_result.get("open_positions", []),
-                "portfolio_capacity": selection_result.get(
-                    "portfolio_capacity", {}
-                ),
-                "rejection_reasons": selection_result.get(
-                    "rejection_reasons", {}
-                ),
-                "decision": (
-                    "NEW_POSITION_SELECTED"
-                    if selected else "CONTINUE_SCANNING"
-                ),
-            })
-            # Cadence is based on completion time, not the event that started
-            # a potentially slow scan. Otherwise a multi-second scan retriggers
-            # immediately and starves position/fill management.
-            last_selection_attempt_at = now()
-
-        # A scan can take seconds. Never fill/manage against the state that
-        # started that scan; refresh from the ingest cache immediately before
-        # any PAPER execution or position-management action.
+        # Execution obligations always run before and independently from
+        # opportunity discovery. A slow scan may not delay pending replans,
+        # fills, stops, targets, or position management.
+        # Always refresh from the ingest cache immediately before any PAPER
+        # execution or position-management action.
         execution_state, execution_observed_ms = latest_execution_state(
             state, observed_ms
         )
@@ -658,6 +693,7 @@ async def run():
                 symbols, on_state, stop_event, health, quote_metrics=quote_metrics,
             ),
             decision_loop(),
+            scan_loop(),
             refresh_symbol_cache(),
             maintenance(),
             heartbeat(),
@@ -668,6 +704,12 @@ async def run():
             if db is not None:
                 db.close()
                 decision_local.connection = None
+
+        def close_scan_connection():
+            db = getattr(scan_local, "connection", None)
+            if db is not None:
+                db.close()
+                scan_local.connection = None
 
         def close_universe_connection():
             db = getattr(universe_local, "connection", None)
@@ -680,10 +722,14 @@ async def run():
                 decision_executor, close_decision_connection
             )
             await loop.run_in_executor(
+                scan_executor, close_scan_connection
+            )
+            await loop.run_in_executor(
                 universe_executor, close_universe_connection
             )
         finally:
             decision_executor.shutdown(wait=True)
+            scan_executor.shutdown(wait=True)
             universe_executor.shutdown(wait=True)
             con.close()
             emit_health("STOPPED")
