@@ -724,7 +724,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
         )
 
-    def test_live_entry_waits_outside_frozen_technical_zone(self):
+    def test_implausible_spot_usdm_basis_fails_closed(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 11, "symbol": "LAUSDT",
                           "evidence_sha256": "e" * 64})
@@ -734,6 +734,34 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
         at = NOW + timedelta(seconds=30)
         live = self.live_state("LAUSDT", at, market_type="SPOT", price=110.0)
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, at, live, self.metadata
+        )
+        self.assertEqual((filled, cancelled), (0, 1))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,cancel_reason FROM paper_agent_positions"
+            ).fetchone(),
+            ("CANCELLED", "TECHNICAL_EXECUTION_BASIS_INVALID"),
+        )
+
+    def test_usdm_entry_waits_outside_frozen_technical_zone(self):
+        candidate = self.candidate()
+        candidate.update({"decision_id": 12, "symbol": "WAITUSDT",
+                          "evidence_sha256": "f" * 64})
+        tier = SimpleNamespace(
+            margin_fraction=.005, leverage=1.0,
+            market_type="USD_M_PERPETUAL", tier="TEST",
+            independent_signal_count=1, signal_sources=("MARKET_BEHAVIOR",),
+        )
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }), patch.object(agent.risk_tiering, "tier_for", return_value=tier):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        at = NOW + timedelta(seconds=30)
+        live = self.live_state(
+            "WAITUSDT", at, market_type="USD_M_PERPETUAL", price=101.0
+        )
         filled, cancelled = agent.fill_pending_from_live_state(
             self.con, at, live, self.metadata
         )
