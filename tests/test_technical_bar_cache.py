@@ -6,6 +6,7 @@ import zipfile
 
 from data import binance_technical_bars as technical
 from database import technical_bar_store as store
+from database.runtime_store import REMOTE_RUNTIME_TABLES
 
 
 NOW = 1_790_000_000_000
@@ -67,6 +68,9 @@ class TechnicalBarCacheTests(unittest.TestCase):
             [{"symbol": "ETHUSDT", "count": 0}],
         )
         con.close()
+
+    def test_technical_bar_cache_is_never_remote_mirrored(self):
+        self.assertNotIn(store.TABLE, REMOTE_RUNTIME_TABLES)
 
     def test_archive_parser_accepts_headerless_exact_futures_klines(self):
         buffer = io.BytesIO()
