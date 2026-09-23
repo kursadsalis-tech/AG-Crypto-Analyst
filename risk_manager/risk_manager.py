@@ -25,7 +25,6 @@ from analysis import realtime_technical_context
 
 DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
-BINANCE_USD_M_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines"
 USER_AGENT = "AG-Crypto-Analyst/1.0.0"
 POLICY_VERSION = "MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK"
 KLINE_LIMIT = 170
@@ -190,11 +189,15 @@ def fetch_closed_1h_klines(
 
 
 def fetch_dynamic_closed_1h_klines(symbol):
-    """Use canonical Binance USD-M evidence; unavailable data fails closed."""
+    """Use same-exchange Binance historical context without restricted Futures REST.
+
+    This is explicitly a risk-history context, not an executable Futures price.
+    Symbols unavailable on Binance Spot fail closed at the asset level.
+    """
     return fetch_closed_1h_klines(
         symbol,
-        url=BINANCE_USD_M_KLINES_URL,
-        source_prefix="BINANCE_USD_M_KLINES",
+        url=BINANCE_KLINES_URL,
+        source_prefix="BINANCE_SPOT_KLINES_FOR_USDM_RISK_CONTEXT",
     )
 
 
@@ -653,7 +656,7 @@ def main():
             tech_started = time.perf_counter()
             try:
                 market_scope = (
-                    "DYNAMIC_DERIVATIVES"
+                    "DYNAMIC_BINANCE_SPOT_RISK_CONTEXT"
                     if symbol in dynamic_symbols and symbol not in SYMBOLS
                     else "REFERENCE_SPOT"
                 )
