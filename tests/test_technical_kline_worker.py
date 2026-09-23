@@ -53,6 +53,17 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
             )
         self.assertEqual(result, ("BTCUSDT",))
 
+    def test_worker_bootstraps_schema_once_and_reports_persist_latency(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "runtime/technical_kline_worker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "await asyncio.to_thread(bootstrap_schema, DB_PATH)",
+            source,
+        )
+        self.assertIn("last_persist_duration_ms", source)
+
     def test_universe_state_rejects_empty_live_refresh(self):
         state = worker.UniverseState(
             ("BTCUSDT",), now_ms=1000, retention_seconds=60
