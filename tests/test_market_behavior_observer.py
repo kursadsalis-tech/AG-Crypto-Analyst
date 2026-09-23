@@ -19,6 +19,20 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         self.assertEqual(target, 60_000)
         self.assertIsNone(skipped)
 
+    def test_late_start_waits_until_skipped_boundary_before_collection(self):
+        with patch.object(observer.time, "time", return_value=30.0), patch.object(
+            observer.time, "sleep"
+        ) as sleeper:
+            waited = observer.wait_for_collection_window(60_000)
+        self.assertEqual(waited, 30.0)
+        sleeper.assert_called_once_with(30.02)
+
+    def test_on_time_start_does_not_wait(self):
+        with patch.object(observer.time, "sleep") as sleeper:
+            waited = observer.wait_for_collection_window(None)
+        self.assertEqual(waited, 0.0)
+        sleeper.assert_not_called()
+
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
             "s": "AAAUSDT", "c": "10", "o": "9", "q": "10000000",
