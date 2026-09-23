@@ -25,6 +25,17 @@ class TradeLearningWorkerTests(unittest.TestCase):
         self.assertEqual(result["learning_status"], "OK")
         self.assertEqual(result["sqlite_attempts"], 2)
 
+    def test_learning_connection_is_plain_local_sqlite(self):
+        fake = mock.MagicMock(spec=sqlite3.Connection)
+        with mock.patch.object(
+            worker.sqlite3, "connect", return_value=fake
+        ) as connect_mock:
+            result = worker.local_connection()
+
+        self.assertIs(result, fake)
+        connect_mock.assert_called_once_with(worker.DB_NAME, timeout=5)
+        fake.execute.assert_called_once_with("PRAGMA busy_timeout=5000")
+
     def test_cycle_does_not_hide_non_lock_error(self):
         with (
             mock.patch.object(
