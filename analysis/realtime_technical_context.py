@@ -12,7 +12,7 @@ import calendar
 import json
 import math
 import statistics
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from analysis import advanced_technical_features as advanced
 
@@ -205,7 +205,7 @@ def _aggregate_calendar(rows, frame):
             key = ("3d", epoch_day // 3)
             expected = 3
         elif frame == "1w":
-            start = (opened - __import__("datetime").timedelta(days=opened.weekday())).date()
+            start = (opened - timedelta(days=opened.weekday())).date()
             key = ("1w", start.isoformat())
             expected = 7
         elif frame == "1M":
