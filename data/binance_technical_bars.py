@@ -7,7 +7,8 @@ import io
 import math
 import re
 import zipfile
-from datetime import date, datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -157,3 +158,67 @@ def fetch_daily_archive(symbol, day, session=requests):
 def bootstrap_day(now=None):
     now = now or datetime.now(timezone.utc)
     return now.astimezone(timezone.utc).date() - timedelta(days=1)
+
+
+
+def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
+    """Backfill one exact prior-day USD-M 1m archive for underfilled symbols.
+
+    This runs only from the off-hot-path support cycle. A failed or not-yet-
+    published archive never changes trading authority; that symbol simply
+    remains without an authoritative technical plan.
+    """
+    from database.runtime_store import connect
+    from database.technical_bar_store import (
+        ensure_table, symbols_needing_bootstrap, upsert_bars,
+    )
+
+    now = now or datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
+    with connect(database_path) as con:
+        ensure_table(con)
+        needed = symbols_needing_bootstrap(
+            con, symbols, now_ms=now_ms, minimum_bars=360, lookback_hours=36
+        )
+    if not needed:
+        return {"needed": 0, "ready": 0, "bars": 0, "errors": {}}
+
+    day = bootstrap_day(now)
+    fetched = {}
+    errors = {}
+    worker_count = max(1, min(int(max_workers), len(needed)))
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = {
+            pool.submit(fetch_daily_archive, item["symbol"], day): item["symbol"]
+            for item in needed
+        }
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                bars = future.result()
+            except Exception as exc:
+                errors[symbol] = type(exc).__name__
+                continue
+            if not bars:
+                errors[symbol] = "ARCHIVE_NOT_AVAILABLE"
+                continue
+            fetched[symbol] = bars
+
+    inserted = 0
+    if fetched:
+        with connect(database_path) as con:
+            ensure_table(con)
+            for symbol in sorted(fetched):
+                inserted += upsert_bars(con, fetched[symbol])
+            cutoff = now_ms - 3 * 86_400_000
+            con.execute(
+                "DELETE FROM technical_minute_bars WHERE close_time_ms < ?",
+                (cutoff,),
+            )
+    return {
+        "needed": len(needed),
+        "ready": len(fetched),
+        "bars": inserted,
+        "errors": errors,
+        "archive_day": day.isoformat(),
+    }
