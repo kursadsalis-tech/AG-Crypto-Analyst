@@ -53,11 +53,34 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
             )
         self.assertEqual(result, ("BTCUSDT",))
 
-    def test_universe_state_rejects_empty_live_replacement(self):
-        state = worker.UniverseState(("BTCUSDT",))
+    def test_universe_state_rejects_empty_live_refresh(self):
+        state = worker.UniverseState(
+            ("BTCUSDT",), now_ms=1000, retention_seconds=60
+        )
         with self.assertRaises(ValueError):
-            state.replace((), 123)
+            state.refresh((), 2000)
         self.assertEqual(state.symbols, ("BTCUSDT",))
+
+    def test_universe_state_keeps_symbol_across_partial_snapshot(self):
+        state = worker.UniverseState(
+            ("BTCUSDT", "ETHUSDT"),
+            now_ms=1_000,
+            retention_seconds=60,
+        )
+        state.refresh(("BTCUSDT",), 20_000)
+        self.assertEqual(state.symbols, ("BTCUSDT", "ETHUSDT"))
+        self.assertEqual(state.selected_symbol_count, 1)
+        self.assertEqual(state.retained_symbol_count, 1)
+
+    def test_universe_state_retires_symbol_only_after_retention_window(self):
+        state = worker.UniverseState(
+            ("BTCUSDT", "ETHUSDT"),
+            now_ms=1_000,
+            retention_seconds=60,
+        )
+        state.refresh(("BTCUSDT",), 62_000)
+        self.assertEqual(state.symbols, ("BTCUSDT",))
+        self.assertEqual(state.retained_symbol_count, 0)
 
 
 if __name__ == "__main__":
