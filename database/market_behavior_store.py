@@ -83,7 +83,12 @@ def _schema_ready(connection):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
-    required = {TABLE, EXTERNAL_EVIDENCE_TABLE, "behavior_event_forward_outcomes"}
+    required = {
+        TABLE,
+        EXTERNAL_EVIDENCE_TABLE,
+        "behavior_event_forward_outcomes",
+        "behavior_outcome_settlement_queue",
+    }
     if not required.issubset(tables):
         return False
     columns = {
@@ -213,19 +218,23 @@ def _persist_closed_minute_once(
         external_count = connection.execute(
             f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
         ).fetchone()[0]
-        # Import here to keep table constants available without a module cycle.
+        # Forward-outcome settlement is intentionally background work.
+        # Commit the current behavior minute promptly so realtime decisions do
+        # not wait on historical outcome joins/counts or a second writer phase.
         from database.behavior_event_outcome_store import (
-            settle_outcomes_for_closed_minute,
+            queue_closed_minute_for_settlement,
         )
-        forward_outcomes = settle_outcomes_for_closed_minute(
-            connection, minute_end
-        )
+        queue_closed_minute_for_settlement(connection, minute_end)
     return {"upserted": len(report.get("rows", [])), "pruned": deleted,
             "row_count": count, "retention_days": int(retention_days),
             "external_evidence_upserted": len(external.get("events", [])),
             "external_evidence_pruned": external_deleted,
             "external_evidence_row_count": external_count,
-            "forward_outcomes": forward_outcomes,
+            "forward_outcomes": {
+                "mode": "BACKGROUND_BEHAVIOR_LEARNING_WORKER",
+                "queued": 1,
+                "settled": 0,
+            },
             "remote_mirror_enabled_for_table": False}
 
 

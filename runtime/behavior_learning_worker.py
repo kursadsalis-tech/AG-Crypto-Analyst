@@ -15,7 +15,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from database.behavior_event_outcome_store import ensure_outcome_table
+from database.behavior_event_outcome_store import (
+    ensure_outcome_table,
+    settle_queued_outcomes,
+)
 from paper_trading import behavior_decision_core as core
 
 
@@ -32,6 +35,9 @@ RETRY_SECONDS = max(
 )
 MISSED_SETTLEMENT_LIMIT = max(
     1, int(os.getenv("AGCA_BEHAVIOR_MISSED_SETTLEMENT_LIMIT", "2000"))
+)
+OUTCOME_QUEUE_LIMIT = max(
+    1, int(os.getenv("AGCA_BEHAVIOR_OUTCOME_QUEUE_LIMIT", "20"))
 )
 HEALTH_CONTRACT_VERSION = "AGCA_BEHAVIOR_LEARNING_HEALTH_V1_BACKGROUND_CACHE"
 
@@ -86,6 +92,9 @@ def run_cycle_once():
         core.ensure_tables(con)
         con.commit()
 
+        queued_outcomes = settle_queued_outcomes(
+            con, limit=OUTCOME_QUEUE_LIMIT
+        )
         result = core.refresh_pattern_cache(
             con,
             now=generated_at,
@@ -104,6 +113,7 @@ def run_cycle_once():
         con.close()
     return {
         **result,
+        "outcome_queue": queued_outcomes,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "awaiting_missed": int(awaiting),
         "horizon_outcome_rows": int(outcome_rows),

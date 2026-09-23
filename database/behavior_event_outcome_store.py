@@ -8,6 +8,7 @@ from database.market_behavior_store import EXTERNAL_EVIDENCE_TABLE, TABLE
 
 
 OUTCOME_TABLE = "behavior_event_forward_outcomes"
+SETTLEMENT_QUEUE_TABLE = "behavior_outcome_settlement_queue"
 OUTCOME_CONTRACT_VERSION = "BEHAVIOR_EVENT_FORWARD_OUTCOME_V2_MARKET_STRUCTURE"
 FIXED_HORIZON_MINUTES = (1, 5, 15, 60, 240, 1440)
 MINUTE_MS = 60_000
@@ -62,6 +63,18 @@ def ensure_outcome_table(connection):
         ON {OUTCOME_TABLE}(
             horizon_minutes,outcome_available_at,kind,independence_unit
         )
+    """)
+    connection.execute(f"""
+        CREATE TABLE IF NOT EXISTS {SETTLEMENT_QUEUE_TABLE} (
+            minute_end_timestamp_ms INTEGER PRIMARY KEY,
+            queued_at TEXT NOT NULL,
+            settled_at TEXT,
+            settled_count INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    connection.execute(f"""
+        CREATE INDEX IF NOT EXISTS ix_behavior_outcome_settlement_pending
+        ON {SETTLEMENT_QUEUE_TABLE}(settled_at, minute_end_timestamp_ms)
     """)
 
 
@@ -153,6 +166,61 @@ def _settle_market_structure_outcome(connection, event_minute, outcome_minute,
         OUTCOME_CONTRACT_VERSION, settled_at,
     ))
     return max(0, result.rowcount)
+
+
+def queue_closed_minute_for_settlement(connection, minute_end_timestamp_ms):
+    """Queue one closed behavior minute for asynchronous outcome settlement."""
+    minute_end = int(minute_end_timestamp_ms)
+    connection.execute(f"""
+        INSERT INTO {SETTLEMENT_QUEUE_TABLE}(
+            minute_end_timestamp_ms,queued_at,settled_at,settled_count
+        ) VALUES(?,?,NULL,0)
+        ON CONFLICT(minute_end_timestamp_ms) DO NOTHING
+    """, (
+        minute_end,
+        datetime.now(timezone.utc).isoformat(),
+    ))
+
+
+def settle_queued_outcomes(connection, limit=20):
+    """Settle queued minutes in the background learning worker.
+
+    The observer's freshness path only enqueues minutes.  This function owns
+    forward-outcome writes so current behavior evidence is committed promptly.
+    """
+    _require_outcome_table(connection)
+    rows = connection.execute(f"""
+        SELECT minute_end_timestamp_ms
+        FROM {SETTLEMENT_QUEUE_TABLE}
+        WHERE settled_at IS NULL
+        ORDER BY minute_end_timestamp_ms
+        LIMIT ?
+    """, (max(1, int(limit)),)).fetchall()
+    processed = 0
+    inserted = 0
+    for (minute_end,) in rows:
+        result = settle_outcomes_for_closed_minute(connection, int(minute_end))
+        connection.execute(f"""
+            UPDATE {SETTLEMENT_QUEUE_TABLE}
+            SET settled_at=?, settled_count=?
+            WHERE minute_end_timestamp_ms=? AND settled_at IS NULL
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            int(result.get("settled") or 0),
+            int(minute_end),
+        ))
+        connection.commit()
+        processed += 1
+        inserted += int(result.get("settled") or 0)
+    pending = connection.execute(f"""
+        SELECT COUNT(*) FROM {SETTLEMENT_QUEUE_TABLE}
+        WHERE settled_at IS NULL
+    """).fetchone()[0]
+    return {
+        "processed_minutes": processed,
+        "settled_outcomes": inserted,
+        "pending_minutes": int(pending),
+    }
 
 
 def backfill_market_structure_outcomes(connection):

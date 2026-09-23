@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -6,6 +7,15 @@ from runtime import behavior_learning_worker as worker
 
 
 class BehaviorLearningWorkerContentionTests(unittest.TestCase):
+    def test_cycle_owns_queued_forward_outcome_settlement(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "runtime/behavior_learning_worker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("settle_queued_outcomes(", source)
+        self.assertIn("AGCA_BEHAVIOR_OUTCOME_QUEUE_LIMIT", source)
+        self.assertIn('"outcome_queue": queued_outcomes', source)
+
     def test_cycle_retries_transient_database_lock_with_fresh_attempt(self):
         success = {"pattern_count": 21}
         with (

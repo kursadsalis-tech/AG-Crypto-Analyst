@@ -219,13 +219,21 @@ def main():
                 result.get("sqlite_persistence", {})
                 .get("forward_outcomes", {}).get("settled", 0)
             ),
+            "forward_outcomes_queued": (
+                result.get("sqlite_persistence", {})
+                .get("forward_outcomes", {}).get("queued", 0)
+            ),
+            "forward_outcome_settlement_mode": (
+                result.get("sqlite_persistence", {})
+                .get("forward_outcomes", {}).get("mode")
+            ),
             "forward_outcome_row_count": (
                 result.get("sqlite_persistence", {})
-                .get("forward_outcomes", {}).get("outcome_row_count", 0)
+                .get("forward_outcomes", {}).get("outcome_row_count")
             ),
             "forward_independent_event_count": (
                 result.get("sqlite_persistence", {})
-                .get("forward_outcomes", {}).get("independent_event_count", 0)
+                .get("forward_outcomes", {}).get("independent_event_count")
             ),
         }
         health_canonical = json.dumps(
