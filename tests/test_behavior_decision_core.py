@@ -57,6 +57,9 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
                 1,'BTCUSDT',1,10,100,'2026-09-04T11:59:59+00:00',2.0
             );
         """)
+        # Runtime schema creation is an explicit startup concern.  evaluate()
+        # must remain a DDL-free hot path.
+        core.ensure_tables(self.con)
 
     def add_history(self, count=30, days=3):
         for index in range(count):
@@ -80,6 +83,28 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             (minute, "NEWS", json.dumps(["BTC"]), "news:1",
              (NOW - timedelta(minutes=1)).isoformat(), "positive"),
         )
+
+    def test_evaluate_hot_path_never_executes_schema_ddl(self):
+        self.add_history(days=1)
+        self.add_current()
+        statements = []
+        self.con.set_trace_callback(statements.append)
+
+        core.evaluate(self.con, NOW)
+
+        self.assertFalse(any(
+            statement.lstrip().upper().startswith(
+                ("CREATE TABLE", "CREATE INDEX", "ALTER TABLE")
+            )
+            for statement in statements
+        ))
+
+    def test_evaluate_fails_closed_when_runtime_schema_missing(self):
+        con = sqlite3.connect(":memory:")
+        result = core.evaluate(con, NOW)
+        self.assertEqual(result["status"], "BEHAVIOR_SCHEMA_UNAVAILABLE")
+        self.assertTrue(result["review"]["missing_tables"])
+        con.close()
 
     def test_cache_required_mode_never_runs_historical_learning_inline(self):
         self.add_history(days=1)
