@@ -33,7 +33,65 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
         rules_patch.start()
         self.addCleanup(rules_patch.stop)
+        plan_patch = patch.object(
+            agent.technical_trade_plan,
+            "build_for_candidate",
+            side_effect=lambda con, candidate, now, market_type: self.technical_plan(
+                candidate, market_type
+            ),
+        )
+        plan_patch.start()
+        self.addCleanup(plan_patch.stop)
         self.addCleanup(self.con.close)
+
+    def technical_plan(self, candidate, market_type):
+        price = float(candidate.get("current_price") or 100.0)
+        stop = float(candidate.get("stop_reference_pct") or 2.0)
+        direction = str(candidate["direction"])
+        if direction == "LONG":
+            invalidation = price * (1.0 - stop / 100.0)
+            tp1, tp2 = price * 1.01, price * 1.02
+            low, high = price * 0.999, price * 1.001
+        else:
+            invalidation = price * (1.0 + stop / 100.0)
+            tp1, tp2 = price * 0.99, price * 0.98
+            low, high = price * 0.999, price * 1.001
+        return {
+            "version": agent.technical_trade_plan.VERSION,
+            "symbol": candidate["symbol"],
+            "direction": direction,
+            "execution_market_type": market_type,
+            "technical_source_market": "BINANCE_USD_M_PERPETUAL",
+            "source_reference_price": price,
+            "generated_at": NOW.isoformat(),
+            "data_cutoff_ms": int((NOW - timedelta(minutes=1)).timestamp() * 1000),
+            "timeframes_used": ["1m", "5m", "15m", "1h", "4h"],
+            "technical_score": 0.20,
+            "relation_to_trigger_direction": "MIXED_OR_UNALIGNED",
+            "quality_multiplier": 1.0,
+            "entry": {
+                "anchor": price, "low": low, "high": high,
+                "low_offset_pct": 100 * (low / price - 1),
+                "high_offset_pct": 100 * (high / price - 1),
+            },
+            "risk": {
+                "invalidation_price": invalidation,
+                "invalidation_offset_pct": 100 * (invalidation / price - 1),
+                "stop_distance_pct": stop,
+                "risk_compatible": stop <= 5.0,
+            },
+            "targets": {
+                "tp1_price": tp1, "tp2_price": tp2,
+                "tp1_offset_pct": 100 * (tp1 / price - 1),
+                "tp2_offset_pct": 100 * (tp2 / price - 1),
+            },
+            "authority": {
+                "direction_override": False, "ranking_input": True,
+                "sizing_input": True, "entry_input": True, "stop_input": True,
+                "take_profit_input": True, "single_indicator_hard_veto": False,
+            },
+            "real_order_allowed": False,
+        }
 
     def candidate(self):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
@@ -96,62 +154,37 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
 
-    def test_shadow_technical_context_is_frozen_but_not_a_decision_input(self):
-        context = {
-            "version": agent.realtime_technical_context.VERSION,
-            "symbol": "BTCUSDT",
-            "generated_at": (NOW - timedelta(minutes=5)).isoformat(),
-            "as_of": (NOW - timedelta(hours=1)).isoformat(),
-            "market_scope": "TEST",
-            "observation_only": True,
-            "real_order_allowed": False,
-            "timeframes": ["1h", "4h"],
-            "advanced_1h": {"rsi14": 0.2},
-            "structure_4h": {"trend": "BULLISH"},
-            "summary": {"alignment": "ALIGNED_BULLISH"},
-            "authority": {
-                "direction_input": False,
-                "ranking_input": False,
-                "confidence_input": False,
-                "sizing_input": False,
-                "stop_input": False,
-                "purpose": "FORWARD_OBSERVATION_AND_LATER_CHALLENGER_EVIDENCE",
-            },
-        }
-        agent.realtime_technical_context.save_latest(self.con, context, 0.5)
-        self.con.commit()
+    def test_technical_plan_is_frozen_as_real_decision_input(self):
         candidate = self.candidate()
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
-
-        artifact_hash = self.con.execute(
-            "SELECT artifact_hash FROM paper_agent_positions"
-        ).fetchone()[0]
-        self.assertEqual(artifact_hash, candidate["evidence_sha256"])
         thesis = json.loads(self.con.execute(
             "SELECT thesis_json FROM paper_agent_decision_theses"
         ).fetchone()[0])
         self.assertEqual(
-            thesis["technical_context_observed"]["summary"]["alignment"],
-            "ALIGNED_BULLISH",
+            thesis["technical_trade_plan"]["timeframes_used"],
+            ["1m", "5m", "15m", "1h", "4h"],
         )
         self.assertIn(
-            "TECHNICAL_CONTEXT_SHADOW",
-            thesis["capabilities_observed_but_not_decision_inputs"],
+            "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            thesis["capabilities_under_test"],
         )
         self.assertNotIn(
             "TECHNICAL_CONTEXT_SHADOW",
-            thesis["capabilities_under_test"],
+            thesis["capabilities_observed_but_not_decision_inputs"],
         )
 
-    def test_missing_stop_reference_is_rejected_before_position_write(self):
+
+    def test_missing_technical_plan_is_rejected_before_position_write(self):
         candidate = self.candidate()
-        candidate.pop("stop_reference_pct")
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
-        }):
+        }), patch.object(
+            agent.technical_trade_plan, "build_for_candidate",
+            side_effect=ValueError("no technical cache"),
+        ):
             selected = agent.select_new_positions(self.con, NOW)
         self.assertEqual(selected, 0)
         self.assertEqual(
@@ -160,7 +193,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         reasons = json.loads(self.con.execute(
             "SELECT reason_counts_json FROM paper_behavior_selection_runs"
         ).fetchone()[0])
-        self.assertEqual(reasons, {"STOP_REFERENCE_MISSING_OR_INVALID": 1})
+        self.assertEqual(reasons, {"TECHNICAL_PLAN_UNAVAILABLE": 1})
+
 
     def test_adverse_same_setup_reentry_requires_one_risk_unit_reset(self):
         first = self.fingerprinted_candidate(70, 100.0)
