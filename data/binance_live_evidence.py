@@ -21,8 +21,10 @@ from datetime import datetime, timezone
 import certifi
 import websockets
 
+from data.binance_technical_bars import normalize_closed_1m_kline
 
-VERSION = "BINANCE_WS_LIVE_EVIDENCE_V3_ROUTED"
+
+VERSION = "BINANCE_WS_LIVE_EVIDENCE_V4_TECHNICAL_BARS"
 PUBLIC_RAW_BASE = "wss://fstream.binance.com/public/ws"
 PUBLIC_STREAM_BASE = "wss://fstream.binance.com/public/stream?streams="
 MARKET_RAW_BASE = "wss://fstream.binance.com/market/ws"
@@ -378,8 +380,10 @@ async def collect_minute_snapshots(
     samples=5,
     cadence_seconds=10.0,
     hydration_timeout_seconds=6.0,
+    closed_bar_sink=None,
+    observe_until_ms=None,
 ):
-    """Collect deep evidence over one observer minute with routed sockets."""
+    """Collect deep evidence and exact closed 1m bars over one observer minute."""
     universe_rows = {
         row["instrument"]: row for row in universe.get("selected", [])
     }
@@ -405,6 +409,7 @@ async def collect_minute_snapshots(
         for item in (
             f"{symbol.lower()}@aggTrade",
             f"{symbol.lower()}@markPrice@1s",
+            f"{symbol.lower()}@kline_1m",
         )
     ]
     public_url = PUBLIC_STREAM_BASE + "/".join(public_params)
@@ -453,6 +458,10 @@ async def collect_minute_snapshots(
                 received_ms = int(time.time() * 1000)
                 if isinstance(message, dict) and message.get("e") == "markPriceUpdate":
                     _apply_public(states, message, received_ms)
+                elif isinstance(message, dict) and message.get("e") == "kline":
+                    bar = normalize_closed_1m_kline(message)
+                    if bar is not None and closed_bar_sink is not None:
+                        closed_bar_sink.append(bar)
                 else:
                     _apply_trade(states, message, received_ms)
 
@@ -482,6 +491,12 @@ async def collect_minute_snapshots(
                 connectivity["public"],
                 connectivity["market"],
             ))
+        if observe_until_ms is not None:
+            while int(time.time() * 1000) < int(observe_until_ms):
+                await asyncio.sleep(min(
+                    0.10,
+                    max(0.0, (int(observe_until_ms) - int(time.time() * 1000)) / 1000.0),
+                ))
         return snapshots
     finally:
         stop.set()
