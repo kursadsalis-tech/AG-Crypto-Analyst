@@ -69,6 +69,19 @@ class BinanceLiveEvidenceTests(unittest.TestCase):
         self.assertEqual(rows[0]["a"], "100.1")
         self.assertEqual(rows[0]["st"], 1)
 
+    def test_technical_kline_universe_covers_broad_selected_not_only_deep(self):
+        universe = {
+            "selected": [
+                {"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"},
+                {"instrument": "ETH-USDT-SWAP", "symbol": "ETHUSDT"},
+                {"instrument": "AR-USDT-SWAP", "symbol": "ARUSDT"},
+            ]
+        }
+        self.assertEqual(
+            live._technical_kline_symbols(universe),
+            ["ARUSDT", "BTCUSDT", "ETHUSDT"],
+        )
+
     def test_current_routed_endpoints_are_split_by_channel_class(self):
         self.assertEqual(
             live.ALL_MARKET_TICKER_URL,
