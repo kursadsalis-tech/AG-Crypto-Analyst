@@ -40,6 +40,7 @@ from paper_trading import execution_market_data
 from paper_trading import position_management
 from paper_trading import risk_tiering
 from analysis import realtime_technical_context
+from analysis import technical_trade_plan
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -792,7 +793,26 @@ def latest_candidates(con, now=None):
 
 
 def _validated_stop_geometry(row):
-    """Return risk-snapshot stop geometry or fail closed on missing/invalid evidence."""
+    """Return the frozen technical stop geometry for new PAPER candidates.
+
+    Legacy callers without a technical plan retain the old risk-snapshot
+    fallback so historical recovery paths stay manageable.
+    """
+    plan = row.get("technical_plan") or {}
+    technical_risk = plan.get("risk") or {}
+    if technical_risk:
+        try:
+            raw_stop_pct = float(technical_risk["stop_distance_pct"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (
+            not math.isfinite(raw_stop_pct)
+            or raw_stop_pct <= 0
+            or technical_risk.get("risk_compatible") is not True
+        ):
+            return None
+        return raw_stop_pct, raw_stop_pct
+
     try:
         raw_stop_pct = float(row["stop_reference_pct"])
     except (KeyError, TypeError, ValueError):
@@ -949,6 +969,26 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
     ranked_candidates = []
     for row in behavior_result["candidates"]:
+        try:
+            plan = technical_trade_plan.build_for_candidate(
+                con, row, now=now
+            )
+        except (ValueError, TypeError, KeyError):
+            reject("TECHNICAL_PLAN_UNAVAILABLE")
+            continue
+        if (plan.get("risk") or {}).get("risk_compatible") is not True:
+            reject("TECHNICAL_STOP_OUTSIDE_RISK_ENVELOPE")
+            continue
+        row["technical_plan"] = plan
+        row["technical_context"] = realtime_technical_context.load_latest(
+            con, row["symbol"], now=now
+        )
+        row["target_price"] = float(plan["targets"]["tp2_price"])
+        row["execution_size_multiplier"] = (
+            float(row.get("execution_size_multiplier", 1.0))
+            * float(plan.get("quality_multiplier", 1.0))
+        )
+
         tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
         base_margin = (
@@ -1049,6 +1089,18 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         "decision_source": row.get("decision_source"),
         "experiment_tier": row.get("experiment_tier"),
         "risk_cap_pct": row.get("risk_cap_pct"),
+        "technical_score": (row.get("technical_plan") or {}).get(
+            "technical_score"
+        ),
+        "technical_relation": (row.get("technical_plan") or {}).get(
+            "relation_to_trigger_direction"
+        ),
+        "technical_timeframes": (row.get("technical_plan") or {}).get(
+            "timeframes_used", []
+        ),
+        "technical_entry": (row.get("technical_plan") or {}).get("entry"),
+        "technical_stop": (row.get("technical_plan") or {}).get("risk"),
+        "technical_targets": (row.get("technical_plan") or {}).get("targets"),
         "beats_open_position_on_observed_return": (
             strongest_open is not None
             and strongest_open.get("unrealized_pnl_pct") is not None
@@ -1159,6 +1211,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             f"cost_after_win={100*row['confidence']:.1f}% | "
             f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
             f"execution_size_multiplier={row.get('execution_size_multiplier', 1.0):.3f} | "
+            f"technical_score={row['technical_plan']['technical_score']:+.3f} | "
+            f"technical_tf={','.join(row['technical_plan']['timeframes_used'])} | "
             f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
             f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
             f"market={tier.market_type} | taker_fee_bps={fee_rate * 10000.0:.3f} | "
@@ -1191,22 +1245,28 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
-            row["technical_context"] = realtime_technical_context.load_latest(
-                con, row["symbol"], now=now
-            )
             row["execution_risk"] = {
                 "risk_tier": tier.tier, "leverage": tier.leverage,
                 "margin_allocated": notional / tier.leverage,
                 "gross_exposure": notional,
                 "planned_stop_distance_pct": effective_stop_pct,
                 "planned_stop_reference_pct": raw_stop_pct,
+                "planned_invalidation_price": float(
+                    row["technical_plan"]["risk"]["invalidation_price"]
+                ),
+                "planned_tp1_price": float(
+                    row["technical_plan"]["targets"]["tp1_price"]
+                ),
+                "planned_tp2_price": float(
+                    row["technical_plan"]["targets"]["tp2_price"]
+                ),
                 "risk_per_trade_pct": float(row.get("risk_per_trade_pct") or 0.0),
                 "planned_stop_and_fee_risk_usdt": notional * (
                     effective_stop_pct / 100.0 + 2.0 * fee_rate
                 ),
                 "market_type": tier.market_type,
                 "taker_fee_rate": fee_rate,
-                "stop_basis": "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT",
+                "stop_basis": "FROZEN_MULTITIMEFRAME_TECHNICAL_STRUCTURE",
                 "independent_signal_count": tier.independent_signal_count,
                 "signal_sources": list(tier.signal_sources),
             }
