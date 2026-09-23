@@ -19,6 +19,29 @@ The economic objective is better risk-adjusted net trading performance. Research
 historical data and challengers are supporting evidence only; they are never a
 parallel runtime authority.
 
+## Current specialist-worker architecture
+
+AGCA follows one binding orchestration rule: specialist workers run bounded jobs
+in parallel, a common decision path combines their evidence, and trade authority
+remains singular.
+
+Current runtime roles:
+- `runtime/technical_kline_worker.py`: long-lived Binance USD-M closed 1m
+  technical-bar collector; data-only, no trade authority.
+- market-behavior observer: rotating deep evidence for order book, taker flow,
+  funding and liquidation context; no direct trade authority.
+- risk/support cycles: bounded policy/context support, fail-closed when required
+  evidence is missing.
+- `runtime/paper_realtime_worker.py`: canonical live PAPER lifecycle and the
+  single execution authority.
+- adaptive technical trade plan: pre-trade execution geometry/evidence
+  (entry zone, stop, targets, sizing inputs) consumed by the canonical decision
+  path; it is not a parallel execution loop.
+
+The continuous technical-bar worker exists specifically because exact 1m
+continuity is a long-lived data obligation and does not belong inside the
+oneshot behavior observer.
+
 ## Canonical runtime
 
 - Canonical branch: `main`
@@ -153,17 +176,18 @@ trade outcomes before considering any bounded challenger or authority change.
 
 ## Current priorities
 
-1. Verify the first natural post-P0 selections use the intended stop evidence,
+1. Live-accept the continuous technical-bar path through 24+ contiguous exact 1m bars and confirm adaptive technical plans stop failing solely for missing continuity.
+2. Verify the first natural post-P0 selections use the intended stop evidence,
    venue, fee contract and re-entry/suspension gates.
-2. Collect natural PAPER trades with frozen P1 shadow technical context and
+3. Collect natural PAPER trades with frozen/authoritative technical-plan evidence and
    evaluate whether alignment/structure adds forward net-after-cost information.
    Do not grant technical direction/confidence/sizing/stop authority from
    historical fit or a small forward sample.
-3. Audit opportunity discovery so the lightweight broad market universe is not
+4. Audit opportunity discovery so the lightweight broad market universe is not
    collapsed into the small deep-analysis slot set.
-4. Extend learning from underperformance detection toward bounded challenger
+5. Extend learning from underperformance detection toward bounded challenger
    generation/evaluation without creating a second live decision authority.
-5. Keep high-frequency raw evidence in memory/local compact storage by default;
+6. Keep high-frequency raw evidence in memory/local compact storage by default;
    do not expand Supabase/cloud cost without measured product benefit.
 
 ## Explicit non-claims
