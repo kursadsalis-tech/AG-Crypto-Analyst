@@ -1,11 +1,11 @@
 """Canonical Binance USD-M WebSocket market evidence.
 
-The GCE runtime can consume Binance Futures WebSocket streams but the Futures
-REST market-data API may be unavailable from its network location.  This module
-therefore keeps the active observer REST-free.
+The active GCE runtime is WebSocket-first.  Binance retired the legacy USD-M
+Futures websocket base URL in April 2026 and split streams between /public and
+/market.  This module follows that current routing and never falls back to a
+different exchange.
 
-Raw frames live in memory only.  The caller persists only compact closed-minute
-features.
+Raw frames remain memory-only; callers persist compact closed-minute features.
 """
 from __future__ import annotations
 
@@ -22,13 +22,24 @@ import certifi
 import websockets
 
 
-VERSION = "BINANCE_WS_LIVE_EVIDENCE_V2"
-RAW_WS_URL = "wss://fstream.binance.com/ws"
-PUBLIC_WS_URL = "wss://fstream.binance.com/public/ws"
+VERSION = "BINANCE_WS_LIVE_EVIDENCE_V3_ROUTED"
+PUBLIC_RAW_BASE = "wss://fstream.binance.com/public/ws"
+PUBLIC_STREAM_BASE = "wss://fstream.binance.com/public/stream?streams="
+MARKET_RAW_BASE = "wss://fstream.binance.com/market/ws"
+MARKET_STREAM_BASE = "wss://fstream.binance.com/market/stream?streams="
+ALL_MARKET_TICKER_URL = f"{MARKET_RAW_BASE}/!ticker@arr"
+ALL_BOOK_TICKER_URL = f"{PUBLIC_RAW_BASE}/!bookTicker"
 MAX_EVENT_AGE_MS = 5_000
 OPEN_TIMEOUT_SECONDS = float(
     os.getenv("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS", "10")
 )
+
+
+def _is_um(message):
+    if not isinstance(message, dict):
+        return False
+    value = message.get("st")
+    return value is None or int(value) == 1
 
 
 def _instrument(symbol):
@@ -65,37 +76,95 @@ def _book_notional(levels, depth):
     return total
 
 
-async def fetch_market_tickers(timeout_seconds=8):
-    """Return one fresh all-market USD-M 24h ticker frame via WebSocket."""
+async def _collect_ticker_rows(duration_seconds):
     context = ssl.create_default_context(cafile=certifi.where())
+    rows = {}
     async with websockets.connect(
-        RAW_WS_URL,
+        ALL_MARKET_TICKER_URL,
         ssl=context,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
         ping_timeout=10,
-        max_queue=128,
+        max_queue=256,
     ) as socket:
-        await socket.send(json.dumps({
-            "method": "SUBSCRIBE", "params": ["!ticker@arr"], "id": 1,
-        }))
-        deadline = time.monotonic() + float(timeout_seconds)
+        deadline = time.monotonic() + float(duration_seconds)
         while time.monotonic() < deadline:
             timeout = max(0.05, deadline - time.monotonic())
-            raw = await asyncio.wait_for(socket.recv(), timeout=timeout)
-            message = json.loads(raw)
-            if isinstance(message, dict) and message.get("result") is None and "id" in message:
+            try:
+                raw = await asyncio.wait_for(socket.recv(), timeout=timeout)
+            except asyncio.TimeoutError:
+                break
+            payload = json.loads(raw)
+            if not isinstance(payload, list):
                 continue
-            payload = message.get("data") if isinstance(message, dict) else message
-            if isinstance(payload, list):
-                rows = [
-                    row for row in payload
-                    if isinstance(row, dict)
+            for row in payload:
+                if (
+                    isinstance(row, dict)
+                    and _is_um(row)
                     and str(row.get("s") or "").upper().endswith("USDT")
-                ]
-                if rows:
-                    return rows
-        raise TimeoutError("Binance all-market ticker stream did not produce a snapshot")
+                ):
+                    rows[str(row["s"]).upper()] = row
+    return rows
+
+
+async def _collect_book_rows(duration_seconds):
+    context = ssl.create_default_context(cafile=certifi.where())
+    rows = {}
+    async with websockets.connect(
+        ALL_BOOK_TICKER_URL,
+        ssl=context,
+        open_timeout=OPEN_TIMEOUT_SECONDS,
+        ping_interval=20,
+        ping_timeout=10,
+        max_queue=2048,
+    ) as socket:
+        deadline = time.monotonic() + float(duration_seconds)
+        while time.monotonic() < deadline:
+            timeout = max(0.05, deadline - time.monotonic())
+            try:
+                raw = await asyncio.wait_for(socket.recv(), timeout=timeout)
+            except asyncio.TimeoutError:
+                break
+            row = json.loads(raw)
+            if (
+                isinstance(row, dict)
+                and _is_um(row)
+                and str(row.get("s") or "").upper().endswith("USDT")
+            ):
+                rows[str(row["s"]).upper()] = row
+    return rows
+
+
+async def fetch_market_tickers(timeout_seconds=8):
+    """Return broad USD-M ticker rows enriched with live best bid/ask.
+
+    Binance's routed Market all-ticker stream no longer carries best bid/ask.
+    Broad discovery therefore joins Market !ticker@arr with Public !bookTicker.
+    Both are canonical Binance streams and merged by exact symbol.
+    """
+    duration = max(2.0, float(timeout_seconds))
+    ticker_task = asyncio.create_task(_collect_ticker_rows(min(duration, 3.0)))
+    book_task = asyncio.create_task(_collect_book_rows(min(duration, 6.0)))
+    tickers, books = await asyncio.gather(ticker_task, book_task)
+
+    merged = []
+    for symbol, ticker in tickers.items():
+        book = books.get(symbol)
+        if not book:
+            continue
+        merged.append({
+            **ticker,
+            "b": book.get("b"),
+            "B": book.get("B"),
+            "a": book.get("a"),
+            "A": book.get("A"),
+            "book_event_time": book.get("E"),
+        })
+    if not merged:
+        raise TimeoutError(
+            "Binance routed websocket broad snapshot had no ticker/book overlap"
+        )
+    return merged
 
 
 @dataclass
@@ -130,7 +199,7 @@ def _normalize_message(raw):
 
 
 def _apply_public(states, message, received_ms):
-    if not isinstance(message, dict):
+    if not isinstance(message, dict) or not _is_um(message):
         return
     event = str(message.get("e") or "")
     symbol = str(message.get("s") or "").upper()
@@ -158,7 +227,11 @@ def _apply_public(states, message, received_ms):
 
 
 def _apply_trade(states, message, received_ms):
-    if not isinstance(message, dict) or message.get("e") not in {"aggTrade", "trade"}:
+    if (
+        not isinstance(message, dict)
+        or not _is_um(message)
+        or message.get("e") != "aggTrade"
+    ):
         return
     symbol = str(message.get("s") or "").upper()
     state = states.get(symbol)
@@ -173,7 +246,6 @@ def _apply_trade(states, message, received_ms):
     except (TypeError, ValueError):
         return
     notional = price * quantity
-    # m=true means buyer is maker -> aggressive seller.
     if bool(message.get("m")):
         state.trade_sell_notional += notional
     else:
@@ -213,7 +285,7 @@ def _snapshot(states, collected_ms, public_connected, trade_connected):
             public_connected and midpoint > 0 and state.book_timestamp_ms > 0
         )
         funding_available = (
-            public_connected and state.funding_rate is not None
+            trade_connected and state.funding_rate is not None
             and state.funding_timestamp_ms > 0
         )
         trade_channel_available = bool(trade_connected)
@@ -225,8 +297,6 @@ def _snapshot(states, collected_ms, public_connected, trade_connected):
                 else "AVAILABLE_ZERO_FLOW" if trade_channel_available
                 else "MISSING"
             ),
-            # No alternate source is allowed. OI remains explicitly unavailable
-            # until a Binance-canonical websocket/local-history source exists.
             "open_interest": "UNAVAILABLE_CANONICAL_WS",
             "funding": "AVAILABLE" if funding_available else "MISSING",
             "liquidations": "SEPARATE_WEBSOCKET",
@@ -287,7 +357,7 @@ def _snapshot(states, collected_ms, public_connected, trade_connected):
         "version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "provider": "BINANCE",
-        "transport": "USD_M_WEBSOCKET_STREAMS",
+        "transport": "USD_M_ROUTED_WEBSOCKET_STREAMS",
         "instrument_count": len(rows),
         "complete_instrument_count": sum(
             bool(row["required_sources_available"]) for row in rows
@@ -309,7 +379,7 @@ async def collect_minute_snapshots(
     cadence_seconds=10.0,
     hydration_timeout_seconds=6.0,
 ):
-    """Collect deep evidence over one observer minute with persistent sockets."""
+    """Collect deep evidence over one observer minute with routed sockets."""
     universe_rows = {
         row["instrument"]: row for row in universe.get("selected", [])
     }
@@ -329,7 +399,7 @@ async def collect_minute_snapshots(
     public_params = [
         f"{symbol.lower()}@depth20@500ms" for symbol in sorted(states)
     ]
-    trade_params = [
+    market_params = [
         item
         for symbol in sorted(states)
         for item in (
@@ -337,22 +407,22 @@ async def collect_minute_snapshots(
             f"{symbol.lower()}@markPrice@1s",
         )
     ]
+    public_url = PUBLIC_STREAM_BASE + "/".join(public_params)
+    market_url = MARKET_STREAM_BASE + "/".join(market_params)
+
     context = ssl.create_default_context(cafile=certifi.where())
     stop = asyncio.Event()
-    connectivity = {"public": False, "trade": False}
+    connectivity = {"public": False, "market": False}
 
     async def public_receiver():
         async with websockets.connect(
-            PUBLIC_WS_URL,
+            public_url,
             ssl=context,
-            open_timeout=10,
+            open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
             ping_timeout=10,
             max_queue=4096,
         ) as socket:
-            await socket.send(json.dumps({
-                "method": "SUBSCRIBE", "params": public_params, "id": 11,
-            }))
             connectivity["public"] = True
             while not stop.is_set():
                 try:
@@ -361,23 +431,18 @@ async def collect_minute_snapshots(
                 except TimeoutError:
                     continue
                 message = _normalize_message(raw)
-                if isinstance(message, dict) and message.get("result") is None and "id" in message:
-                    continue
                 _apply_public(states, message, int(time.time() * 1000))
 
-    async def trade_receiver():
+    async def market_receiver():
         async with websockets.connect(
-            RAW_WS_URL,
+            market_url,
             ssl=context,
-            open_timeout=10,
+            open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
             ping_timeout=10,
             max_queue=4096,
         ) as socket:
-            await socket.send(json.dumps({
-                "method": "SUBSCRIBE", "params": trade_params, "id": 12,
-            }))
-            connectivity["trade"] = True
+            connectivity["market"] = True
             while not stop.is_set():
                 try:
                     async with asyncio.timeout(1):
@@ -385,8 +450,6 @@ async def collect_minute_snapshots(
                 except TimeoutError:
                     continue
                 message = _normalize_message(raw)
-                if isinstance(message, dict) and message.get("result") is None and "id" in message:
-                    continue
                 received_ms = int(time.time() * 1000)
                 if isinstance(message, dict) and message.get("e") == "markPriceUpdate":
                     _apply_public(states, message, received_ms)
@@ -395,7 +458,7 @@ async def collect_minute_snapshots(
 
     tasks = [
         asyncio.create_task(public_receiver()),
-        asyncio.create_task(trade_receiver()),
+        asyncio.create_task(market_receiver()),
     ]
     try:
         hydrate_deadline = time.monotonic() + float(hydration_timeout_seconds)
@@ -404,7 +467,7 @@ async def collect_minute_snapshots(
                 state.bids and state.asks and state.funding_rate is not None
                 for state in states.values()
             )
-            if hydrated and connectivity["trade"]:
+            if hydrated and connectivity["market"]:
                 break
             await asyncio.sleep(0.05)
 
@@ -417,7 +480,7 @@ async def collect_minute_snapshots(
                 states,
                 int(time.time() * 1000),
                 connectivity["public"],
-                connectivity["trade"],
+                connectivity["market"],
             ))
         return snapshots
     finally:
