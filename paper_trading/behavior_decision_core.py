@@ -615,6 +615,7 @@ def _candidate_for_hypothesis(
     liq_count, quality_json,
 ):
     """Persist one immutable single-source or confluence PAPER hypothesis."""
+    quality_gates = json.loads(quality_json)
     hypothesis_pattern = "ANY_FLOW" if event_only else pattern
     if not risk or not risk["allowed"]:
         con.execute("""INSERT OR IGNORE INTO paper_behavior_missed_opportunities(
