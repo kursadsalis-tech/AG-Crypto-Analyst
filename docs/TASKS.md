@@ -11,6 +11,16 @@ schedulers and research-for-research's-sake are not product objectives.
 
 ## Current
 
+- [x] Adopt the specialist-worker orchestration rule: bounded workers run in
+  parallel, a common orchestrator combines evidence, and the canonical realtime
+  PAPER path remains the single trade/execution authority.
+- [x] Move exact Binance USD-M closed 1m technical-bar collection out of the
+  oneshot behavior observer into a long-lived data-only worker.
+- [ ] Live-accept 24+ contiguous exact 1m bars on the new worker and verify
+  `TECHNICAL_PLAN_UNAVAILABLE` is no longer caused by minute-cache gaps.
+- [ ] Verify the next natural PAPER candidates receive fresh adaptive technical
+  plans and that entry/stop/TP/sizing authority is exercised only through the
+  canonical realtime decision path.
 - [x] Consolidate the validated realtime PAPER lifecycle.
 - [x] Restore executable bid/ask, freshness and visible-liquidity safety.
 - [x] Make open positions plus dynamic eligible market behaviour drive the
