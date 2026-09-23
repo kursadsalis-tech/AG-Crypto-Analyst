@@ -592,7 +592,31 @@ def _latest_risk(con, now=None):
 
 def evaluate(con, now=None):
     now = now or datetime.now(timezone.utc)
-    ensure_tables(con)
+    # Runtime schema is initialized once by the worker before any concurrent
+    # scan/quote threads start.  Never execute CREATE TABLE / CREATE INDEX from
+    # the repeated opportunity-scan hot path: those DDL statements can wait on
+    # the technical kline writer's SQLite schema lock for the full busy timeout.
+    required_tables = {
+        "paper_behavior_policy_reviews",
+        "paper_behavior_decisions",
+        "paper_behavior_missed_opportunities",
+        "paper_behavior_execution_calibrations",
+        "paper_behavior_pattern_cache",
+    }
+    available_tables = {
+        row[0] for row in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if not required_tables.issubset(available_tables):
+        return {
+            "status": "BEHAVIOR_SCHEMA_UNAVAILABLE",
+            "candidates": [],
+            "review": {
+                "missing_tables": sorted(required_tables - available_tables),
+                "real_orders": False,
+            },
+        }
     cache_required = os.getenv(
         "AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED", "0"
     ).strip().lower() in {"1", "true", "yes", "on"}
