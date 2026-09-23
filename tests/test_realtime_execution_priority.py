@@ -82,6 +82,26 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         helper_block = source[helper_start:helper_end]
         self.assertIn("PRAGMA busy_timeout=", helper_block)
 
+    def test_scan_retries_busy_with_fresh_connection_and_bounded_backoff(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        scan_start = source.index("    def scan_once():")
+        scan_end = source.index("    async def scan_loop(", scan_start)
+        block = source[scan_start:scan_end]
+
+        self.assertIn("AGCA_SCAN_BUSY_RETRY_ATTEMPTS", block)
+        self.assertIn("scan_sqlite_busy(exc)", block)
+        self.assertIn("reset_scan_connection()", block)
+        self.assertIn("time.sleep(min(0.05 * attempt, 0.20))", block)
+
+        reset_start = source.index("    def reset_scan_connection():")
+        reset_end = source.index("    def scan_sqlite_busy(", reset_start)
+        reset_block = source[reset_start:reset_end]
+        self.assertIn("db.rollback()", reset_block)
+        self.assertIn("db.close()", reset_block)
+        self.assertIn("scan_local.connection = None", reset_block)
+
     def test_scan_failure_updates_completion_and_duration_telemetry(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
             encoding="utf-8"
