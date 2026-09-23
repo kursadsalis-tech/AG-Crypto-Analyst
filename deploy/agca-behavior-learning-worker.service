@@ -1,0 +1,29 @@
+[Unit]
+Description=AGCA background behavior learning specialist
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+EnvironmentFile=-/etc/agca/agca.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+Environment=AGCA_REMOTE_MIRROR_INLINE=0
+Environment=AGCA_BEHAVIOR_LEARNING_INTERVAL_SECONDS=300
+Environment=AGCA_BEHAVIOR_LEARNING_RETRY_SECONDS=30
+Environment=AGCA_BEHAVIOR_MISSED_SETTLEMENT_LIMIT=2000
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.behavior_learning_worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+Nice=15
+MemoryMax=256M
+CPUQuota=50%
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
