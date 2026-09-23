@@ -2,6 +2,7 @@ import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from paper_trading import behavior_decision_core as core
 from database.runtime_store import REMOTE_RUNTIME_TABLES
@@ -79,6 +80,38 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             (minute, "NEWS", json.dumps(["BTC"]), "news:1",
              (NOW - timedelta(minutes=1)).isoformat(), "positive"),
         )
+
+    def test_cache_required_mode_never_runs_historical_learning_inline(self):
+        self.add_history(days=1)
+        self.add_current()
+        core.refresh_pattern_cache(self.con, NOW)
+        with patch.dict(
+            "os.environ",
+            {"AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED": "1"},
+        ), patch.object(
+            core, "learned_patterns",
+            side_effect=AssertionError("historical learning entered hot path"),
+        ):
+            result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(result["review"]["pattern_source"], "BACKGROUND_CACHE")
+        self.assertEqual(result["review"]["pattern_cache"]["status"], "READY")
+
+    def test_cache_required_mode_fails_closed_when_cache_missing(self):
+        self.add_history(days=1)
+        self.add_current()
+        core.ensure_tables(self.con)
+        with patch.dict(
+            "os.environ",
+            {"AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED": "1"},
+        ), patch.object(
+            core, "learned_patterns",
+            side_effect=AssertionError("historical learning entered hot path"),
+        ):
+            result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["status"], "BEHAVIOR_PATTERN_CACHE_UNAVAILABLE")
+        self.assertEqual(result["review"]["pattern_cache"]["status"], "MISSING")
 
     def test_promotion_thresholds_do_not_block_small_paper_learning_experiment(self):
         self.add_history(days=1)
