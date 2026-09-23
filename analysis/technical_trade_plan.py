@@ -270,15 +270,24 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     if cached is not None:
         return cached
 
+    # Reject an incomplete warm-up from the required tail before reading a
+    # whole day of history on every candidate scan. The eligibility condition
+    # is identical; only eligible candidates incur structural-history work.
+    required_tail = contiguous_tail(load_recent(
+        con, symbol, limit=MIN_ONE_MINUTE_BARS,
+        before_ms=int(now.timestamp() * 1000),
+    ))
+    if len(required_tail) < MIN_ONE_MINUTE_BARS:
+        raise ValueError(
+            "insufficient contiguous exact USD-M technical bars "
+            f"({len(required_tail)}/{MIN_ONE_MINUTE_BARS})"
+        )
     rows = load_recent(
         con, symbol, limit=1440, before_ms=int(now.timestamp() * 1000)
     )
     one = contiguous_tail(rows)
     if len(one) < MIN_ONE_MINUTE_BARS:
-        raise ValueError(
-            "insufficient contiguous exact USD-M technical bars "
-            f"({len(one)}/{MIN_ONE_MINUTE_BARS})"
-        )
+        raise ValueError("technical bar tail changed during plan construction")
     frames = {"1m": frame_metrics(one)}
     five = aggregate(one, 5)
     if len(five) >= 24:
