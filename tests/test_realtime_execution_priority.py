@@ -36,7 +36,7 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         block = source[start:end]
 
         self.assertIn("AGCA_SCAN_SQLITE_TIMEOUT_SECONDS", block)
-        self.assertIn("PRAGMA busy_timeout=", block)
+        self.assertIn("_local_sqlite_connection(timeout_seconds)", block)
         self.assertNotIn("ensure_tables(", block)
         self.assertNotIn("position_management.ensure_tables(", block)
 
@@ -63,18 +63,24 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         self.assertIn("def _local_sqlite_connection(", source)
         self.assertIn("sqlite3.connect(DB_NAME", source)
 
-        for name, end_name in (
-            ("universe_connection", "refresh_symbol_cache_once"),
-            ("decision_connection", "scan_connection"),
-            ("scan_connection", "latest_any_execution_state"),
-            ("maintenance_once", "maintenance"),
-        ):
-            start = source.index(f"    def {name}(")
-            end = source.index(f"    def {end_name}(", start)
+        blocks = (
+            ("    def universe_connection():", "    def refresh_symbol_cache_once("),
+            ("    def decision_connection():", "    def scan_connection():"),
+            ("    def scan_connection():", "    def latest_any_execution_state("),
+            ("    def maintenance_once():", "    async def maintenance():"),
+        )
+        for start_token, end_token in blocks:
+            start = source.index(start_token)
+            end = source.index(end_token, start)
             block = source[start:end]
             self.assertIn("_local_sqlite_connection(", block)
             self.assertNotIn("connect(DB_NAME", block)
             self.assertNotIn("ensure_tables(", block)
+
+        helper_start = source.index("def _local_sqlite_connection(")
+        helper_end = source.index("\n\ndef worker_process_source_state", helper_start)
+        helper_block = source[helper_start:helper_end]
+        self.assertIn("PRAGMA busy_timeout=", helper_block)
 
     def test_scan_failure_updates_completion_and_duration_telemetry(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
