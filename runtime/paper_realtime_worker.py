@@ -22,8 +22,7 @@ from paper_trading.crypto_profit_agent import (
 from paper_trading.exchange_metadata import load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
-from paper_trading import experience_memory, position_management, realtime_market, trade_learning
-from paper_trading import strategy_allocator
+from paper_trading import position_management, realtime_market
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -314,7 +313,6 @@ async def run():
         write_market_state(live_state_snapshot())
 
     last_selection_attempt_at = None
-    last_learning_at = None
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
@@ -444,7 +442,7 @@ async def run():
 
     def process_state(state, observed_ms):
         """Run DB/decision/PAPER work off the websocket event loop."""
-        nonlocal last_health_at, last_selection_attempt_at, last_learning_at
+        nonlocal last_health_at, last_selection_attempt_at
         work_con = decision_connection()
         observed_at = datetime.fromtimestamp(
             observed_ms / 1000, tz=timezone.utc
@@ -501,14 +499,6 @@ async def run():
             # immediately and starves position/fill management.
             last_selection_attempt_at = now()
 
-        if (
-            last_learning_at is None
-            or (observed_at - last_learning_at).total_seconds() >= 60.0
-        ):
-            trade_learning.run(work_con, FORWARD_COHORT, observed_at)
-            strategy_allocator.rebalance(work_con, observed_at)
-            last_learning_at = now()
-
         # A scan can take seconds. Never fill/manage against the state that
         # started that scan; refresh from the ingest cache immediately before
         # any PAPER execution or position-management action.
@@ -557,16 +547,6 @@ async def run():
         result = position_management.process_market_state(
             work_con, execution_state, execution_at, rule
         )
-        if result.get("status") == "POSITION_CLOSED":
-            reviews = experience_memory.review_closed_positions(
-                work_con, execution_at
-            )
-            learning = trade_learning.run(
-                work_con, FORWARD_COHORT, execution_at
-            )
-            result["new_experience_reviews"] = reviews
-            result["learning_status"] = learning["status"]
-
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
         }:
@@ -642,9 +622,6 @@ async def run():
                 ),
                 now(),
             )
-            if reconciled["resolved"]:
-                experience_memory.review_closed_positions(maintenance_con, now())
-                trade_learning.run(maintenance_con, FORWARD_COHORT, now())
             return reconciled
         finally:
             maintenance_con.close()
