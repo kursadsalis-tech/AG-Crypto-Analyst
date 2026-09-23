@@ -106,6 +106,13 @@ def upsert_bars(connection, bars):
     return len(prepared)
 
 
+def _table_exists(connection):
+    return bool(connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (TABLE,),
+    ).fetchone())
+
+
 def _writer_connection(database_path):
     connection = connect(database_path, timeout=30)
     connection.execute("PRAGMA busy_timeout=30000")
@@ -157,7 +164,11 @@ def persist_bars(
 
 
 def recent_count(connection, symbol, *, since_ms):
-    ensure_table(connection)
+    # Read paths must never perform DDL on the hot runtime connection.  The
+    # technical worker owns schema creation during startup; a missing table is
+    # simply no cached history yet.
+    if not _table_exists(connection):
+        return 0
     return int(connection.execute(f"""
         SELECT COUNT(*) FROM {TABLE}
         WHERE symbol=? AND market_type=? AND provider=?
@@ -180,7 +191,13 @@ def symbols_needing_bootstrap(
 
 
 def load_recent(connection, symbol, *, limit=720, before_ms=None):
-    ensure_table(connection)
+    # This function is used inside every pre-trade technical plan.  Running
+    # CREATE TABLE / CREATE INDEX here can wait on the concurrent kline writer's
+    # schema lock for the full SQLite busy timeout for each candidate.  Keep the
+    # decision hot path strictly read-only and fail closed when bootstrap has not
+    # created the cache yet.
+    if not _table_exists(connection):
+        return []
     params = [str(symbol).upper(), MARKET_TYPE, PROVIDER]
     where = "symbol=? AND market_type=? AND provider=?"
     if before_ms is not None:

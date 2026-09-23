@@ -73,6 +73,40 @@ class TechnicalBarCacheTests(unittest.TestCase):
         )
         con.close()
 
+    def test_hot_read_paths_do_not_run_schema_ddl(self):
+        con = sqlite3.connect(":memory:")
+        store.ensure_table(con)
+        store.upsert_bars(con, [bar()])
+        statements = []
+        con.set_trace_callback(statements.append)
+
+        loaded = store.load_recent(con, "BTCUSDT", limit=10, before_ms=NOW)
+        count = store.recent_count(con, "BTCUSDT", since_ms=NOW - 120_000)
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(count, 1)
+        ddl = [
+            statement for statement in statements
+            if statement.lstrip().upper().startswith(("CREATE TABLE", "CREATE INDEX"))
+        ]
+        self.assertEqual(ddl, [])
+        con.close()
+
+    def test_missing_cache_table_fails_closed_without_ddl(self):
+        con = sqlite3.connect(":memory:")
+        statements = []
+        con.set_trace_callback(statements.append)
+
+        self.assertEqual(store.load_recent(con, "BTCUSDT"), [])
+        self.assertEqual(
+            store.recent_count(con, "BTCUSDT", since_ms=NOW - 120_000), 0
+        )
+        self.assertFalse(any(
+            statement.lstrip().upper().startswith(("CREATE TABLE", "CREATE INDEX"))
+            for statement in statements
+        ))
+        con.close()
+
     def test_persist_bars_waits_through_transient_writer_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "technical.db"
