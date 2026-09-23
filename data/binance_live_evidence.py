@@ -451,7 +451,10 @@ async def collect_minute_snapshots(
     # universe, not only for the rotating 12-symbol deep-attention slice.
     # Otherwise every rotation creates gaps and the adaptive pre-trade planner
     # correctly fails closed forever with an unusable contiguous tail.
-    technical_symbols = _technical_kline_symbols(universe)
+    technical_symbols = (
+        _technical_kline_symbols(universe)
+        if closed_bar_sink is not None else []
+    )
 
     public_params = [
         f"{symbol.lower()}@depth20@500ms" for symbol in sorted(states)
