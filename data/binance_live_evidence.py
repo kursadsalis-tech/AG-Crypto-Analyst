@@ -61,6 +61,13 @@ def _symbol(instrument_row):
     return instrument[:-10].replace("-", "") + "USDT"
 
 
+def _technical_kline_symbols(universe):
+    """Return every broad eligible USD-M symbol needing continuous 1m bars."""
+    return sorted({
+        _symbol(row) for row in universe.get("selected", [])
+    })
+
+
 def _positive(value):
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
@@ -404,9 +411,7 @@ async def collect_minute_snapshots(
     # universe, not only for the rotating 12-symbol deep-attention slice.
     # Otherwise every rotation creates gaps and the adaptive pre-trade planner
     # correctly fails closed forever with an unusable contiguous tail.
-    technical_symbols = sorted({
-        _symbol(row) for row in universe.get("selected", [])
-    })
+    technical_symbols = _technical_kline_symbols(universe)
 
     public_params = [
         f"{symbol.lower()}@depth20@500ms" for symbol in sorted(states)
