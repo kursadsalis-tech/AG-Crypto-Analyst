@@ -9,6 +9,7 @@ import sqlite3
 import string
 import subprocess
 import tempfile
+import time
 import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -489,6 +490,25 @@ async def run():
             scan_local.connection = db
         return db
 
+    def reset_scan_connection():
+        db = getattr(scan_local, "connection", None)
+        if db is not None:
+            try:
+                db.rollback()
+            except sqlite3.Error:
+                pass
+            try:
+                db.close()
+            except sqlite3.Error:
+                pass
+        scan_local.connection = None
+
+    def scan_sqlite_busy(exc):
+        return (
+            isinstance(exc, sqlite3.OperationalError)
+            and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+        )
+
     def latest_any_execution_state():
         with latest_execution_lock:
             if not latest_execution_states:
@@ -504,7 +524,6 @@ async def run():
         nonlocal last_scan_duration_ms, last_scan_error
         nonlocal last_scan_error_detail, last_scan_sqlite_error_name
         nonlocal last_scan_sqlite_error_code
-        work_con = scan_connection()
         observed_at = now()
         started = loop.time()
         last_scan_started_at = observed_at.isoformat()
@@ -512,11 +531,35 @@ async def run():
         last_scan_error_detail = None
         last_scan_sqlite_error_name = None
         last_scan_sqlite_error_code = None
+        attempts = max(
+            1, int(os.getenv("AGCA_SCAN_BUSY_RETRY_ATTEMPTS", "4"))
+        )
+        selected = None
         selection_result = {}
+        work_con = None
         try:
-            selected = select_new_positions(
-                work_con, observed_at, metadata, telemetry=selection_result
-            )
+            for attempt in range(1, attempts + 1):
+                work_con = scan_connection()
+                selection_result = {}
+                try:
+                    selected = select_new_positions(
+                        work_con, observed_at, metadata,
+                        telemetry=selection_result,
+                    )
+                    break
+                except Exception as exc:
+                    if not scan_sqlite_busy(exc) or attempt >= attempts:
+                        raise
+                    # A DEFERRED read->write promotion can return SQLITE_BUSY
+                    # immediately even with busy_timeout because waiting would
+                    # risk a lock-upgrade deadlock.  Roll back the snapshot,
+                    # discard the connection, and retry from a fresh SQLite
+                    # transaction after a short bounded backoff.
+                    reset_scan_connection()
+                    work_con = None
+                    time.sleep(min(0.05 * attempt, 0.20))
+            if selected is None:
+                raise RuntimeError("scan retry loop exited without result")
         except Exception as exc:
             last_scan_error = type(exc).__name__
             last_scan_error_detail = str(exc)[:240]
@@ -787,10 +830,7 @@ async def run():
                 decision_local.connection = None
 
         def close_scan_connection():
-            db = getattr(scan_local, "connection", None)
-            if db is not None:
-                db.close()
-                scan_local.connection = None
+            reset_scan_connection()
 
         def close_universe_connection():
             db = getattr(universe_local, "connection", None)
