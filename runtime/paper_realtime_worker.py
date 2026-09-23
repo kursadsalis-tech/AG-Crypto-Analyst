@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import signal
+import sqlite3
 import string
 import subprocess
 import tempfile
@@ -44,6 +45,24 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def _local_sqlite_connection(timeout_seconds=30.0):
+    """Plain local SQLite connection for already-initialized realtime hot paths.
+
+    The canonical startup connection installs schemas/outbox triggers once.
+    Repeated RuntimeConnection construction also runs outbox/trigger DDL and can
+    block behind the continuously writing technical-kline worker. Existing
+    SQLite triggers still enqueue mirrored table changes from this plain
+    connection, so local execution remains authoritative and async mirroring is
+    preserved.
+    """
+    timeout_seconds = max(0.1, float(timeout_seconds))
+    db = sqlite3.connect(DB_NAME, timeout=timeout_seconds)
+    db.execute(
+        f"PRAGMA busy_timeout={max(100, int(timeout_seconds * 1000))}"
+    )
+    return db
 
 
 def worker_process_source_state(repo_path=None):
@@ -411,7 +430,7 @@ async def run():
             # Schema was initialized on the canonical startup connection before
             # worker threads were created.  Thread-local hot paths must not
             # repeat DDL against the live SQLite writer.
-            db = connect(DB_NAME, timeout=30)
+            db = _local_sqlite_connection(30)
             universe_local.connection = db
         return db
 
@@ -447,7 +466,7 @@ async def run():
         db = getattr(decision_local, "connection", None)
         if db is None:
             # Runtime schema is initialized once before concurrent tasks start.
-            db = connect(DB_NAME, timeout=30)
+            db = _local_sqlite_connection(30)
             decision_local.connection = db
         return db
 
@@ -460,10 +479,7 @@ async def run():
             timeout_seconds = max(
                 0.1, float(os.getenv("AGCA_SCAN_SQLITE_TIMEOUT_SECONDS", "2"))
             )
-            db = connect(DB_NAME, timeout=timeout_seconds)
-            db.execute(
-                f"PRAGMA busy_timeout={max(100, int(timeout_seconds * 1000))}"
-            )
+            db = _local_sqlite_connection(timeout_seconds)
             scan_local.connection = db
         return db
 
@@ -486,12 +502,19 @@ async def run():
         last_scan_started_at = observed_at.isoformat()
         last_scan_error = None
         selection_result = {}
-        selected = select_new_positions(
-            work_con, observed_at, metadata, telemetry=selection_result
-        )
-        completed = now()
-        last_scan_completed_at = completed.isoformat()
-        last_scan_duration_ms = round((loop.time() - started) * 1000.0, 3)
+        try:
+            selected = select_new_positions(
+                work_con, observed_at, metadata, telemetry=selection_result
+            )
+        except Exception as exc:
+            last_scan_error = type(exc).__name__
+            raise
+        finally:
+            completed = now()
+            last_scan_completed_at = completed.isoformat()
+            last_scan_duration_ms = round(
+                (loop.time() - started) * 1000.0, 3
+            )
         latest_scan = work_con.execute(
             """SELECT core_status,candidate_count,selected_count,
                       active_position_count,capacity,available_exposure,
@@ -677,9 +700,11 @@ async def run():
             )
 
     def maintenance_once():
-        maintenance_con = connect(DB_NAME, timeout=30)
+        # Startup already initialized schema and remote-mirror triggers.
+        # Repeating RuntimeConnection construction here every minute would run
+        # local DDL and can contend with realtime writers.
+        maintenance_con = _local_sqlite_connection(30)
         try:
-            ensure_tables(maintenance_con)
             reconciled = position_management.reconcile_pending_funding(
                 maintenance_con,
                 lambda **kwargs: fetch_funding_history_via_postgres(

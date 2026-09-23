@@ -36,7 +36,7 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         block = source[start:end]
 
         self.assertIn("AGCA_SCAN_SQLITE_TIMEOUT_SECONDS", block)
-        self.assertIn("PRAGMA busy_timeout=", block)
+        self.assertIn("_local_sqlite_connection(timeout_seconds)", block)
         self.assertNotIn("ensure_tables(", block)
         self.assertNotIn("position_management.ensure_tables(", block)
 
@@ -55,6 +55,44 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
             end = source.index(f"    def {end_name}(", start)
             block = source[start:end]
             self.assertNotIn("ensure_tables(", block)
+
+    def test_realtime_thread_connections_use_plain_sqlite_after_startup(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("def _local_sqlite_connection(", source)
+        self.assertIn("sqlite3.connect(DB_NAME", source)
+
+        blocks = (
+            ("    def universe_connection():", "    def refresh_symbol_cache_once("),
+            ("    def decision_connection():", "    def scan_connection():"),
+            ("    def scan_connection():", "    def latest_any_execution_state("),
+            ("    def maintenance_once():", "    async def maintenance():"),
+        )
+        for start_token, end_token in blocks:
+            start = source.index(start_token)
+            end = source.index(end_token, start)
+            block = source[start:end]
+            self.assertIn("_local_sqlite_connection(", block)
+            self.assertNotIn("connect(DB_NAME", block)
+            self.assertNotIn("ensure_tables(", block)
+
+        helper_start = source.index("def _local_sqlite_connection(")
+        helper_end = source.index("\n\ndef worker_process_source_state", helper_start)
+        helper_block = source[helper_start:helper_end]
+        self.assertIn("PRAGMA busy_timeout=", helper_block)
+
+    def test_scan_failure_updates_completion_and_duration_telemetry(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        start = source.index("    def scan_once():")
+        end = source.index("    async def scan_loop(", start)
+        block = source[start:end]
+        self.assertIn("finally:", block)
+        self.assertIn("last_scan_completed_at = completed.isoformat()", block)
+        self.assertIn("last_scan_duration_ms = round(", block)
+        self.assertIn("last_scan_error = type(exc).__name__", block)
 
     def test_scan_runtime_observability_is_exposed_in_health(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
