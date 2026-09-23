@@ -247,6 +247,7 @@ def ensure_tables(con):
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
         ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
         ("technical_basis_ratio", "REAL"),
+        ("technical_execution_plan_json", "TEXT"),
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -1235,6 +1236,11 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
+            con.execute("""UPDATE paper_agent_positions
+                SET technical_execution_plan_json=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (
+                json.dumps(plan, sort_keys=True), cursor.lastrowid,
+            ))
             row["execution_risk"] = {
                 "risk_tier": tier.tier, "leverage": tier.leverage,
                 "margin_allocated": notional / tier.leverage,
@@ -1789,14 +1795,18 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
     """Fill pending PAPER entries only from the authoritative live state callback."""
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
-               market_type,decision_source,technical_basis_ratio
+               market_type,decision_source,technical_basis_ratio,
+               technical_execution_plan_json
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY' AND symbol=? AND market_type=?
         ORDER BY selected_at,position_id
     """, (live.symbol, live.market_type)).fetchall()
     filled = cancelled = 0
-    for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type, decision_source, technical_basis_ratio) in rows:
+    for (
+        position_id, symbol, planned_entry_time, notional, direction, leverage,
+        market_type, decision_source, technical_basis_ratio,
+        technical_execution_plan_json,
+    ) in rows:
         planned = parse_time(planned_entry_time)
         if now < planned:
             continue
@@ -1831,23 +1841,119 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
                 thesis = json.loads(thesis_row[0]) if thesis_row else {}
             except (TypeError, ValueError, json.JSONDecodeError):
                 thesis = {}
-            plan = thesis.get("technical_trade_plan")
-            if not isinstance(plan, dict):
+
+            selection_plan = thesis.get("technical_trade_plan")
+            if not isinstance(selection_plan, dict):
                 con.execute("""UPDATE paper_agent_positions SET
                     status='CANCELLED',cancel_reason='TECHNICAL_PLAN_MISSING'
                     WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
                 cancelled += 1
                 continue
+            try:
+                plan = (
+                    json.loads(technical_execution_plan_json)
+                    if technical_execution_plan_json else selection_plan
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                plan = None
             if (
-                str(plan.get("symbol")) != symbol
+                not isinstance(plan, dict)
+                or str(plan.get("symbol")) != symbol
                 or str(plan.get("direction")) != direction
-                or not technical_trade_plan.plan_is_fresh(plan, now)
             ):
                 con.execute("""UPDATE paper_agent_positions SET
-                    status='CANCELLED',cancel_reason='TECHNICAL_PLAN_STALE_OR_MISMATCHED'
+                    status='CANCELLED',cancel_reason='TECHNICAL_PLAN_MISMATCHED'
                     WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
                 cancelled += 1
                 continue
+
+            try:
+                replan_reason = technical_trade_plan.replan_reason(
+                    con, plan, now=now
+                )
+            except sqlite3.Error:
+                # Local cache contention/unavailability is not permission to use
+                # a stale plan. Keep the intent pending and retry on a later tick.
+                continue
+
+            if replan_reason is not None:
+                if replan_reason in {
+                    "MALFORMED_TECHNICAL_PLAN",
+                    "LOCAL_TECHNICAL_DATA_INVALID",
+                }:
+                    con.execute("""UPDATE paper_agent_positions SET
+                        status='CANCELLED',cancel_reason='TECHNICAL_PLAN_INVALID'
+                        WHERE position_id=? AND status='PENDING_ENTRY'""",
+                        (position_id,))
+                    cancelled += 1
+                    continue
+                try:
+                    replanned = technical_trade_plan.rebuild_for_pending(
+                        con, plan, now=now, market_type=market_type
+                    )
+                except (ValueError, sqlite3.Error):
+                    # Fail closed without destroying a bounded pending intent:
+                    # fresh canonical local evidence may become available before
+                    # the normal pending-entry expiry.
+                    continue
+                if (
+                    not technical_trade_plan.plan_is_fresh(replanned, now)
+                    or not bool((replanned.get("risk") or {}).get("risk_compatible"))
+                ):
+                    con.execute("""UPDATE paper_agent_positions SET
+                        status='CANCELLED',
+                        cancel_reason='TECHNICAL_REPLAN_EXECUTION_INFEASIBLE'
+                        WHERE position_id=? AND status='PENDING_ENTRY'""",
+                        (position_id,))
+                    cancelled += 1
+                    continue
+
+                frozen_risk = thesis.get("execution_risk") or {}
+                try:
+                    risk_budget = float(
+                        frozen_risk["planned_stop_and_fee_risk_usdt"]
+                    )
+                    frozen_fee_rate = float(frozen_risk["taker_fee_rate"])
+                    new_stop_pct = float(replanned["risk"]["stop_distance_pct"])
+                except (KeyError, TypeError, ValueError):
+                    # Replanning may never guess or expand the original risk
+                    # budget if the frozen decision evidence is incomplete.
+                    continue
+                denominator = new_stop_pct / 100.0 + 2.0 * frozen_fee_rate
+                if (
+                    not math.isfinite(risk_budget) or risk_budget <= 0
+                    or not math.isfinite(frozen_fee_rate) or frozen_fee_rate < 0
+                    or not math.isfinite(denominator) or denominator <= 0
+                ):
+                    continue
+                risk_bounded_notional = risk_budget / denominator
+                revised_notional = min(float(notional), risk_bounded_notional)
+                executable_minimum = max(
+                    MIN_PAPER_NOTIONAL_USDT,
+                    float(rules.min_notional) if rules else 5.0,
+                )
+                if revised_notional < executable_minimum:
+                    con.execute("""UPDATE paper_agent_positions SET
+                        status='CANCELLED',
+                        cancel_reason='TECHNICAL_REPLAN_NOTIONAL_BELOW_MINIMUM'
+                        WHERE position_id=? AND status='PENDING_ENTRY'""",
+                        (position_id,))
+                    cancelled += 1
+                    continue
+
+                plan = replanned
+                notional = revised_notional
+                # A replan has a new USD-M source reference. A prior SPOT basis
+                # belongs to the old plan and must never be reused.
+                technical_basis_ratio = None
+                con.execute("""UPDATE paper_agent_positions SET
+                    notional=?,margin_allocated=?,
+                    technical_execution_plan_json=?,technical_basis_ratio=NULL
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (
+                    notional, notional / float(leverage),
+                    json.dumps(plan, sort_keys=True), position_id,
+                ))
+
             try:
                 levels = technical_trade_plan.execution_levels(
                     plan, float(executable_price),
