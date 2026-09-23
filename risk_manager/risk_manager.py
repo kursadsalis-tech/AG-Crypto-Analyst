@@ -12,7 +12,7 @@ import sqlite3
 from database.runtime_store import connect as runtime_connect
 import statistics
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from data.truth_engine import (
@@ -29,6 +29,8 @@ USER_AGENT = "AG-Crypto-Analyst/1.0.0"
 POLICY_VERSION = "MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK"
 KLINE_LIMIT = 170
 MIN_CLOSED_CANDLES = 169
+DAILY_KLINE_LIMIT = 400
+MIN_CLOSED_DAILY_CANDLES = 90
 MIN_COVERAGE_RATIO = 0.80
 
 SYMBOLS = (
@@ -185,6 +187,39 @@ def fetch_closed_1h_klines(
         selected,
         source=f"{source_prefix}:{symbol}",
         minimum_rows=MIN_CLOSED_CANDLES,
+    )
+
+
+def fetch_closed_daily_klines(symbol):
+    """Fetch closed Binance Spot daily history for long-regime context only."""
+    response = requests.get(
+        BINANCE_KLINES_URL,
+        params={
+            "symbol": symbol,
+            "interval": "1d",
+            "limit": DAILY_KLINE_LIMIT,
+        },
+        timeout=20,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise RuntimeError(f"{symbol}: Binance daily kline yanıtı liste değil")
+    now_ms = int(time.time() * 1000)
+    closed = [row for row in payload if len(row) >= 8 and int(row[6]) < now_ms]
+    if len(closed) < MIN_CLOSED_DAILY_CANDLES:
+        raise RuntimeError(
+            f"{symbol}: uzun teknik bağlam için yetersiz günlük mum "
+            f"({len(closed)}/{MIN_CLOSED_DAILY_CANDLES})"
+        )
+    selected = closed[-DAILY_KLINE_LIMIT:]
+    return validate_closed_klines(
+        selected,
+        source=f"BINANCE_SPOT_DAILY_TECH_CONTEXT:{symbol}",
+        minimum_rows=MIN_CLOSED_DAILY_CANDLES,
+        interval=timedelta(days=1),
+        maximum_staleness=timedelta(days=2, hours=5),
     )
 
 
@@ -660,9 +695,16 @@ def main():
                     if symbol in dynamic_symbols and symbol not in SYMBOLS
                     else "REFERENCE_SPOT"
                 )
+                daily_candles = None
+                try:
+                    daily_candles = fetch_closed_daily_klines(symbol)
+                except Exception as daily_exc:
+                    technical_context_errors[
+                        f"{symbol}:LONG_REGIME"
+                    ] = f"{type(daily_exc).__name__}:{daily_exc}"
                 technical = realtime_technical_context.build(
                     candles, symbol=symbol, generated_at=utcnow(),
-                    market_scope=market_scope,
+                    market_scope=market_scope, daily_candles=daily_candles,
                 )
                 elapsed_ms = (time.perf_counter() - tech_started) * 1000.0
                 technical_compute_ms += elapsed_ms
@@ -694,7 +736,7 @@ def main():
         "technical_context_count": len(technical_contexts),
         "technical_context_compute_ms": round(technical_compute_ms, 3),
         "technical_context_errors": technical_context_errors,
-        "technical_context_authority": "OBSERVATION_ONLY",
+        "technical_context_authority": "SUPPORT_CONTEXT_FOR_TRADE_PLAN",
     })
     return result
 
