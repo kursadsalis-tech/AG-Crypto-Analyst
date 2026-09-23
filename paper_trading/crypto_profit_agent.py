@@ -51,6 +51,7 @@ MAX_TOTAL_EXPOSURE = 0.60
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
 MIN_PAPER_NOTIONAL_USDT = 10.0
+TECHNICAL_ENTRY_PLAN_MAX_AGE_SECONDS = 5 * 60
 MIN_DIRECTION_PROBABILITY = 0.52
 MIN_PROBABILITY_GAP = 0.05
 TRADE_HORIZONS = (4, 24)
@@ -499,6 +500,68 @@ def portfolio_snapshot(con, now=None):
     }
 
 
+def _frozen_technical_entry_gate(con, position_id, executable_price, now):
+    """Return ALLOW/WAIT/CANCEL from the immutable pre-entry technical plan.
+
+    Positions that predate immutable theses remain legacy-manageable. A thesis
+    created by the current selector must contain a technical plan.
+    """
+    thesis_table = con.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type='table' AND name='paper_agent_decision_theses'"
+    ).fetchone()
+    if not thesis_table:
+        return "ALLOW", "LEGACY_NO_THESIS_TABLE", None
+
+    row = con.execute(
+        "SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    if not row:
+        return "ALLOW", "LEGACY_NO_FROZEN_THESIS", None
+    try:
+        thesis = json.loads(row[0] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return "CANCEL", "FROZEN_THESIS_INVALID", None
+
+    plan = thesis.get("technical_trade_plan")
+    if not isinstance(plan, dict):
+        return "CANCEL", "TECHNICAL_PLAN_MISSING", None
+    try:
+        generated = parse_time(plan["generated_at"])
+        age = (now - generated).total_seconds()
+        entry = plan["entry"]
+        low, high = float(entry["low"]), float(entry["high"])
+        direction = str(plan["direction"]).upper()
+        stop = float(plan["risk"]["invalidation_price"])
+    except (KeyError, TypeError, ValueError):
+        return "CANCEL", "TECHNICAL_PLAN_INVALID", plan
+    if (
+        age < -1.0
+        or age > TECHNICAL_ENTRY_PLAN_MAX_AGE_SECONDS
+        or not all(math.isfinite(value) and value > 0 for value in (low, high, stop))
+        or low > high
+        or direction not in {"LONG", "SHORT"}
+    ):
+        return "CANCEL", "TECHNICAL_PLAN_STALE_OR_INVALID", plan
+
+    if executable_price is None:
+        return "ALLOW", "TECHNICAL_PLAN_FRESH", plan
+    try:
+        price = float(executable_price)
+    except (TypeError, ValueError):
+        return "WAIT", "TECHNICAL_ENTRY_PRICE_UNAVAILABLE", plan
+    if not math.isfinite(price) or price <= 0:
+        return "WAIT", "TECHNICAL_ENTRY_PRICE_UNAVAILABLE", plan
+    if not low <= price <= high:
+        return "WAIT", "PRICE_OUTSIDE_TECHNICAL_ENTRY_ZONE", plan
+    if direction == "LONG" and stop >= price:
+        return "CANCEL", "TECHNICAL_STOP_NOT_BELOW_ENTRY", plan
+    if direction == "SHORT" and stop <= price:
+        return "CANCEL", "TECHNICAL_STOP_NOT_ABOVE_ENTRY", plan
+    return "ALLOW", "PRICE_INSIDE_TECHNICAL_ENTRY_ZONE", plan
+
+
 def cancel_expired_pending_entries(con, now):
     """Cancel stale PAPER entry intents without waiting for a market callback."""
     rows = con.execute("""
@@ -512,6 +575,23 @@ def cancel_expired_pending_entries(con, now):
         try:
             planned = parse_time(planned_entry_time)
         except (TypeError, ValueError):
+            continue
+        plan_action, plan_reason, _ = _frozen_technical_entry_gate(
+            con, position_id, None, now
+        )
+        if plan_action == "CANCEL":
+            record_execution(
+                con, position_id, now, "ENTRY", symbol,
+                "BUY" if direction == "LONG" else "SELL", market_type,
+                ExecutionDecision("REJECTED", plan_reason),
+            )
+            updated = con.execute("""
+                UPDATE paper_agent_positions
+                SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'
+            """, (plan_reason, position_id))
+            if updated.rowcount:
+                cancelled += 1
             continue
         if now - planned <= execution_market_data.MAX_ENTRY_OBSERVATION_DELAY:
             continue
@@ -603,6 +683,23 @@ def fill_pending(con, now, exchange_metadata=None):
             continue
         notional = float(notional)
         side = "BUY" if direction == "LONG" else "SELL"
+        executable_price = result.best_ask if side == "BUY" else result.best_bid
+        plan_action, plan_reason, _ = _frozen_technical_entry_gate(
+            con, position_id, executable_price, now
+        )
+        if plan_action == "WAIT":
+            continue
+        if plan_action == "CANCEL":
+            record_execution(
+                con, position_id, now, "ENTRY", symbol, side, market_type,
+                ExecutionDecision("REJECTED", plan_reason),
+            )
+            con.execute("""
+                UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'
+            """, (plan_reason, position_id))
+            cancelled += 1
+            continue
         execution = execute_paper(OrderIntent(symbol, side, notional), result, rules)
         fill = execution.fill
         try:
@@ -1846,6 +1943,17 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         side_quote_volume = (
             live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
         )
+        plan_action, plan_reason, _ = _frozen_technical_entry_gate(
+            con, position_id, executable_price, now
+        )
+        if plan_action == "WAIT":
+            continue
+        if plan_action == "CANCEL":
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                cancel_reason=? WHERE position_id=? AND status='PENDING_ENTRY'""",
+                (plan_reason, position_id))
+            cancelled += 1
+            continue
         fill = simulated_fill(
             reference_price=float(executable_price) if executable_price is not None else 0.0,
             requested_notional=float(notional), side=side,
@@ -1860,6 +1968,17 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
             source=live.quote_source,
         )
         if fill is None:
+            continue
+        fill_gate, fill_reason, _ = _frozen_technical_entry_gate(
+            con, position_id, fill.price, now
+        )
+        if fill_gate == "WAIT":
+            continue
+        if fill_gate == "CANCEL":
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                cancel_reason=? WHERE position_id=? AND status='PENDING_ENTRY'""",
+                (fill_reason, position_id))
+            cancelled += 1
             continue
         entry_price, fee = fill.price, fill.fee
         actual_notional = fill.quantity * fill.price
