@@ -16,6 +16,7 @@ MAX_BAR_AGE_SECONDS = 180
 MIN_STOP_PCT = 0.50
 MAX_STOP_PCT = 5.00
 MAX_ENTRY_PLAN_AGE_SECONDS = 180
+MAX_SPOT_USDM_BASIS_DEVIATION_PCT = 5.0
 _PLAN_CACHE = {}
 
 
@@ -384,6 +385,11 @@ def execution_levels(plan, execution_reference_price, *, basis_ratio=None):
     ratio = float(basis_ratio)
     if not math.isfinite(ratio) or ratio <= 0:
         raise ValueError("invalid frozen technical basis ratio")
+    if (
+        market_type == "SPOT"
+        and abs(ratio - 1.0) * 100.0 > MAX_SPOT_USDM_BASIS_DEVIATION_PCT
+    ):
+        raise ValueError("spot/usdm technical basis outside policy envelope")
     return {
         "basis_ratio": ratio,
         "entry_low": float(plan["entry"]["low"]) * ratio,
