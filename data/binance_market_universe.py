@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 
-VERSION = "BINANCE_WS_MARKET_UNIVERSE_V2"
+VERSION = "BINANCE_WS_MARKET_UNIVERSE_V3_ROUTED"
 
 
 def _float(value, default=0.0):
@@ -44,6 +44,9 @@ def build_universe(
     for row in tickers:
         if not isinstance(row, dict):
             exclude("INVALID_TICKER_ROW")
+            continue
+        if row.get("st") is not None and int(row["st"]) != 1:
+            exclude("NOT_USD_M_UM")
             continue
         symbol = str(row.get("s") or row.get("symbol") or "").upper()
         # USD-M delivery contracts carry suffixes like BTCUSDT_YYMMDD.  The
@@ -94,7 +97,7 @@ def build_universe(
         "snapshot_timestamp_ms": int(snapshot_ms),
         "selection_contract": {
             "exchange": "BINANCE",
-            "transport": "USD_M_WEBSOCKET_ALL_MARKET_TICKER",
+            "transport": "USD_M_ROUTED_WEBSOCKET_TICKER_PLUS_BOOK",
             "instrument_type": "USD_M_LINEAR_PERPETUAL",
             "min_quote_volume_24h_estimate_usd": min_quote_volume_usd,
             "max_spread_bps": max_spread_bps,
