@@ -102,6 +102,9 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         self.assertIn('"started_at": last_scan_started_at', source)
         self.assertIn('"completed_at": last_scan_completed_at', source)
         self.assertIn('"duration_ms": last_scan_duration_ms', source)
+        self.assertIn('"error_detail": last_scan_error_detail', source)
+        self.assertIn('"sqlite_error_name": last_scan_sqlite_error_name', source)
+        self.assertIn('"sqlite_error_code": last_scan_sqlite_error_code', source)
 
     def test_execution_executor_is_distinct_from_scan_executor(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
