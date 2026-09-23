@@ -86,6 +86,7 @@ canonical_units=(
   agca-paper-realtime-worker.service
   agca-technical-kline-worker.service
   agca-behavior-learning-worker.service
+  agca-trade-learning-worker.service
   agca-paper-realtime-health-monitor.service
   agca-paper-realtime-health-monitor.timer
   agca-exchange-metadata-refresh.service
@@ -134,6 +135,11 @@ done
 sudo systemctl enable agca-behavior-learning-worker.service
 sudo systemctl restart agca-behavior-learning-worker.service
 
+# Post-trade learning, experience review and strategy allocation are also
+# background specialist work. They must never block opportunity scans or fills.
+sudo systemctl enable agca-trade-learning-worker.service
+sudo systemctl restart agca-trade-learning-worker.service
+
 # A deployment must replace the running worker process, not only ensure the
 # unit is enabled. enable --now leaves an already-running process on the old
 # checkout/commit, which makes runtime source attestation lie about the deploy.
@@ -148,6 +154,7 @@ sudo systemctl restart agca-technical-kline-worker.service
 systemctl is-active --quiet agca-paper-realtime-worker.service
 systemctl is-active --quiet agca-technical-kline-worker.service
 systemctl is-active --quiet agca-behavior-learning-worker.service
+systemctl is-active --quiet agca-trade-learning-worker.service
 test ! -e "$DEPLOY/crypto_data.db"
 echo "COMMIT=$(git rev-parse HEAD)"
 echo "CANONICAL_DB=$DB"
