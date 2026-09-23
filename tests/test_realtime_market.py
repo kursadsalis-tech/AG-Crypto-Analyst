@@ -15,6 +15,28 @@ NOW = 1_788_000_000_000
 
 
 class RealtimeMarketTests(unittest.TestCase):
+    def test_spot_quote_transport_prefers_current_official_binance_endpoint(self):
+        self.assertEqual(
+            realtime_market.BINANCE_SPOT_WS_URLS[0],
+            "wss://stream.binance.com:9443/ws",
+        )
+        self.assertIn(
+            "wss://data-stream.binance.vision/ws",
+            realtime_market.BINANCE_SPOT_WS_URLS,
+        )
+        self.assertEqual(
+            realtime_market.binance_subscription_params(
+                [("BTCUSDT", "SPOT")], "SPOT", channels=("ticker",)
+            ),
+            ["btcusdt@ticker"],
+        )
+
+    def test_spot_stream_cannot_wait_forever_without_market_data(self):
+        source = inspect.getsource(realtime_market._binance_stream)
+        self.assertIn("BINANCE_SPOT_NO_MARKET_DATA", source)
+        self.assertIn("BINANCE_SPOT_SILENCE_TIMEOUT_SECONDS", source)
+        self.assertIn("spot_endpoint_index", source)
+
     def test_subscribes_execution_channels_for_dynamic_symbols(self):
         args = subscription_args(["CRVUSDT", "SOLUSDT"])
         self.assertEqual(len(args), 6)
