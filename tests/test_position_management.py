@@ -116,6 +116,55 @@ class PositionManagementTests(unittest.TestCase):
             ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
         )
 
+    def test_revalidated_execution_plan_overrides_selection_plan_at_open(self):
+        self.con.execute("""
+            CREATE TABLE paper_agent_decision_theses(
+                position_id INTEGER PRIMARY KEY, thesis_json TEXT
+            )
+        """)
+        selection_plan = {
+            "version": "SELECTION_PLAN",
+            "symbol": "BTCUSDT", "direction": "LONG",
+            "execution_market_type": "USD_M_PERPETUAL",
+            "source_reference_price": 100.0,
+            "entry": {"anchor": 100.0, "low": 99.8, "high": 100.2},
+            "risk": {"invalidation_price": 98.5, "stop_distance_pct": 1.7},
+            "targets": {"tp1_price": 101.5, "tp2_price": 103.0},
+        }
+        current_plan = {
+            **selection_plan,
+            "version": "REVALIDATED_EXECUTION_PLAN",
+            "risk": {"invalidation_price": 97.5, "stop_distance_pct": 2.5},
+            "targets": {"tp1_price": 102.0, "tp2_price": 104.0},
+        }
+        thesis = {
+            "technical_trade_plan": selection_plan,
+            "execution_risk": {"planned_stop_distance_pct": 1.7},
+        }
+        self.con.execute(
+            "INSERT INTO paper_agent_decision_theses VALUES(1,?)",
+            (json.dumps(thesis),),
+        )
+        self.con.execute("""
+            UPDATE paper_agent_positions
+            SET technical_basis_ratio=1,market_type='USD_M_PERPETUAL',
+                technical_execution_plan_json=?
+            WHERE position_id=1
+        """, (json.dumps(current_plan),))
+
+        result = initialize_open_positions(
+            self.con, ENTRY + timedelta(seconds=1)
+        )
+        self.assertEqual(result, {"initialized": 1, "blocked": []})
+        row = self.con.execute("""
+            SELECT current_stop_price,tp1_price,tp2_price,stop_distance_pct
+            FROM paper_position_management
+        """).fetchone()
+        self.assertAlmostEqual(row[0], 97.5)
+        self.assertAlmostEqual(row[1], 102.0)
+        self.assertAlmostEqual(row[2], 104.0)
+        self.assertAlmostEqual(row[3], 2.5)
+
     def test_one_r_reduces_and_stop_can_close_remainder(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         reduced = process_market_state(
