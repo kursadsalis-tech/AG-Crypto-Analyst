@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import asyncio
 import fcntl
 import hashlib
 import json
 import os
+import signal
 import sys
 import tempfile
 import time
@@ -102,31 +104,8 @@ async def collect_minute(route, universe, contract_values, args, minute_end_ms, 
     return [build_bundle(market, liquidations) for market in market_snapshots]
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--route")
-    parser.add_argument("--universe")
-    parser.add_argument("--refresh-live-universe", action="store_true")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--samples", type=int, default=5)
-    parser.add_argument("--cadence-seconds", type=float, default=10)
-    parser.add_argument("--database")
-    parser.add_argument("--retention-days", type=int, default=30)
-    parser.add_argument("--health-output")
-    parser.add_argument("--lock-file")
-    args = parser.parse_args()
-    if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
-        raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
+def run_cycle(args):
     cycle_started = time.monotonic()
-    lock_handle = None
-    if args.lock_file:
-        lock_path = Path(args.lock_file)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_handle = lock_path.open("w")
-        try:
-            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise SystemExit("Another market behavior observer owns the lock") from exc
     transport_timings = {}
     route_started = time.monotonic()
     if args.refresh_live_universe:
@@ -261,6 +240,55 @@ def main():
         "eligible_row_count": result["eligible_row_count"],
         "minute_end_timestamp_ms": result["minute_end_timestamp_ms"],
     }, sort_keys=True))
+
+
+def _cycle_timeout(signum, frame):
+    raise TimeoutError("market behavior cycle exceeded its time budget")
+
+
+def run_bounded_cycle(args):
+    previous = signal.signal(signal.SIGALRM, _cycle_timeout)
+    signal.alarm(args.cycle_timeout_seconds)
+    try:
+        return run_cycle(args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--route")
+    parser.add_argument("--universe")
+    parser.add_argument("--refresh-live-universe", action="store_true")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--samples", type=int, default=5)
+    parser.add_argument("--cadence-seconds", type=float, default=10)
+    parser.add_argument("--database")
+    parser.add_argument("--retention-days", type=int, default=30)
+    parser.add_argument("--health-output")
+    parser.add_argument("--lock-file")
+    parser.add_argument("--continuous", action="store_true",
+                        help="Publish consecutive minutes in one observer process")
+    parser.add_argument("--cycle-timeout-seconds", type=int, default=240)
+    args = parser.parse_args()
+    if args.cycle_timeout_seconds <= 0:
+        parser.error("--cycle-timeout-seconds must be positive")
+    if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
+        raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
+    with ExitStack() as stack:
+        if args.lock_file:
+            lock_path = Path(args.lock_file)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_handle = stack.enter_context(lock_path.open("w"))
+            try:
+                fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise SystemExit("Another market behavior observer owns the lock") from exc
+        while True:
+            run_bounded_cycle(args)
+            if not args.continuous:
+                return
 
 
 if __name__ == "__main__":

@@ -84,7 +84,10 @@ def build_readiness(root=PROJECT_ROOT):
             "private_umask": "UMask=0077" in text,
             "bounded_memory": "MemoryMax=" in text,
             "bounded_cpu": "CPUQuota=" in text,
-            "bounded_timeout": "TimeoutStartSec=" in text,
+            "bounded_timeout": ("TimeoutStartSec=" in text or (
+                "--continuous" in text and "--cycle-timeout-seconds 240" in text
+                and "Restart=on-failure" in text
+            )),
             "does_not_enable_itself": "systemctl enable" not in text,
         }
         services[name] = checks

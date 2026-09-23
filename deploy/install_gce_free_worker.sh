@@ -105,7 +105,6 @@ canonical_units=(
   agca-exact-macro-observer.service
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.service
-  agca-market-behavior-observer.timer
   agca-remote-mirror-drain.service
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.service
@@ -119,6 +118,7 @@ for unit in "${canonical_units[@]}"; do
   sudo install -m 644 "deploy/$unit" "/etc/systemd/system/$unit"
 done
 
+sudo systemctl disable --now agca-market-behavior-observer.timer 2>/dev/null || true
 sudo systemctl daemon-reload
 
 # These are intentionally not scheduled. Observer health is local-only and
@@ -131,13 +131,16 @@ active_timers=(
   agca-exchange-metadata-refresh.timer
   agca-risk-refresh.timer
   agca-exact-macro-observer.timer
-  agca-market-behavior-observer.timer
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.timer
 )
 for timer in "${active_timers[@]}"; do
   sudo systemctl enable --now "$timer"
 done
+
+# Keep the existing observer process alive across minute publications.
+sudo systemctl enable agca-market-behavior-observer.service
+sudo systemctl restart agca-market-behavior-observer.service
 
 # Historical behavior learning is intentionally outside the realtime decision
 # hot path. Start its low-priority cache worker before restarting the consumer.

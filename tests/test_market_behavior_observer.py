@@ -9,6 +9,33 @@ from scripts import collect_closed_behavior_minute as observer
 
 
 class MarketBehaviorObserverTests(unittest.TestCase):
+    def test_continuous_mode_reuses_process_and_releases_lock_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = str(Path(tmp) / "observer.lock")
+            argv = ["observer", "--output", str(Path(tmp) / "report.json"),
+                    "--lock-file", lock, "--continuous"]
+            with patch.object(observer.sys, "argv", argv), patch.object(
+                observer, "run_cycle", side_effect=[None, RuntimeError("cycle failed")]
+            ) as cycle:
+                with self.assertRaisesRegex(RuntimeError, "cycle failed"):
+                    observer.main()
+                self.assertEqual(cycle.call_count, 2)
+            with open(lock, "w") as handle:
+                observer.fcntl.flock(handle, observer.fcntl.LOCK_EX | observer.fcntl.LOCK_NB)
+
+    def test_failed_cycle_cancels_deadline_and_restores_signal_handler(self):
+        args = type("Args", (), {"cycle_timeout_seconds": 240})()
+        with patch.object(observer.signal, "signal", return_value="previous") as handler, patch.object(observer.signal, "alarm") as alarm, patch.object(observer, "run_cycle", side_effect=RuntimeError("failed")):
+            with self.assertRaises(RuntimeError):
+                observer.run_bounded_cycle(args)
+        self.assertEqual([call.args for call in alarm.call_args_list], [(240,), (0,)])
+        self.assertEqual(handler.call_args.args, (observer.signal.SIGALRM, "previous"))
+
+    def test_one_shot_mode_still_runs_once(self):
+        with patch.object(observer.sys, "argv", ["observer", "--output", "/unused"]), patch.object(observer, "run_cycle") as cycle:
+            observer.main()
+        cycle.assert_called_once()
+
     def test_alignment_skips_partial_behavior_window(self):
         target, skipped = observer.collection_alignment(30_000, 38)
         self.assertEqual(target, 120_000)
