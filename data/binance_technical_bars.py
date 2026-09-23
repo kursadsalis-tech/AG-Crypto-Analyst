@@ -109,6 +109,10 @@ def _parse_archive_bytes(symbol, payload):
                 try:
                     opened = int(raw[0])
                     closed = int(raw[6])
+                    if opened >= 100_000_000_000_000:
+                        opened //= 1000
+                    if closed >= 100_000_000_000_000:
+                        closed //= 1000
                     bar = {
                         "symbol": str(symbol).upper(),
                         "open_time_ms": opened,
