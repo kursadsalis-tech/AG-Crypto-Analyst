@@ -5,9 +5,6 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-from database.runtime_store import connect
-
-
 TABLE = "technical_minute_bars"
 DEFAULT_RETENTION_DAYS = 3
 MARKET_TYPE = "USD_M_PERPETUAL"
@@ -38,6 +35,10 @@ def ensure_table(connection):
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_{TABLE}_symbol_close
         ON {TABLE}(symbol,market_type,close_time_ms)
+    """)
+    connection.execute(f"""
+        CREATE INDEX IF NOT EXISTS ix_{TABLE}_close
+        ON {TABLE}(close_time_ms)
     """)
 
 
@@ -78,9 +79,7 @@ def _validated(bar):
     )
 
 
-def upsert_bars(connection, bars):
-    ensure_table(connection)
-    prepared = [_validated(bar) for bar in bars]
+def _upsert_prepared(connection, prepared):
     if not prepared:
         return 0
     connection.executemany(f"""
@@ -106,6 +105,12 @@ def upsert_bars(connection, bars):
     return len(prepared)
 
 
+def upsert_bars(connection, bars):
+    """General helper for setup/tests; realtime persistence uses prebootstrapped schema."""
+    ensure_table(connection)
+    return _upsert_prepared(connection, [_validated(bar) for bar in bars])
+
+
 def _table_exists(connection):
     return bool(connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -113,8 +118,37 @@ def _table_exists(connection):
     ).fetchone())
 
 
+def _schema_ready(connection):
+    if not _table_exists(connection):
+        return False
+    indexes = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+            (TABLE,),
+        ).fetchall()
+    }
+    return {
+        f"ix_{TABLE}_symbol_close",
+        f"ix_{TABLE}_close",
+    }.issubset(indexes)
+
+
+def bootstrap_schema(database_path):
+    """Install technical-bar table/indexes outside the closed-minute write path."""
+    connection = sqlite3.connect(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=30000")
+    try:
+        ensure_table(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def _writer_connection(database_path):
-    connection = connect(database_path, timeout=30)
+    # technical_minute_bars is local-only. RuntimeConnection construction would
+    # repeat remote outbox/trigger schema work even though this table is never
+    # mirrored, creating avoidable writer contention on the canonical DB.
+    connection = sqlite3.connect(database_path, timeout=30)
     connection.execute("PRAGMA busy_timeout=30000")
     return connection
 
@@ -128,12 +162,22 @@ def _database_locked(exc):
 
 def _persist_bars_once(database_path, bars, *, now_ms, retention_days):
     cutoff = int(now_ms) - int(retention_days) * 86_400_000
-    with _writer_connection(database_path) as connection:
-        inserted = upsert_bars(connection, bars)
+    prepared = [_validated(bar) for bar in bars]
+    connection = _writer_connection(database_path)
+    try:
+        if not _schema_ready(connection):
+            raise RuntimeError("technical bar schema unavailable")
+        inserted = _upsert_prepared(connection, prepared)
         pruned = connection.execute(
             f"DELETE FROM {TABLE} WHERE close_time_ms < ?", (cutoff,)
         ).rowcount
-        count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+        # Release the single SQLite writer slot before telemetry COUNT work.
+        connection.commit()
+        count = connection.execute(
+            f"SELECT COUNT(*) FROM {TABLE}"
+        ).fetchone()[0]
+    finally:
+        connection.close()
     return {
         "upserted": inserted,
         "pruned": pruned,
@@ -149,6 +193,13 @@ def persist_bars(
 ):
     """Persist prepared closed bars with bounded fresh-connection retries."""
     now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
+    probe = sqlite3.connect(database_path, timeout=5)
+    try:
+        ready = _schema_ready(probe)
+    finally:
+        probe.close()
+    if not ready:
+        bootstrap_schema(database_path)
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         try:
