@@ -321,6 +321,7 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         "direction": direction,
         "execution_market_type": str(market_type),
         "technical_source_market": "BINANCE_USD_M_PERPETUAL",
+        "source_reference_price": current,
         "generated_at": _iso(now),
         "data_cutoff_ms": int(rows[-1]["close_time_ms"]),
         "timeframes_used": selected,
@@ -370,12 +371,16 @@ def execution_levels(plan, execution_reference_price, *, basis_ratio=None):
     later ticks must reuse that exact ratio so the thesis cannot drift.
     """
     anchor = float(plan["entry"]["anchor"])
+    source_reference = float(plan.get("source_reference_price") or anchor)
     reference = float(execution_reference_price)
-    if anchor <= 0 or reference <= 0:
+    if anchor <= 0 or source_reference <= 0 or reference <= 0:
         raise ValueError("invalid technical execution basis")
     market_type = str(plan.get("execution_market_type") or "USD_M_PERPETUAL")
     if basis_ratio is None:
-        basis_ratio = 1.0 if market_type == "USD_M_PERPETUAL" else reference / anchor
+        basis_ratio = (
+            1.0 if market_type == "USD_M_PERPETUAL"
+            else reference / source_reference
+        )
     ratio = float(basis_ratio)
     if not math.isfinite(ratio) or ratio <= 0:
         raise ValueError("invalid frozen technical basis ratio")
