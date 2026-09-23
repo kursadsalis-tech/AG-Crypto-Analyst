@@ -696,22 +696,35 @@ def evaluate(con, now=None):
             "status": "NO_CANONICAL_BEHAVIOR_PROVENANCE",
             "candidates": [], "review": review,
         }
+    cutoff_ms = int(now.timestamp() * 1000)
     latest_behavior = con.execute("""SELECT MAX(minute_end_timestamp_ms)
         FROM market_behavior_minute_features
         WHERE market_data_provider='BINANCE'
           AND eligible_for_learning=1 AND minute_end_timestamp_ms<=?""",
-        (int(now.timestamp() * 1000),)).fetchone()[0]
-    latest_external = con.execute("""
-        SELECT MAX(m.minute_end_timestamp_ms)
-        FROM market_behavior_minute_features m
-        WHERE m.market_data_provider='BINANCE'
-          AND m.eligible_for_learning=1 AND m.minute_end_timestamp_ms<=?
-          AND EXISTS (SELECT 1 FROM causal_minute_external_evidence e
-              WHERE e.minute_end_timestamp_ms=m.minute_end_timestamp_ms)
-    """, (int(now.timestamp() * 1000),)).fetchone()[0]
+        (cutoff_ms,)).fetchone()[0]
     has_market_structure_hypothesis = any(
         kind == "MARKET_STRUCTURE" for kind, _ in exploration_patterns
     )
+    # Do not scan the retained behavior table for external evidence when the
+    # active hypothesis is endogenous MARKET_STRUCTURE: that result is unused.
+    # On external-only paths, anchor the search on the sparse evidence table
+    # (indexed by minute) and merely verify a canonical eligible behavior row
+    # exists for the same closed minute.  The previous behavior-table-first
+    # correlated MAX/EXISTS query could walk millions of retained minute rows
+    # when external events were sparse, stalling the realtime opportunity scan.
+    latest_external = None
+    if not has_market_structure_hypothesis:
+        latest_external = con.execute("""
+            SELECT MAX(e.minute_end_timestamp_ms)
+            FROM causal_minute_external_evidence e
+            WHERE e.minute_end_timestamp_ms<=?
+              AND EXISTS (
+                  SELECT 1 FROM market_behavior_minute_features m
+                  WHERE m.minute_end_timestamp_ms=e.minute_end_timestamp_ms
+                    AND m.market_data_provider='BINANCE'
+                    AND m.eligible_for_learning=1
+              )
+        """, (cutoff_ms,)).fetchone()[0]
     latest = (
         latest_behavior if has_market_structure_hypothesis or latest_external is None
         else latest_external

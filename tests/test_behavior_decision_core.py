@@ -345,6 +345,40 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertTrue(calibrated["execution_suspended"])
         self.assertFalse(calibrated["promotion_ready"])
 
+    def test_market_structure_path_skips_unused_external_latest_scan(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute(
+            "UPDATE behavior_event_forward_outcomes SET kind='MARKET_STRUCTURE'"
+        )
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        statements = []
+        self.con.set_trace_callback(statements.append)
+
+        result = core.evaluate(self.con, NOW)
+
+        self.assertEqual(result["status"], "ACTIONABLE")
+        normalized = "\n".join(statements).upper()
+        self.assertNotIn(
+            "SELECT MAX(M.MINUTE_END_TIMESTAMP_MS)\n        FROM MARKET_BEHAVIOR_MINUTE_FEATURES M",
+            normalized,
+        )
+
+    def test_external_latest_search_is_anchored_on_sparse_evidence_table(self):
+        self.add_history(days=1)
+        self.add_current()
+        statements = []
+        self.con.set_trace_callback(statements.append)
+
+        result = core.evaluate(self.con, NOW)
+
+        self.assertEqual(result["status"], "ACTIONABLE")
+        normalized = "\n".join(statements).upper()
+        self.assertIn(
+            "SELECT MAX(E.MINUTE_END_TIMESTAMP_MS)\n            FROM CAUSAL_MINUTE_EXTERNAL_EVIDENCE E",
+            normalized,
+        )
+
     def test_newer_eventless_minute_does_not_hide_fresh_event_minute(self):
         self.add_history(days=1)
         self.add_current()
