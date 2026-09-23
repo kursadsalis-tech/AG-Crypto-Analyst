@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from paper_trading import crypto_profit_agent as agent
 from paper_trading.execution_contract import MarketSnapshot, ExecutionRules
+from paper_trading.realtime_market import LiveState
 
 
 def quote(at, price=100, market_type="USD_M_PERPETUAL"):
@@ -92,6 +93,18 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             },
             "real_order_allowed": False,
         }
+
+    def live_state(self, symbol, at, market_type="SPOT", price=100.0):
+        ms = int(at.timestamp() * 1000)
+        return LiveState(
+            symbol=symbol, market_type=market_type, last_price=price,
+            best_bid=price - 0.01, best_ask=price + 0.01,
+            visible_quote_volume=1_000_000,
+            bid_quote_volume=1_000_000, ask_quote_volume=1_000_000,
+            quote_source="TEST_BINANCE_BOOK",
+            market_timestamp_ms=ms, quote_timestamp_ms=ms,
+            liquidity_timestamp_ms=ms,
+        )
 
     def candidate(self):
         minute = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
@@ -326,9 +339,16 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(margin, 200)
         self.assertAlmostEqual(gross, 1000)
         planned = agent.immediate_paper_entry_time(NOW)
-        with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=quote(planned)):
-            self.assertEqual(agent.fill_pending(self.con, planned, self.metadata), (1, 0))
+        live = self.live_state(
+            candidate["symbol"], planned,
+            market_type="USD_M_PERPETUAL", price=100.0,
+        )
+        self.assertEqual(
+            agent.fill_pending_from_live_state(
+                self.con, planned, live, self.metadata
+            ),
+            (1, 0),
+        )
         cash = self.con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
         ).fetchone()[0]
@@ -639,19 +659,25 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
-        planned = agent.immediate_paper_entry_time(NOW)
-        with patch.object(agent.execution_market_data, "capture_reference",
-                          return_value=quote(planned + timedelta(minutes=2), .5, "SPOT")) as capture:
-            filled, cancelled = agent.fill_pending(
-                self.con, planned + timedelta(minutes=2), self.metadata
-            )
-        self.assertEqual((filled, cancelled), (1, 0))
-        self.assertEqual(capture.call_args.kwargs["symbol"], "CRVUSDT")
-        self.assertEqual(capture.call_args.kwargs["market_type"], "SPOT")
-        self.assertEqual(
-            self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0],
-            "OPEN",
+        at = NOW + timedelta(minutes=2)
+        live = self.live_state("CRVUSDT", at, market_type="SPOT", price=100.0)
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, at, live, self.metadata
         )
+        self.assertEqual((filled, cancelled), (1, 0))
+        self.assertEqual(
+            self.con.execute(
+                "SELECT status,market_type,technical_basis_ratio "
+                "FROM paper_agent_positions"
+            ).fetchone()[:2],
+            ("OPEN", "SPOT"),
+        )
+        ratio = self.con.execute(
+            "SELECT technical_basis_ratio FROM paper_agent_positions"
+        ).fetchone()[0]
+        self.assertIsNotNone(ratio)
+        self.assertGreater(ratio, 0)
+
 
     def test_realtime_housekeeping_cancels_expired_pending_without_live_quote(self):
         candidate = self.candidate()
@@ -698,28 +724,25 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
         )
 
-    def test_missing_okx_spot_management_route_cancels_before_open(self):
+    def test_live_entry_waits_outside_frozen_technical_zone(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 11, "symbol": "LAUSDT",
                           "evidence_sha256": "e" * 64})
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
-            agent.select_new_positions(self.con, NOW)
-        planned = agent.immediate_paper_entry_time(NOW)
-        with patch.object(
-            agent.execution_market_data, "capture_reference",
-            side_effect=agent.execution_market_data.SpotManagementVenueUnavailable(
-                "LAUSDT: OKX Spot management instrument unavailable"
-            ),
-        ):
-            filled, cancelled = agent.fill_pending(self.con, planned, self.metadata)
-        self.assertEqual((filled, cancelled), (0, 1))
-        self.assertEqual(
-            self.con.execute("""SELECT status,cancel_reason
-                FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "OKX_SPOT_MANAGEMENT_UNAVAILABLE"),
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+        at = NOW + timedelta(seconds=30)
+        live = self.live_state("LAUSDT", at, market_type="SPOT", price=110.0)
+        filled, cancelled = agent.fill_pending_from_live_state(
+            self.con, at, live, self.metadata
         )
+        self.assertEqual((filled, cancelled), (0, 0))
+        self.assertEqual(
+            self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0],
+            "PENDING_ENTRY",
+        )
+
 
     def test_minute_cycle_skips_heavy_learning_without_new_close(self):
         with patch.object(agent, "connect", return_value=sqlite3.connect(":memory:")), \
