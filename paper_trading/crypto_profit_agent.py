@@ -1784,14 +1784,14 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
     """Fill pending PAPER entries only from the authoritative live state callback."""
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
-               market_type
+               market_type,decision_source,technical_basis_ratio
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY' AND symbol=? AND market_type=?
         ORDER BY selected_at,position_id
     """, (live.symbol, live.market_type)).fetchall()
     filled = cancelled = 0
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type) in rows:
+         market_type, decision_source, technical_basis_ratio) in rows:
         planned = parse_time(planned_entry_time)
         if now < planned:
             continue
@@ -1809,6 +1809,63 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
                 (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
             cancelled += 1
             continue
+        side = "BUY" if direction == "LONG" else "SELL"
+        executable_price = live.best_ask if side == "BUY" else live.best_bid
+        side_quote_volume = (
+            live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
+        )
+        if executable_price is None or float(executable_price) <= 0:
+            continue
+
+        if decision_source == "MARKET_BEHAVIOR_CORE":
+            thesis_row = con.execute("""
+                SELECT thesis_json FROM paper_agent_decision_theses
+                WHERE position_id=?
+            """, (position_id,)).fetchone()
+            try:
+                thesis = json.loads(thesis_row[0]) if thesis_row else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                thesis = {}
+            plan = thesis.get("technical_trade_plan")
+            if not isinstance(plan, dict):
+                con.execute("""UPDATE paper_agent_positions SET
+                    status='CANCELLED',cancel_reason='TECHNICAL_PLAN_MISSING'
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                cancelled += 1
+                continue
+            if (
+                str(plan.get("symbol")) != symbol
+                or str(plan.get("direction")) != direction
+                or not technical_trade_plan.plan_is_fresh(plan, now)
+            ):
+                con.execute("""UPDATE paper_agent_positions SET
+                    status='CANCELLED',cancel_reason='TECHNICAL_PLAN_STALE_OR_MISMATCHED'
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                cancelled += 1
+                continue
+            try:
+                levels = technical_trade_plan.execution_levels(
+                    plan, float(executable_price),
+                    basis_ratio=technical_basis_ratio,
+                )
+            except (TypeError, ValueError, KeyError):
+                con.execute("""UPDATE paper_agent_positions SET
+                    status='CANCELLED',cancel_reason='TECHNICAL_EXECUTION_BASIS_INVALID'
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                cancelled += 1
+                continue
+            if technical_basis_ratio is None:
+                technical_basis_ratio = float(levels["basis_ratio"])
+                con.execute("""UPDATE paper_agent_positions
+                    SET technical_basis_ratio=?
+                    WHERE position_id=? AND status='PENDING_ENTRY'""",
+                    (technical_basis_ratio, position_id))
+            if not (
+                float(levels["entry_low"]) <= float(executable_price)
+                <= float(levels["entry_high"])
+            ):
+                continue
+
         result = execution_market_data.capture_live_reference(
             con, position_id=position_id, symbol=symbol, purpose="ENTRY",
             live=live, observed_at=now,
@@ -1816,14 +1873,9 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         if result is None:
             continue
         entry_time, reference_price, _audit_quote_volume = result
-        side = "BUY" if direction == "LONG" else "SELL"
         # The last trade/reference price above is audit context only. A PAPER
-        # entry must execute from the fresh side of the live quote and only the
-        # visible liquidity on that same side (BUY=ask, SELL=bid).
-        executable_price = live.best_ask if side == "BUY" else live.best_bid
-        side_quote_volume = (
-            live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
-        )
+        # entry executes from the fresh side of the live quote and visible
+        # liquidity, after the frozen technical entry zone has been satisfied.
         fill = simulated_fill(
             reference_price=float(executable_price) if executable_price is not None else 0.0,
             requested_notional=float(notional), side=side,
