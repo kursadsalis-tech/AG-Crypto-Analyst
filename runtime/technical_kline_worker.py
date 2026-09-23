@@ -44,6 +44,9 @@ OPEN_TIMEOUT_SECONDS = float(os.getenv(
 FLUSH_GRACE_MS = 1_500
 SUBSCRIPTION_REFRESH_SECONDS = 1.0
 SUBSCRIPTION_CHUNK = 100
+UNIVERSE_RETENTION_SECONDS = float(os.getenv(
+    "AGCA_TECHNICAL_UNIVERSE_RETENTION_SECONDS", "3600"
+))
 HEALTH_CONTRACT_VERSION = "AGCA_TECHNICAL_KLINE_HEALTH_V1_BINANCE_WS"
 
 
@@ -133,16 +136,56 @@ def _chunks(values, size=SUBSCRIPTION_CHUNK):
 
 
 class UniverseState:
-    def __init__(self, initial=()):
-        self.symbols = tuple(sorted({str(value).upper() for value in initial}))
-        self.updated_at_ms = 0
+    """Continuity-first technical universe.
 
-    def replace(self, values, now_ms):
-        normalized = tuple(sorted({str(value).upper() for value in values}))
+    Broad discovery snapshots are sampled from change-driven websocket streams,
+    so one short snapshot can omit perfectly valid symbols.  A technical-bar
+    collector must not unsubscribe immediately on that transient absence or it
+    creates holes that make exact contiguous plans impossible.
+    """
+
+    def __init__(self, initial=(), *, now_ms=None, retention_seconds=None):
+        stamp = int(
+            now_ms if now_ms is not None else time.time() * 1000
+        )
+        self.retention_ms = int(
+            1000.0 * (
+                UNIVERSE_RETENTION_SECONDS
+                if retention_seconds is None else float(retention_seconds)
+            )
+        )
+        initial_symbols = {
+            str(value).upper() for value in initial
+            if str(value).upper().endswith("USDT") and "_" not in str(value)
+        }
+        self.last_seen_ms = {symbol: stamp for symbol in initial_symbols}
+        self.symbols = tuple(sorted(initial_symbols))
+        self.updated_at_ms = 0
+        self.selected_symbol_count = 0
+        self.retained_symbol_count = len(self.symbols)
+
+    def refresh(self, values, now_ms):
+        normalized = {
+            str(value).upper() for value in values
+            if str(value).upper().endswith("USDT") and "_" not in str(value)
+        }
         if not normalized:
             raise ValueError("technical kline universe cannot be empty")
-        self.symbols = normalized
-        self.updated_at_ms = int(now_ms)
+        stamp = int(now_ms)
+        for symbol in normalized:
+            self.last_seen_ms[symbol] = stamp
+
+        cutoff = stamp - max(0, self.retention_ms)
+        self.last_seen_ms = {
+            symbol: seen
+            for symbol, seen in self.last_seen_ms.items()
+            if seen >= cutoff
+        }
+        self.symbols = tuple(sorted(self.last_seen_ms))
+        self.updated_at_ms = stamp
+        self.selected_symbol_count = len(normalized)
+        self.retained_symbol_count = len(self.symbols) - len(normalized)
+        return self.symbols
 
 
 async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
@@ -151,10 +194,13 @@ async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
             tickers = await fetch_market_tickers()
             snapshot_ms = int(time.time() * 1000)
             symbols = selected_symbols(tickers, snapshot_ms=snapshot_ms)
-            state.replace(symbols, snapshot_ms)
+            state.refresh(symbols, snapshot_ms)
             write_health(
                 "CONNECTED",
                 subscribed_symbol_count=len(state.symbols),
+                selected_symbol_count=state.selected_symbol_count,
+                retained_symbol_count=state.retained_symbol_count,
+                universe_retention_seconds=UNIVERSE_RETENTION_SECONDS,
                 universe_updated_at_ms=state.updated_at_ms,
             )
             delay = UNIVERSE_REFRESH_SECONDS
@@ -347,7 +393,7 @@ async def run():
 
     now_ms = int(time.time() * 1000)
     seed = recent_cached_symbols(DB_PATH, now_ms=now_ms)
-    state = UniverseState(seed)
+    state = UniverseState(seed, now_ms=now_ms)
     write_health(
         "STARTING",
         subscribed_symbol_count=len(state.symbols),
