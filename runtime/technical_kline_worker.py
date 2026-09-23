@@ -24,7 +24,7 @@ import websockets
 from data.binance_live_evidence import MARKET_RAW_BASE, fetch_market_tickers
 from data.binance_market_universe import build_universe
 from data.binance_technical_bars import normalize_closed_1m_kline
-from database.technical_bar_store import persist_bars
+from database.technical_bar_store import bootstrap_schema, persist_bars
 
 
 DB_PATH = os.getenv("AGCA_DATABASE_PATH", "/var/lib/agca/crypto_data.db")
@@ -235,6 +235,7 @@ async def persist_pending(
         if not ready_keys:
             continue
         ready = [pending[key] for key in ready_keys]
+        persist_started = time.monotonic()
         try:
             result = await asyncio.to_thread(
                 persist_bars,
@@ -266,6 +267,10 @@ async def persist_pending(
             last_closed_minute_ms=latest,
             last_flush_symbol_count=minute_symbols,
             last_flush_upserted=int(result["upserted"]),
+            last_flush_pruned=int(result["pruned"]),
+            last_persist_duration_ms=round(
+                (time.monotonic() - persist_started) * 1000.0, 3
+            ),
             cache_row_count=int(result["row_count"]),
         )
 
@@ -390,6 +395,11 @@ async def run():
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
+
+    # Create/upgrade the local-only bar cache once at process startup.
+    # Closed-minute flushes must stay DDL-free while other AGCA writers share
+    # the canonical WAL database.
+    await asyncio.to_thread(bootstrap_schema, DB_PATH)
 
     now_ms = int(time.time() * 1000)
     seed = recent_cached_symbols(DB_PATH, now_ms=now_ms)
