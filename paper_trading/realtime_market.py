@@ -17,7 +17,12 @@ import websockets
 
 
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
-BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
+BINANCE_SPOT_WS_URLS = (
+    "wss://stream.binance.com:9443/ws",
+    "wss://data-stream.binance.vision/ws",
+)
+BINANCE_SPOT_WS_URL = BINANCE_SPOT_WS_URLS[0]
+BINANCE_SPOT_SILENCE_TIMEOUT_SECONDS = 6.0
 BINANCE_USDM_WS_URL = "wss://fstream.binance.com/public/ws"
 # USD-M trade flow belongs to Binance's routed Market websocket.
 BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/market/stream"
@@ -544,6 +549,10 @@ async def _okx_stream(symbols, on_state, stop_event, health_callback=None):
                         await on_state(state, received_ms)
         except (OSError, asyncio.TimeoutError, ValueError, RuntimeError,
                 websockets.WebSocketException) as exc:
+            if market_type == "SPOT":
+                spot_endpoint_index = (
+                    spot_endpoint_index + 1
+                ) % len(BINANCE_SPOT_WS_URLS)
             if health_callback:
                 health_callback("DISCONNECTED", type(exc).__name__)
             await asyncio.sleep(backoff)
@@ -566,6 +575,7 @@ async def _binance_stream(
     context = ssl.create_default_context(cafile=certifi.where())
     states = shared_states if shared_states is not None else {}
     backoff = 1
+    spot_endpoint_index = 0
     while not stop_event.is_set():
         desired = binance_subscription_params(
             symbols(), market_type, channels=channels
@@ -576,10 +586,16 @@ async def _binance_stream(
         try:
             if shared_states is None:
                 states.clear()
+            endpoint = (
+                BINANCE_SPOT_WS_URLS[spot_endpoint_index]
+                if market_type == "SPOT"
+                else BINANCE_USDM_TRADE_WS_URL if flow_sink is not None
+                else BINANCE_USDM_WS_URL
+            )
+            if metrics is not None:
+                metrics["endpoint"] = endpoint
             async with websockets.connect(
-                (BINANCE_SPOT_WS_URL if market_type == "SPOT"
-                 else BINANCE_USDM_TRADE_WS_URL if flow_sink is not None
-                 else BINANCE_USDM_WS_URL),
+                endpoint,
                 ssl=context,
                 open_timeout=10,
                 ping_interval=20,
@@ -594,8 +610,11 @@ async def _binance_stream(
                 pending = {}
                 dirty_order = deque()
                 dirty_symbols = set()
+                connected_at = time.monotonic()
+                last_symbol_message_at = None
 
                 async def receiver():
+                    nonlocal last_symbol_message_at
                     # Hot path: only drain/parse/coalesce websocket events.
                     # Never query the database or run PAPER logic here.
                     #
@@ -616,6 +635,15 @@ async def _binance_stream(
                             async with asyncio.timeout(1):
                                 raw = await socket.recv()
                         except TimeoutError:
+                            if (
+                                market_type == "SPOT"
+                                and last_symbol_message_at is None
+                                and time.monotonic() - connected_at
+                                >= BINANCE_SPOT_SILENCE_TIMEOUT_SECONDS
+                            ):
+                                raise RuntimeError(
+                                    "BINANCE_SPOT_NO_MARKET_DATA"
+                                )
                             continue
                         received_ms = int(time.time() * 1000)
                         message = json.loads(raw)
@@ -656,11 +684,14 @@ async def _binance_stream(
                                 )
                                 if lag_ms > MAX_EVENT_AGE_MS:
                                     metrics["stale_received_total"] += 1
-                        for state in apply_binance_message(
+                        parsed_states = apply_binance_message(
                             states, message, received_ms,
                             market_type=market_type,
                             partial_depth=(channels == ("depth5@500ms",)),
-                        ):
+                        )
+                        if parsed_states:
+                            last_symbol_message_at = time.monotonic()
+                        for state in parsed_states:
                             if flow_sink is not None:
                                 flow_sink.publish(state)
                                 continue
@@ -764,6 +795,7 @@ async def _binance_stream(
 def new_quote_metrics():
     """In-memory diagnostics only; no extra feed or execution authority."""
     return {
+        "endpoint": None,
         "received_total": 0, "accepted_total": 0,
         "stale_received_total": 0, "stale_dispatch_total": 0,
         "dispatched_total": 0, "last_received_ms": None,
