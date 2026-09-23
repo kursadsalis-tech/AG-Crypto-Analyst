@@ -27,6 +27,44 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         )
         self.assertIn("scan_loop(),", source)
 
+    def test_scan_connection_is_bounded_and_schema_free(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        start = source.index("    def scan_connection():")
+        end = source.index("    def latest_any_execution_state(", start)
+        block = source[start:end]
+
+        self.assertIn("AGCA_SCAN_SQLITE_TIMEOUT_SECONDS", block)
+        self.assertIn("PRAGMA busy_timeout=", block)
+        self.assertNotIn("ensure_tables(", block)
+        self.assertNotIn("position_management.ensure_tables(", block)
+
+    def test_thread_local_runtime_connections_do_not_repeat_schema_ddl(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        startup_end = source.index("    decision_executor = ThreadPoolExecutor(")
+        self.assertIn("ensure_tables(con)", source[:startup_end])
+
+        for name, end_name in (
+            ("universe_connection", "refresh_symbol_cache_once"),
+            ("decision_connection", "scan_connection"),
+        ):
+            start = source.index(f"    def {name}():")
+            end = source.index(f"    def {end_name}(", start)
+            block = source[start:end]
+            self.assertNotIn("ensure_tables(", block)
+
+    def test_scan_runtime_observability_is_exposed_in_health(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"scan_runtime": {', source)
+        self.assertIn('"started_at": last_scan_started_at', source)
+        self.assertIn('"completed_at": last_scan_completed_at', source)
+        self.assertIn('"duration_ms": last_scan_duration_ms', source)
+
     def test_execution_executor_is_distinct_from_scan_executor(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
             encoding="utf-8"
