@@ -4,7 +4,10 @@ import unittest
 from pathlib import Path
 
 from database.behavior_event_outcome_store import (
-    OUTCOME_TABLE, backfill_market_structure_outcomes,
+    OUTCOME_TABLE,
+    SETTLEMENT_QUEUE_TABLE,
+    backfill_market_structure_outcomes,
+    settle_queued_outcomes,
 )
 from database.market_behavior_store import persist_closed_minute
 from database.runtime_store import REMOTE_RUNTIME_TABLES
@@ -65,8 +68,10 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
             result = persist_closed_minute(
                 path, report(outcome_minute, {"BTC-USDT-SWAP": 104})
             )
-            self.assertEqual(result["forward_outcomes"]["settled_by_horizon"], {"240": 1})
+            self.assertEqual(result["forward_outcomes"]["queued"], 1)
             with sqlite3.connect(path) as con:
+                settled = settle_queued_outcomes(con, limit=500)
+                self.assertEqual(settled["settled_outcomes"], 1)
                 row = con.execute(f"""SELECT kind,source,instrument,horizon_minutes
                     FROM {OUTCOME_TABLE}""").fetchone()
             self.assertEqual(
@@ -89,9 +94,10 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
                     "BTC-USDT-SWAP": 98, "ETH-USDT-SWAP": 196,
                 }, event()),
             )
-            self.assertEqual(
-                event_result["forward_outcomes"]["settled_by_horizon"], {"1": 2}
-            )
+            self.assertEqual(event_result["forward_outcomes"]["queued"], 1)
+            with sqlite3.connect(path) as con:
+                settled = settle_queued_outcomes(con, limit=50)
+                self.assertEqual(settled["settled_outcomes"], 2)
             persist_closed_minute(
                 path, report(300_000, {
                     "BTC-USDT-SWAP": 101, "ETH-USDT-SWAP": 202,
@@ -108,7 +114,10 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
                     "BTC-USDT-SWAP": 102, "ETH-USDT-SWAP": 204,
                 })
             )
-            self.assertEqual(closed["forward_outcomes"]["settled"], 2)
+            self.assertEqual(closed["forward_outcomes"]["queued"], 1)
+            with sqlite3.connect(path) as con:
+                settled = settle_queued_outcomes(con, limit=50)
+                self.assertEqual(settled["settled_outcomes"], 2)
             persist_closed_minute(
                 path, report(360_000, {
                     "BTC-USDT-SWAP": 999, "ETH-USDT-SWAP": 999,
@@ -124,6 +133,27 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
             self.assertAlmostEqual(rows[0][1], 2.0)
             self.assertAlmostEqual(rows[1][1], 2.0)
             self.assertEqual(rows[0][2], rows[1][2])
+
+    def test_observer_persistence_only_queues_outcome_settlement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.db"
+            result = persist_closed_minute(
+                path, report(120_000, {"BTC-USDT-SWAP": 100}, event())
+            )
+            self.assertEqual(
+                result["forward_outcomes"]["mode"],
+                "BACKGROUND_BEHAVIOR_LEARNING_WORKER",
+            )
+            with sqlite3.connect(path) as con:
+                queued = con.execute(
+                    f"SELECT minute_end_timestamp_ms,settled_at "
+                    f"FROM {SETTLEMENT_QUEUE_TABLE}"
+                ).fetchall()
+                outcomes = con.execute(
+                    f"SELECT COUNT(*) FROM {OUTCOME_TABLE}"
+                ).fetchone()[0]
+            self.assertEqual(queued, [(120_000, None)])
+            self.assertEqual(outcomes, 0)
 
     def test_closed_minute_settlement_hot_path_never_runs_schema_ddl(self):
         source = (
@@ -143,8 +173,10 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
             result = persist_closed_minute(
                 path, report(120_000, prices, event(["BTC"]))
             )
-            self.assertEqual(result["forward_outcomes"]["settled"], 1)
+            self.assertEqual(result["forward_outcomes"]["queued"], 1)
             with sqlite3.connect(path) as con:
+                settled = settle_queued_outcomes(con, limit=50)
+                self.assertEqual(settled["settled_outcomes"], 1)
                 instrument = con.execute(
                     f"SELECT instrument FROM {OUTCOME_TABLE}"
                 ).fetchone()[0]
