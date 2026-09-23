@@ -20,7 +20,8 @@ from zoneinfo import ZoneInfo
 
 from decision_engine import forecast_engine
 from paper_trading.execution_model import (
-    PAPER_MARKET, execute_paper, estimate_order_rules, taker_fee_rate,
+    PAPER_MARKET, execute_paper, estimate_order_rules, simulated_fill,
+    taker_fee_rate,
 )
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
