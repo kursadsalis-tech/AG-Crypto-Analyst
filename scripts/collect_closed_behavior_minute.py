@@ -156,8 +156,13 @@ def main():
         (time.monotonic() - collection_started) * 1000.0, 3
     )
 
+    close_wait_started = time.monotonic()
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
+    close_wait_ms = round((time.monotonic() - close_wait_started) * 1000, 3)
+    aggregate_started = time.monotonic()
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    aggregate_ms = round((time.monotonic() - aggregate_started) * 1000, 3)
+    causal_started = time.monotonic()
     result["market_data_provider"] = "BINANCE"
     result["causal_external_evidence"] = (
         evidence_for_closed_minute(args.database, minute_end_ms)
@@ -169,6 +174,7 @@ def main():
             "events": [],
         }
     )
+    causal_ms = round((time.monotonic() - causal_started) * 1000, 3)
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
@@ -188,7 +194,7 @@ def main():
     if args.database:
         persistence_started = time.monotonic()
         result["sqlite_persistence"] = persist_closed_minute(
-            args.database, result, args.retention_days)
+            args.database, result, args.retention_days, include_counts=False)
         persistence_ms = round(
             (time.monotonic() - persistence_started) * 1000.0, 3
         )
@@ -198,6 +204,9 @@ def main():
         "alignment_wait": int(round(alignment_wait_seconds * 1000.0)),
         "collection": collection_ms,
         "persistence": persistence_ms,
+        "closed_minute_wait": close_wait_ms,
+        "aggregation": aggregate_ms,
+        "causal_evidence": causal_ms,
         "total_cycle": round((time.monotonic() - cycle_started) * 1000.0, 3),
     }
     write_json_atomic(args.output, result)

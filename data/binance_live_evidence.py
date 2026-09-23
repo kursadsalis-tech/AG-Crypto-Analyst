@@ -41,6 +41,9 @@ OPEN_TIMEOUT_SECONDS = float(
 @asynccontextmanager
 async def measured_connection(url, *, timings=None, phase="socket", **kwargs):
     """Separate handshake, observation and close latency without frame logging."""
+    # These bounded snapshots have already consumed their required evidence.
+    # A slow peer close must not delay publication of the closed minute.
+    kwargs.setdefault("close_timeout", 1.0)
     started = time.monotonic()
     entered = closing = None
     try:

@@ -11,11 +11,12 @@ class BinanceLiveEvidenceTests(unittest.TestCase):
         socket = AsyncMock()
 
         async def run():
-            with patch.object(live.websockets, "connect", return_value=socket):
+            with patch.object(live.websockets, "connect", return_value=socket) as connect:
                 with patch.object(live.time, "monotonic", side_effect=[1, 2, 5, 7]):
                     with self.assertRaises(asyncio.CancelledError):
                         async with live.measured_connection("wss://example", timings=timings):
                             raise asyncio.CancelledError()
+                self.assertEqual(connect.call_args.kwargs["close_timeout"], 1.0)
         socket.__aexit__.return_value = False
         asyncio.run(run())
         self.assertEqual(timings, {

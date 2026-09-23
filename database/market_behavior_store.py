@@ -167,7 +167,7 @@ def _database_locked(exc):
 
 
 def _persist_closed_minute_once(
-    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, timings=None
+    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, timings=None, include_counts=True
 ):
     if not report.get("minute_is_closed"):
         raise ValueError("only closed minutes may be persisted")
@@ -253,10 +253,11 @@ def _persist_closed_minute_once(
             f"DELETE FROM {EXTERNAL_EVIDENCE_TABLE} WHERE minute_end_timestamp_ms < ?",
             (cutoff,),
         ).rowcount
-        count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
-        external_count = connection.execute(
+        count = (connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+                 if include_counts else None)
+        external_count = (connection.execute(
             f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
-        ).fetchone()[0]
+        ).fetchone()[0] if include_counts else None)
         # Forward-outcome settlement is intentionally background work.
         # Commit the current behavior minute promptly so realtime decisions do
         # not wait on historical outcome joins/counts or a second writer phase.
@@ -266,6 +267,7 @@ def _persist_closed_minute_once(
         queue_closed_minute_for_settlement(connection, minute_end)
     return {"upserted": len(report.get("rows", [])), "pruned": deleted,
             "row_count": count, "retention_days": int(retention_days),
+            "historical_counts_computed": bool(include_counts),
             "external_evidence_upserted": len(external.get("events", [])),
             "external_evidence_pruned": external_deleted,
             "external_evidence_row_count": external_count,
@@ -278,7 +280,7 @@ def _persist_closed_minute_once(
 
 
 def persist_closed_minute(
-    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, attempts=4
+    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, attempts=4, include_counts=True
 ):
     """Persist one already-collected closed minute with bounded lock retries."""
     if not report.get("minute_is_closed"):
@@ -298,7 +300,8 @@ def persist_closed_minute(
     for attempt in range(1, attempts + 1):
         try:
             result = _persist_closed_minute_once(
-                database_path, report, retention_days, timings=timings
+                database_path, report, retention_days, timings=timings,
+                include_counts=include_counts
             )
             result["sql_timings_ms"] = {
                 key: round(value, 3) for key, value in timings.items()

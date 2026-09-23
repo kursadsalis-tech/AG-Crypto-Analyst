@@ -13,8 +13,14 @@ external-evidence COUNT(*) 6.776 s for 23340 rows. VM showed 87–92% instantane
 I/O wait; database 4.6 GB. These measurements identify expensive reporting work,
 not yet the complete cause of persistence delay. Added SQL-operation/commit and
 WebSocket handshake/observation/close telemetry to isolate the remaining work.
-Full local regression: 498 tests passed. Next: measure instrumented live cycle,
-remove proven hot-path overhead, and validate consecutive fresh minutes plus
+Instrumented live cycle at 17:37:19 UTC: persistence 48.263 s, including
+38.442 s behavior COUNT and 8.024 s external COUNT; inserts 0.796 s and commit
+0.511 s, one attempt. WebSocket close phases cost 5.483–9.792 s. Candidate
+removes history counts from the live observer, limits snapshot close to 1 s, and
+uses a plain query-only connection for causal projection (previously repeated
+RuntimeConnection mirror DDL in an unreported phase). All phases are now exposed.
+Full local regression before close-timeout change: 500 tests passed. Next:
+validate consecutive fresh minutes plus
 realtime selection progress and absence of SQLite stalls before claiming repair.
 
 ---
