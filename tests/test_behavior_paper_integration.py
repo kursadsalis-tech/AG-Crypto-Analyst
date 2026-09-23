@@ -43,6 +43,11 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         )
         plan_patch.start()
         self.addCleanup(plan_patch.stop)
+        replan_patch = patch.object(
+            agent.technical_trade_plan, "replan_reason", return_value=None
+        )
+        replan_patch.start()
+        self.addCleanup(replan_patch.stop)
         self.addCleanup(self.con.close)
 
     def technical_plan(self, candidate, market_type):
@@ -65,7 +70,27 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "technical_source_market": "BINANCE_USD_M_PERPETUAL",
             "source_reference_price": price,
             "generated_at": NOW.isoformat(),
+            "as_of": (NOW - timedelta(minutes=1)).isoformat(),
             "data_cutoff_ms": int((NOW - timedelta(minutes=1)).timestamp() * 1000),
+            "freshness": {
+                "ttl_seconds": agent.technical_trade_plan.MAX_ENTRY_PLAN_AGE_SECONDS,
+                "maximum_market_data_age_seconds": agent.technical_trade_plan.MAX_BAR_AGE_SECONDS,
+                "structure_refresh_seconds": agent.technical_trade_plan.STRUCTURE_REFRESH_SECONDS,
+                "replan_price_move_pct": 0.50,
+            },
+            "trigger": {
+                "event_kind": str(
+                    ((candidate.get("evidence") or {}).get("event") or {}).get("kind")
+                    or "MARKET_STRUCTURE"
+                ),
+                "horizon_hours": int(candidate.get("horizon") or 4),
+                "primary_signal_source": (
+                    (candidate.get("evidence") or {}).get("primary_signal_source")
+                ),
+                "evidence_minute_end_ms": (
+                    (candidate.get("evidence") or {}).get("evidence_minute_end_ms")
+                ),
+            },
             "timeframes_used": ["1m", "5m", "15m", "1h", "4h"],
             "technical_score": 0.20,
             "relation_to_trigger_direction": "MIXED_OR_UNALIGNED",
@@ -187,6 +212,17 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertNotIn(
             "TECHNICAL_CONTEXT_SHADOW",
             thesis["capabilities_observed_but_not_decision_inputs"],
+        )
+
+        current_plan = json.loads(self.con.execute(
+            "SELECT technical_execution_plan_json FROM paper_agent_positions"
+        ).fetchone()[0])
+        self.assertEqual(
+            current_plan["version"], thesis["technical_trade_plan"]["version"]
+        )
+        self.assertEqual(
+            current_plan["data_cutoff_ms"],
+            thesis["technical_trade_plan"]["data_cutoff_ms"],
         )
 
 
@@ -678,6 +714,78 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(ratio)
         self.assertGreater(ratio, 0)
 
+
+    def test_pending_entry_replans_locally_without_mutating_selection_thesis(self):
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 901,
+            "symbol": "REPLANUSDT",
+            "evidence_sha256": "9" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+
+        original_notional = float(self.con.execute(
+            "SELECT notional FROM paper_agent_positions"
+        ).fetchone()[0])
+        frozen_thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        self.assertAlmostEqual(
+            frozen_thesis["technical_trade_plan"]["risk"]["stop_distance_pct"],
+            2.0,
+        )
+
+        at = NOW + timedelta(seconds=30)
+        replanned = self.technical_plan(candidate, "SPOT")
+        replanned["generated_at"] = at.isoformat()
+        replanned["as_of"] = (at - timedelta(seconds=1)).isoformat()
+        replanned["data_cutoff_ms"] = int(
+            (at - timedelta(seconds=1)).timestamp() * 1000
+        )
+        replanned["risk"]["stop_distance_pct"] = 4.0
+        replanned["risk"]["invalidation_price"] = 96.0
+        replanned["risk"]["invalidation_offset_pct"] = -4.0
+        replanned["risk"]["risk_compatible"] = True
+
+        with patch.object(
+            agent.technical_trade_plan, "replan_reason",
+            return_value="STRUCTURE_REFRESH_DUE",
+        ), patch.object(
+            agent.technical_trade_plan, "rebuild_for_pending",
+            return_value=replanned,
+        ):
+            filled, cancelled = agent.fill_pending_from_live_state(
+                self.con, at,
+                self.live_state("REPLANUSDT", at, market_type="SPOT", price=100.0),
+                self.metadata,
+            )
+        self.assertEqual((filled, cancelled), (1, 0))
+
+        status, revised_notional, basis, plan_json = self.con.execute("""
+            SELECT status,notional,technical_basis_ratio,
+                   technical_execution_plan_json
+            FROM paper_agent_positions
+        """).fetchone()
+        self.assertEqual(status, "OPEN")
+        self.assertLess(float(revised_notional), original_notional)
+        self.assertIsNotNone(basis)
+        current_plan = json.loads(plan_json)
+        self.assertAlmostEqual(
+            current_plan["risk"]["stop_distance_pct"], 4.0
+        )
+
+        # Original selection evidence remains immutable after execution replan.
+        after_thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        self.assertEqual(after_thesis, frozen_thesis)
+        self.assertAlmostEqual(
+            after_thesis["technical_trade_plan"]["risk"]["stop_distance_pct"],
+            2.0,
+        )
 
     def test_realtime_housekeeping_cancels_expired_pending_without_live_quote(self):
         candidate = self.candidate()
