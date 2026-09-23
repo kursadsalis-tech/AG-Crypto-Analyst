@@ -295,6 +295,9 @@ async def run():
     last_scan_completed_at = None
     last_scan_duration_ms = None
     last_scan_error = None
+    last_scan_error_detail = None
+    last_scan_sqlite_error_name = None
+    last_scan_sqlite_error_code = None
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -419,6 +422,9 @@ async def run():
                 "completed_at": last_scan_completed_at,
                 "duration_ms": last_scan_duration_ms,
                 "error": last_scan_error,
+                "error_detail": last_scan_error_detail,
+                "sqlite_error_name": last_scan_sqlite_error_name,
+                "sqlite_error_code": last_scan_sqlite_error_code,
             },
         })
         details["process_runtime_source"] = process_runtime_source
@@ -496,11 +502,16 @@ async def run():
         """Discover/select opportunities without ever blocking execution ticks."""
         nonlocal last_scan_started_at, last_scan_completed_at
         nonlocal last_scan_duration_ms, last_scan_error
+        nonlocal last_scan_error_detail, last_scan_sqlite_error_name
+        nonlocal last_scan_sqlite_error_code
         work_con = scan_connection()
         observed_at = now()
         started = loop.time()
         last_scan_started_at = observed_at.isoformat()
         last_scan_error = None
+        last_scan_error_detail = None
+        last_scan_sqlite_error_name = None
+        last_scan_sqlite_error_code = None
         selection_result = {}
         try:
             selected = select_new_positions(
@@ -508,6 +519,13 @@ async def run():
             )
         except Exception as exc:
             last_scan_error = type(exc).__name__
+            last_scan_error_detail = str(exc)[:240]
+            last_scan_sqlite_error_name = getattr(
+                exc, "sqlite_errorname", None
+            )
+            last_scan_sqlite_error_code = getattr(
+                exc, "sqlite_errorcode", None
+            )
             raise
         finally:
             completed = now()
@@ -558,15 +576,23 @@ async def run():
 
     async def scan_loop():
         """Completion-paced scanning on a dedicated worker thread."""
-        nonlocal last_scan_error
+        nonlocal last_scan_error, last_scan_error_detail
         while not stop_event.is_set():
             try:
                 await loop.run_in_executor(scan_executor, scan_once)
             except Exception as exc:
                 last_scan_error = type(exc).__name__
+                last_scan_error_detail = str(exc)[:240]
                 emit_health(
                     "DEGRADED",
                     error=f"OPPORTUNITY_SCAN_{type(exc).__name__}",
+                    scan_error_detail=last_scan_error_detail,
+                    scan_sqlite_error_name=getattr(
+                        exc, "sqlite_errorname", None
+                    ),
+                    scan_sqlite_error_code=getattr(
+                        exc, "sqlite_errorcode", None
+                    ),
                 )
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=1.0)
