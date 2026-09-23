@@ -126,6 +126,21 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         self.assertIn('"sqlite_error_name": last_scan_sqlite_error_name', source)
         self.assertIn('"sqlite_error_code": last_scan_sqlite_error_code', source)
 
+    def test_missing_symbol_metadata_is_fail_closed_not_process_fatal(self):
+        source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
+            encoding="utf-8"
+        )
+        process_start = source.index("    def process_state(")
+        process_end = source.index("    async def on_state(", process_start)
+        block = source[process_start:process_end]
+
+        self.assertIn("except ExchangeMetadataError:", block)
+        self.assertIn('error="LIVE_SYMBOL_RULES_UNAVAILABLE"', block)
+        self.assertIn("metadata.get(execution_state.market_type)", block)
+        self.assertNotIn(
+            "metadata[execution_state.market_type]", block
+        )
+
     def test_execution_executor_is_distinct_from_scan_executor(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
             encoding="utf-8"

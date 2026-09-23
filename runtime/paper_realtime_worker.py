@@ -21,7 +21,7 @@ from paper_trading.crypto_profit_agent import (
     DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
     fill_pending_from_live_state, select_new_positions,
 )
-from paper_trading.exchange_metadata import load_cache, rules_for
+from paper_trading.exchange_metadata import ExchangeMetadataError, load_cache, rules_for
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import position_management, realtime_market
@@ -687,9 +687,21 @@ async def run():
                 work_con, execution_at
             )
 
-        rule = rules_for(
-            metadata[execution_state.market_type], execution_state.symbol
+        market_metadata = (
+            metadata.get(execution_state.market_type)
+            if isinstance(metadata, dict) else None
         )
+        try:
+            rule = (
+                rules_for(market_metadata, execution_state.symbol)
+                if market_metadata is not None else None
+            )
+        except ExchangeMetadataError:
+            # A newly listed/delisted/temporarily missing symbol rule is a
+            # per-symbol execution-data failure, not a reason to kill the
+            # canonical realtime worker. Fail closed for this symbol and keep
+            # processing every other live execution obligation.
+            rule = None
         if rule is None:
             position_management.process_market_state(
                 work_con, execution_state, execution_at, None
