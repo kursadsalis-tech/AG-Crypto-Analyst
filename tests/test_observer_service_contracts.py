@@ -53,6 +53,18 @@ class ObserverServiceContractTests(unittest.TestCase):
         self.assertIn("CPUQuota=50%", service)
         self.assertIn("MemoryMax=256M", service)
 
+    def test_trade_learning_specialist_is_low_priority_and_paper_only(self):
+        service = (
+            ROOT / "deploy/agca-trade-learning-worker.service"
+        ).read_text()
+        self.assertIn("Type=simple", service)
+        self.assertIn("Environment=AGCA_EXECUTION_MODE=PAPER_ONLY", service)
+        self.assertIn("-m runtime.trade_learning_worker", service)
+        self.assertIn("Restart=always", service)
+        self.assertIn("Nice=15", service)
+        self.assertIn("CPUQuota=50%", service)
+        self.assertIn("MemoryMax=384M", service)
+
     def test_realtime_worker_requires_background_behavior_cache(self):
         service = (ROOT / "deploy/agca-paper-realtime-worker.service").read_text()
         self.assertIn(
