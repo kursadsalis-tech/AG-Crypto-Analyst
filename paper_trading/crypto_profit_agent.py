@@ -1850,17 +1850,20 @@ if __name__ == "__main__":
 
 
 def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
-    """Fill pending PAPER entries only from the authoritative live state callback."""
+    """Fill PENDING_ENTRY only when the current technical plan still authorizes it."""
     rows = con.execute("""
-        SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
-               market_type
-        FROM paper_agent_positions
-        WHERE status='PENDING_ENTRY' AND symbol=? AND market_type=?
-        ORDER BY selected_at,position_id
+        SELECT p.position_id,p.symbol,p.planned_entry_time,p.notional,p.direction,
+               p.leverage,p.market_type,p.technical_plan_json,t.thesis_json
+        FROM paper_agent_positions p
+        LEFT JOIN paper_agent_decision_theses t USING(position_id)
+        WHERE p.status='PENDING_ENTRY' AND p.symbol=? AND p.market_type=?
+        ORDER BY p.selected_at,p.position_id
     """, (live.symbol, live.market_type)).fetchall()
     filled = cancelled = 0
-    for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type) in rows:
+    for (
+        position_id, symbol, planned_entry_time, notional, direction, leverage,
+        market_type, technical_plan_json, thesis_json,
+    ) in rows:
         planned = parse_time(planned_entry_time)
         if now < planned:
             continue
@@ -1878,6 +1881,120 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
                 (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
             cancelled += 1
             continue
+
+        side = "BUY" if direction == "LONG" else "SELL"
+        executable_price = live.best_ask if side == "BUY" else live.best_bid
+        side_quote_volume = (
+            live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
+        )
+        try:
+            live_entry_price = float(executable_price)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(live_entry_price) or live_entry_price <= 0:
+            continue
+
+        technical_plan = None
+        if technical_plan_json:
+            try:
+                technical_plan = json.loads(technical_plan_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                    cancel_reason='MALFORMED_TECHNICAL_TRADE_PLAN'
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                cancelled += 1
+                continue
+
+        if technical_plan is not None:
+            replan_reason = technical_trade_plan.replan_reason(
+                technical_plan, live_entry_price, now=now
+            )
+            if replan_reason is not None:
+                try:
+                    replanned = technical_trade_plan.rebuild_for_position(
+                        con, technical_plan, live_entry_price, now=now
+                    )
+                except (ValueError, sqlite3.Error):
+                    # Never enter from an expired plan and never use network
+                    # fallback. The existing bounded pending-entry expiry remains
+                    # the final lifecycle guard.
+                    continue
+                if not bool(replanned["risk"]["risk_compatible"]):
+                    con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                        cancel_reason='TECHNICAL_REPLAN_EXECUTION_INFEASIBLE'
+                        WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                    cancelled += 1
+                    continue
+
+                try:
+                    thesis = json.loads(thesis_json or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    thesis = {}
+                execution_risk = thesis.get("execution_risk") or {}
+                try:
+                    frozen_risk_budget = float(
+                        execution_risk["planned_trade_risk_budget_usdt"]
+                    )
+                    frozen_fee_rate = float(execution_risk["taker_fee_rate"])
+                except (KeyError, TypeError, ValueError):
+                    # A replanned stop must remain tied to the original risk
+                    # budget. Missing frozen budget is not permission to guess.
+                    continue
+                if (
+                    not math.isfinite(frozen_risk_budget)
+                    or frozen_risk_budget <= 0
+                    or not math.isfinite(frozen_fee_rate)
+                    or frozen_fee_rate < 0
+                ):
+                    continue
+                replanned_stop_pct = float(
+                    replanned["risk"]["stop_distance_pct"]
+                )
+                risk_denominator = (
+                    replanned_stop_pct / 100.0 + 2.0 * frozen_fee_rate
+                )
+                risk_bounded_notional = (
+                    frozen_risk_budget / risk_denominator
+                    if risk_denominator > 0 else 0.0
+                )
+                # Revalidation may reduce pending risk, never increase it.
+                revised_notional = min(float(notional), risk_bounded_notional)
+                executable_minimum = max(
+                    MIN_PAPER_NOTIONAL_USDT,
+                    float(rules.min_notional) if rules else 5.0,
+                )
+                if revised_notional < executable_minimum:
+                    con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
+                        cancel_reason='TECHNICAL_REPLAN_NOTIONAL_BELOW_MINIMUM'
+                        WHERE position_id=? AND status='PENDING_ENTRY'""", (position_id,))
+                    cancelled += 1
+                    continue
+                technical_plan = replanned
+                notional = revised_notional
+                con.execute("""UPDATE paper_agent_positions SET
+                    notional=?,margin_allocated=?,target_price=?,
+                    technical_plan_json=?,technical_plan_generated_at=?,
+                    technical_plan_as_of=?,technical_plan_version=?
+                    WHERE position_id=? AND status='PENDING_ENTRY'""", (
+                    notional, notional / float(leverage),
+                    float(technical_plan["targets"]["tp2_price"]),
+                    json.dumps(technical_plan, sort_keys=True),
+                    technical_plan["generated_at"], technical_plan["as_of"],
+                    technical_plan["version"], position_id,
+                ))
+
+            entry = technical_plan.get("entry") or {}
+            try:
+                entry_low = float(entry["low"])
+                entry_high = float(entry["high"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (entry_low <= live_entry_price <= entry_high):
+                # No chase: keep the intent pending inside its bounded
+                # observation window and wait for a fresh executable quote.
+                continue
+
+        # Only an authorized, in-zone quote becomes immutable entry evidence.
         result = execution_market_data.capture_live_reference(
             con, position_id=position_id, symbol=symbol, purpose="ENTRY",
             live=live, observed_at=now,
@@ -1885,16 +2002,8 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         if result is None:
             continue
         entry_time, reference_price, _audit_quote_volume = result
-        side = "BUY" if direction == "LONG" else "SELL"
-        # The last trade/reference price above is audit context only. A PAPER
-        # entry must execute from the fresh side of the live quote and only the
-        # visible liquidity on that same side (BUY=ask, SELL=bid).
-        executable_price = live.best_ask if side == "BUY" else live.best_bid
-        side_quote_volume = (
-            live.ask_quote_volume if side == "BUY" else live.bid_quote_volume
-        )
         fill = simulated_fill(
-            reference_price=float(executable_price) if executable_price is not None else 0.0,
+            reference_price=live_entry_price,
             requested_notional=float(notional), side=side,
             available_quote_volume=side_quote_volume, require_liquidity=True,
             symbol=symbol, quantity_step=rules.quantity_step if rules else 1e-8,
@@ -1942,5 +2051,4 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         filled += 1
     con.commit()
     return filled, cancelled
-
 
