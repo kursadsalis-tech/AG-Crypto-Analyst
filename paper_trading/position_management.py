@@ -118,6 +118,7 @@ def ensure_tables(con):
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
         ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
         ("technical_basis_ratio", "REAL"),
+        ("technical_execution_plan_json", "TEXT"),
     ):
         if position_columns and name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -140,15 +141,18 @@ def initialize_open_positions(con, now):
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.entry_time,p.entry_price,
                p.quantity,p.margin_allocated,p.entry_fee,p.market_type,
-               p.technical_basis_ratio
+               p.technical_basis_ratio,p.technical_execution_plan_json
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m ON m.position_id=p.position_id
         WHERE p.status='OPEN' AND m.position_id IS NULL
         ORDER BY p.position_id
     """).fetchall()
     initialized, blocked = 0, []
-    for (position_id, symbol, direction, entry_time, entry_price, quantity,
-         margin_allocated, fee, market_type, technical_basis_ratio) in rows:
+    for (
+        position_id, symbol, direction, entry_time, entry_price, quantity,
+        margin_allocated, fee, market_type, technical_basis_ratio,
+        technical_execution_plan_json,
+    ) in rows:
         risk = con.execute("""
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
@@ -205,9 +209,26 @@ def initialize_open_positions(con, now):
         ):
             blocked.append((int(position_id), "INVALID_FROZEN_STOP_PLAN"))
             continue
-        # New behavior positions freeze exact structural stop/targets. Legacy
-        # positions retain the existing volatility envelope.
+        # The immutable thesis keeps the original selection plan. If PENDING
+        # entry was revalidated, the position must initialize from the final
+        # execution plan that actually authorized the fill.
         technical_plan = thesis.get("technical_trade_plan")
+        if technical_execution_plan_json:
+            try:
+                current_execution_plan = json.loads(
+                    technical_execution_plan_json
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                blocked.append((
+                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
+                ))
+                continue
+            if not isinstance(current_execution_plan, dict):
+                blocked.append((
+                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
+                ))
+                continue
+            technical_plan = current_execution_plan
         tp1_price = tp2_price = None
         if isinstance(technical_plan, dict):
             try:

@@ -16,6 +16,7 @@ MIN_STOP_PCT = 0.50
 MAX_STOP_PCT = 5.00
 MAX_ENTRY_PLAN_AGE_SECONDS = 180
 MAX_SPOT_USDM_BASIS_DEVIATION_PCT = 5.0
+STRUCTURE_REFRESH_SECONDS = 120
 _PLAN_CACHE = {}
 
 
@@ -368,6 +369,13 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     def pct(level):
         return 100.0 * (float(level) / float(anchor) - 1.0)
 
+    data_cutoff_ms = int(one[-1]["close_time_ms"])
+    as_of = datetime.fromtimestamp(data_cutoff_ms / 1000.0, tz=timezone.utc)
+    setup_atr_pct = float(frames[setup_name]["atr14_pct"])
+    replan_move_pct = _clip(max(0.15, 0.50 * setup_atr_pct), 0.15, 1.25)
+    evidence = candidate.get("evidence") or {}
+    event = evidence.get("event") or {}
+
     plan = {
         "version": VERSION,
         "symbol": symbol,
@@ -376,7 +384,22 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         "technical_source_market": "BINANCE_USD_M_PERPETUAL",
         "source_reference_price": current,
         "generated_at": _iso(now),
-        "data_cutoff_ms": int(one[-1]["close_time_ms"]),
+        "as_of": _iso(as_of),
+        "data_cutoff_ms": data_cutoff_ms,
+        "freshness": {
+            "ttl_seconds": MAX_ENTRY_PLAN_AGE_SECONDS,
+            "maximum_market_data_age_seconds": MAX_BAR_AGE_SECONDS,
+            "structure_refresh_seconds": STRUCTURE_REFRESH_SECONDS,
+            "replan_price_move_pct": replan_move_pct,
+        },
+        "trigger": {
+            "event_kind": str(event.get("kind") or ""),
+            "horizon_hours": int(
+                candidate.get("horizon") or candidate.get("horizon_hours") or 4
+            ),
+            "primary_signal_source": evidence.get("primary_signal_source"),
+            "evidence_minute_end_ms": evidence.get("evidence_minute_end_ms"),
+        },
         "contiguous_one_minute_bar_count": len(one),
         "timeframes_used": selected,
         "technical_score": score,
@@ -402,6 +425,7 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         },
         "frames": frames,
         "higher_context_version": higher.get("version"),
+        "higher_context_generated_at": higher.get("generated_at"),
         "authority": {
             "direction_override": False,
             "ranking_input": True,
@@ -453,10 +477,117 @@ def execution_levels(plan, execution_reference_price, *, basis_ratio=None):
     }
 
 
+def _parse_time(value):
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def plan_is_fresh(plan, now=None):
+    """Validate both plan age and the market-data snapshot it was built from."""
     now = now or datetime.now(timezone.utc)
-    generated = datetime.fromisoformat(
-        str(plan["generated_at"]).replace("Z", "+00:00")
-    ).astimezone(timezone.utc)
-    age = (now - generated).total_seconds()
-    return 0 <= age <= MAX_ENTRY_PLAN_AGE_SECONDS
+    try:
+        generated = _parse_time(plan["generated_at"])
+        as_of_value = plan.get("as_of")
+        if as_of_value is None:
+            as_of_value = _iso(datetime.fromtimestamp(
+                int(plan["data_cutoff_ms"]) / 1000.0, tz=timezone.utc
+            ))
+        as_of = _parse_time(as_of_value)
+        freshness = plan.get("freshness") or {}
+        ttl = float(freshness.get("ttl_seconds", MAX_ENTRY_PLAN_AGE_SECONDS))
+        max_data_age = float(
+            freshness.get("maximum_market_data_age_seconds", MAX_BAR_AGE_SECONDS)
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    generated_age = (now - generated).total_seconds()
+    data_age = (now - as_of).total_seconds()
+    return (
+        0 <= generated_age <= ttl
+        and 0 <= data_age <= max_data_age
+    )
+
+
+def replan_reason(con, plan, now=None):
+    """Return why a pending entry needs a fresh local plan, else None.
+
+    This function is deliberately local-only. It never performs network I/O.
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        symbol = str(plan["symbol"]).upper()
+        reference = float(plan["source_reference_price"])
+        previous_cutoff = int(plan["data_cutoff_ms"])
+        freshness = plan.get("freshness") or {}
+        move_threshold = float(
+            freshness.get("replan_price_move_pct", 0.50)
+        )
+        structure_refresh = int(
+            freshness.get("structure_refresh_seconds", STRUCTURE_REFRESH_SECONDS)
+        )
+    except (KeyError, TypeError, ValueError):
+        return "MALFORMED_TECHNICAL_PLAN"
+
+    if not plan_is_fresh(plan, now):
+        return "PLAN_OR_MARKET_DATA_STALE"
+
+    row = con.execute("""
+        SELECT close_time_ms,close FROM technical_minute_bars
+        WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
+          AND close_time_ms<=?
+        ORDER BY close_time_ms DESC LIMIT 1
+    """, (symbol, int(now.timestamp() * 1000))).fetchone()
+    if not row:
+        return "LOCAL_TECHNICAL_DATA_UNAVAILABLE"
+    latest_cutoff, latest_close = int(row[0]), float(row[1])
+    latest_age = now.timestamp() - latest_cutoff / 1000.0
+    if latest_age < -1.0 or latest_age > MAX_BAR_AGE_SECONDS:
+        return "LOCAL_TECHNICAL_DATA_STALE"
+    if not math.isfinite(reference) or reference <= 0:
+        return "MALFORMED_TECHNICAL_PLAN"
+    if not math.isfinite(latest_close) or latest_close <= 0:
+        return "LOCAL_TECHNICAL_DATA_INVALID"
+
+    move_pct = abs(latest_close / reference - 1.0) * 100.0
+    if move_pct > move_threshold:
+        return "SOURCE_PRICE_MOVED_MATERIALLY"
+    if latest_cutoff - previous_cutoff >= structure_refresh * 1000:
+        return "STRUCTURE_REFRESH_DUE"
+
+    current_higher = realtime_technical_context.load_latest(con, symbol, now=now)
+    if current_higher is None:
+        return "HIGHER_TECHNICAL_CONTEXT_UNAVAILABLE"
+    previous_higher_at = plan.get("higher_context_generated_at")
+    current_higher_at = current_higher.get("generated_at")
+    if (
+        previous_higher_at
+        and current_higher_at
+        and str(current_higher_at) != str(previous_higher_at)
+    ):
+        return "HIGHER_CONTEXT_REFRESHED"
+    return None
+
+
+def rebuild_for_pending(con, plan, *, now=None, market_type=None):
+    """Rebuild a pending execution plan from current local canonical evidence."""
+    now = now or datetime.now(timezone.utc)
+    trigger = plan.get("trigger") or {}
+    candidate = {
+        "symbol": plan["symbol"],
+        "direction": plan["direction"],
+        "horizon": int(trigger.get("horizon_hours") or 4),
+        "evidence": {
+            "event": {"kind": trigger.get("event_kind") or "MARKET_STRUCTURE"},
+            "primary_signal_source": trigger.get("primary_signal_source"),
+            "evidence_minute_end_ms": trigger.get("evidence_minute_end_ms"),
+        },
+    }
+    return build_for_candidate(
+        con,
+        candidate,
+        now=now,
+        market_type=market_type or plan.get("execution_market_type")
+        or "USD_M_PERPETUAL",
+    )

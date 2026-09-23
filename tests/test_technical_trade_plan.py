@@ -105,6 +105,23 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
         self.assertGreater(
             result["targets"]["tp2_price"], result["targets"]["tp1_price"]
         )
+        self.assertEqual(
+            result["as_of"],
+            datetime.fromtimestamp(
+                result["data_cutoff_ms"] / 1000.0, tz=timezone.utc
+            ).isoformat(),
+        )
+        self.assertEqual(
+            result["freshness"]["ttl_seconds"],
+            plan.MAX_ENTRY_PLAN_AGE_SECONDS,
+        )
+        self.assertEqual(
+            result["freshness"]["maximum_market_data_age_seconds"],
+            plan.MAX_BAR_AGE_SECONDS,
+        )
+        self.assertGreater(
+            result["freshness"]["replan_price_move_pct"], 0.0
+        )
 
     def test_lower_timeframes_join_only_when_contiguous_history_is_ready(self):
         self.con.execute("DELETE FROM technical_minute_bars")
@@ -177,6 +194,61 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
         self.assertEqual(
             result["timeframes_used"],
             ["1m", "5m", "15m", "1h", "4h", "1d", "3d", "1w", "1M"],
+        )
+
+    def test_material_source_move_requires_pending_replan(self):
+        result = plan.build_for_candidate(
+            self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL"
+        )
+        latest = self.con.execute("""
+            SELECT MAX(close_time_ms) FROM technical_minute_bars
+            WHERE symbol='BTCUSDT'
+        """).fetchone()[0]
+        self.con.execute("""
+            UPDATE technical_minute_bars SET close=close*1.02, high=high*1.02
+            WHERE symbol='BTCUSDT' AND close_time_ms=?
+        """, (latest,))
+        self.con.commit()
+        self.assertEqual(
+            plan.replan_reason(self.con, result, now=NOW),
+            "SOURCE_PRICE_MOVED_MATERIALLY",
+        )
+
+    def test_two_new_closed_minutes_require_structure_refresh(self):
+        result = plan.build_for_candidate(
+            self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL"
+        )
+        last = self.con.execute("""
+            SELECT open_time_ms,close_time_ms,open,high,low,close,volume,
+                   quote_volume,trade_count,taker_buy_quote_volume,source
+            FROM technical_minute_bars
+            WHERE symbol='BTCUSDT'
+            ORDER BY close_time_ms DESC LIMIT 1
+        """).fetchone()
+        rows = []
+        for step in (1, 2):
+            opened = int(last[0]) + step * 60_000
+            close = float(last[5]) + step * 0.01
+            rows.append({
+                "symbol": "BTCUSDT",
+                "open_time_ms": opened,
+                "close_time_ms": opened + 59_999,
+                "open": close - 0.01,
+                "high": close + 0.02,
+                "low": close - 0.02,
+                "close": close,
+                "volume": float(last[6]),
+                "quote_volume": float(last[7]),
+                "trade_count": int(last[8]),
+                "taker_buy_quote_volume": float(last[9]),
+                "source": "TEST",
+            })
+        store.upsert_bars(self.con, rows)
+        self.con.commit()
+        check_at = NOW + timedelta(seconds=121)
+        self.assertEqual(
+            plan.replan_reason(self.con, result, now=check_at),
+            "STRUCTURE_REFRESH_DUE",
         )
 
     def test_stale_minute_cache_fails_closed(self):
