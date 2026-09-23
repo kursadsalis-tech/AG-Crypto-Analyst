@@ -78,22 +78,58 @@ def runtime_connection():
     con.execute("PRAGMA busy_timeout=30000")
     return con
 
+
+def persist_state(status, message, success_at=None, *, attempts=3):
+    """Write cycle state through a fresh bounded connection.
+
+    The risk cycle spends most of its lifetime outside SQLite.  Do not keep one
+    connection alive across that work, and do not lose the final state merely
+    because another legitimate runtime writer owns the database momentarily.
+    """
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        con = None
+        try:
+            con = runtime_connection()
+            ensure_state_table(con)
+            save_state(con, status, message, success_at)
+            return
+        except sqlite3.OperationalError as exc:
+            if (
+                "database is locked" not in str(exc).lower()
+                or attempt >= attempts
+            ):
+                raise
+        finally:
+            if con is not None:
+                con.close()
+        import time
+        time.sleep(min(0.5 * attempt, 2.0))
+
+
 def main(force=False):
     now = utcnow()
     con = runtime_connection()
     try:
         ensure_state_table(con)
-        if not force and not is_due(con, now):
-            print("Risk Manager: 15 dakikalık aralık dolmadı; bu cycle atlandı.")
-            return {"status": "SKIPPED"}
+        due = force or is_due(con, now)
+    finally:
+        con.close()
+    if not due:
+        print("Risk Manager: 15 dakikalık aralık dolmadı; bu cycle atlandı.")
+        return {"status": "SKIPPED"}
 
+    try:
+        result = risk_manager.main()
+        con = runtime_connection()
         try:
-            result = risk_manager.main()
             behavior_symbols = risk_manager.behavior_risk_symbols(con, now)
-            try:
-                technical_bootstrap = bootstrap_technical_bars(
-                    DB_NAME, behavior_symbols, now=now, max_workers=4
-                )
+        finally:
+            con.close()
+        try:
+            technical_bootstrap = bootstrap_technical_bars(
+                DB_NAME, behavior_symbols, now=now, max_workers=4
+            )
             except Exception as bootstrap_exc:
                 technical_bootstrap = {
                     "needed": len(behavior_symbols),
@@ -101,36 +137,34 @@ def main(force=False):
                     "bars": 0,
                     "errors": {"SUPPORT_CYCLE": type(bootstrap_exc).__name__},
                 }
-            result["technical_bar_bootstrap"] = technical_bootstrap
-            source_errors = result.get("source_errors") or {}
-            if result.get("market_state") == "DATA_BLOCKED":
-                status = "DATA_BLOCKED"
-            else:
-                status = "PARTIAL" if source_errors else "SUCCESS"
-            message = (
-                f"snapshot={result['snapshot_id']} | "
-                f"market_state={result['market_state']} | "
-                f"coverage={result['coverage_count']}/{result['coverage_total']} | "
-                f"market_stress={result['market_stress_count']} | "
-                f"asset_blocks={result['asset_block_count']} | "
-                f"source_errors={len(source_errors)} | "
-                f"technical_contexts={result.get('technical_context_count', 0)} | "
-                f"technical_ms={result.get('technical_context_compute_ms', 0.0):.3f} | "
-                f"technical_errors={len(result.get('technical_context_errors') or {})} | "
-                f"bar_bootstrap={technical_bootstrap.get('ready', 0)}/"
-                f"{technical_bootstrap.get('needed', 0)} | "
-                f"bar_rows={technical_bootstrap.get('bars', 0)}"
-            )
-            save_state(con, status, message, now if status == "SUCCESS" else None)
-            print(f"Risk Manager cycle: {status} | {message}")
-            return {"status": status, "message": message, "result": result}
-        except Exception as exc:
-            message = str(exc)
-            save_state(con, "ERROR", message)
-            print(f"Risk Manager cycle: HATA -> {message}")
-            return {"status": "ERROR", "message": message}
-    finally:
-        con.close()
+        result["technical_bar_bootstrap"] = technical_bootstrap
+        source_errors = result.get("source_errors") or {}
+        if result.get("market_state") == "DATA_BLOCKED":
+            status = "DATA_BLOCKED"
+        else:
+            status = "PARTIAL" if source_errors else "SUCCESS"
+        message = (
+            f"snapshot={result['snapshot_id']} | "
+            f"market_state={result['market_state']} | "
+            f"coverage={result['coverage_count']}/{result['coverage_total']} | "
+            f"market_stress={result['market_stress_count']} | "
+            f"asset_blocks={result['asset_block_count']} | "
+            f"source_errors={len(source_errors)} | "
+            f"technical_contexts={result.get('technical_context_count', 0)} | "
+            f"technical_ms={result.get('technical_context_compute_ms', 0.0):.3f} | "
+            f"technical_errors={len(result.get('technical_context_errors') or {})} | "
+            f"bar_bootstrap={technical_bootstrap.get('ready', 0)}/"
+            f"{technical_bootstrap.get('needed', 0)} | "
+            f"bar_rows={technical_bootstrap.get('bars', 0)}"
+        )
+        persist_state(status, message, now if status == "SUCCESS" else None)
+        print(f"Risk Manager cycle: {status} | {message}")
+        return {"status": status, "message": message, "result": result}
+    except Exception as exc:
+        message = f"{type(exc).__name__}:{exc}"
+        persist_state("ERROR", message)
+        print(f"Risk Manager cycle: HATA -> {message}")
+        return {"status": "ERROR", "message": message}
 
 
 if __name__ == "__main__":
