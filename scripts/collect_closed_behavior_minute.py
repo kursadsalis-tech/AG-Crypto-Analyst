@@ -21,7 +21,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
 from data.binance_liquidation_channel import probe
-from data.binance_live_evidence import collect, fetch_json
+from data.binance_live_evidence import (
+    collect_minute_snapshots,
+    fetch_market_tickers,
+)
 from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
@@ -32,18 +35,11 @@ HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 
 
 def refresh_market_route():
-    exchange_info = fetch_json("/fapi/v1/exchangeInfo")
-    tickers = fetch_json("/fapi/v1/ticker/24hr")
-    books = fetch_json("/fapi/v1/ticker/bookTicker")
-    if any(
-        isinstance(payload, dict) and payload.get("_transport_error")
-        for payload in (exchange_info, tickers, books)
-    ):
-        raise RuntimeError("Binance market universe transport unavailable")
+    tickers = asyncio.run(fetch_market_tickers())
     snapshot_ms = int(time.time() * 1000)
-    universe = build_universe(
-        exchange_info, tickers, books, snapshot_ms=snapshot_ms
-    )
+    universe = build_universe(tickers, snapshot_ms=snapshot_ms)
+    if not universe.get("selected"):
+        raise RuntimeError("Binance WebSocket market universe is empty")
     return universe, build_attention_route(universe, opportunity_slots=10)
 
 
@@ -62,13 +58,15 @@ def write_json_atomic(path, payload):
 async def collect_minute(route, universe, contract_values, args, minute_end_ms):
     duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
     liquidation_task = asyncio.create_task(probe(duration, contract_values))
-    market_snapshots = []
-    started = time.monotonic()
-    for index in range(args.samples):
-        target = started + index * args.cadence_seconds
-        await asyncio.sleep(max(0, target - time.monotonic()))
-        market_snapshots.append(await asyncio.to_thread(collect, route, universe))
-    liquidations = await liquidation_task
+    market_task = asyncio.create_task(collect_minute_snapshots(
+        route,
+        universe,
+        samples=args.samples,
+        cadence_seconds=args.cadence_seconds,
+    ))
+    market_snapshots, liquidations = await asyncio.gather(
+        market_task, liquidation_task
+    )
     return [build_bundle(market, liquidations) for market in market_snapshots]
 
 
@@ -135,6 +133,10 @@ def main():
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
         "market_data_provider": "BINANCE",
+        "market_transport": "WEBSOCKET_ONLY",
+        "broad_market_stream": "ALL_MARKET_24H_TICKER",
+        "deep_streams": ["DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING"],
+        "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
     }
