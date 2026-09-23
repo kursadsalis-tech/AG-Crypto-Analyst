@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from database.behavior_event_outcome_store import ensure_outcome_table
-from database.runtime_store import connect
 from paper_trading import behavior_decision_core as core
 
 
@@ -61,12 +61,25 @@ def write_health(payload):
                 pass
 
 
-def run_cycle():
+def _database_locked(exc):
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and "database is locked" in str(exc).lower()
+    )
+
+
+def local_connection():
+    """Open a local-only connection without remote-mirror trigger setup."""
+    con = sqlite3.connect(DB_PATH, timeout=5)
+    con.execute("PRAGMA busy_timeout=5000")
+    return con
+
+
+def run_cycle_once():
     started = time.monotonic()
     generated_at = utcnow()
-    con = connect(DB_PATH, timeout=30)
+    con = local_connection()
     try:
-        con.execute("PRAGMA busy_timeout=30000")
         # Schema/index work is rare and committed before the historical scan so
         # this low-priority worker never retains a writer lock while learning.
         ensure_outcome_table(con)
@@ -95,6 +108,21 @@ def run_cycle():
         "awaiting_missed": int(awaiting),
         "horizon_outcome_rows": int(outcome_rows),
     }
+
+
+def run_cycle(attempts=6):
+    """Retry transient SQLite writer contention with fresh local connections."""
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            result = run_cycle_once()
+            result["sqlite_attempts"] = attempt
+            return result
+        except sqlite3.OperationalError as exc:
+            if not _database_locked(exc) or attempt >= attempts:
+                raise
+        time.sleep(min(0.5 * attempt, 3.0))
+    raise RuntimeError("unreachable behavior-learning retry state")
 
 
 def main():
