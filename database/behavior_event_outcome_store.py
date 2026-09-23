@@ -65,6 +65,15 @@ def ensure_outcome_table(connection):
     """)
 
 
+def _require_outcome_table(connection):
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (OUTCOME_TABLE,),
+    ).fetchone()
+    if not exists:
+        raise RuntimeError("behavior outcome schema unavailable")
+
+
 def _applies(symbols_json, instrument):
     try:
         symbols = [str(value).upper() for value in json.loads(symbols_json or "[]")]
@@ -181,7 +190,9 @@ def backfill_market_structure_outcomes(connection):
 
 def settle_outcomes_for_closed_minute(connection, closed_minute_end_timestamp_ms):
     """Settle only horizons becoming causally available at this closed minute."""
-    ensure_outcome_table(connection)
+    # Schema is bootstrapped once by market_behavior_store. The minute hot path
+    # must never repeat CREATE TABLE / CREATE INDEX under live SQLite writes.
+    _require_outcome_table(connection)
     outcome_minute = int(closed_minute_end_timestamp_ms)
     outcome_available_at = datetime.fromtimestamp(
         outcome_minute / 1000, tz=timezone.utc
