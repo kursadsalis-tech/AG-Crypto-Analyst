@@ -272,6 +272,10 @@ async def run():
     decision_wakeup = asyncio.Event()
     symbol_cache_lock = threading.Lock()
     cached_symbols = ()
+    last_scan_started_at = None
+    last_scan_completed_at = None
+    last_scan_duration_ms = None
+    last_scan_error = None
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -391,6 +395,12 @@ async def run():
             ),
             "action": last_action_status,
             "quote_ingest": quote_ingest_snapshot(wall_clock_ms),
+            "scan_runtime": {
+                "started_at": last_scan_started_at,
+                "completed_at": last_scan_completed_at,
+                "duration_ms": last_scan_duration_ms,
+                "error": last_scan_error,
+            },
         })
         details["process_runtime_source"] = process_runtime_source
         write_health(status, **details)
@@ -398,9 +408,10 @@ async def run():
     def universe_connection():
         db = getattr(universe_local, "connection", None)
         if db is None:
+            # Schema was initialized on the canonical startup connection before
+            # worker threads were created.  Thread-local hot paths must not
+            # repeat DDL against the live SQLite writer.
             db = connect(DB_NAME, timeout=30)
-            ensure_tables(db)
-            position_management.ensure_tables(db)
             universe_local.connection = db
         return db
 
@@ -435,18 +446,25 @@ async def run():
     def decision_connection():
         db = getattr(decision_local, "connection", None)
         if db is None:
+            # Runtime schema is initialized once before concurrent tasks start.
             db = connect(DB_NAME, timeout=30)
-            ensure_tables(db)
-            position_management.ensure_tables(db)
             decision_local.connection = db
         return db
 
     def scan_connection():
         db = getattr(scan_local, "connection", None)
         if db is None:
-            db = connect(DB_NAME, timeout=30)
-            ensure_tables(db)
-            position_management.ensure_tables(db)
+            # Opportunity discovery is non-authoritative and completion-paced.
+            # Under writer contention it should fail/retry quickly rather than
+            # disappear into a 30-second SQLite busy wait per operation.
+            timeout_seconds = max(
+                0.1, float(os.getenv("AGCA_SCAN_SQLITE_TIMEOUT_SECONDS", "2"))
+            )
+            db = connect(DB_NAME, timeout=timeout_seconds)
+            db.execute(
+                "PRAGMA busy_timeout=?",
+                (max(100, int(timeout_seconds * 1000)),),
+            )
             scan_local.connection = db
         return db
 
@@ -461,12 +479,20 @@ async def run():
 
     def scan_once():
         """Discover/select opportunities without ever blocking execution ticks."""
+        nonlocal last_scan_started_at, last_scan_completed_at
+        nonlocal last_scan_duration_ms, last_scan_error
         work_con = scan_connection()
         observed_at = now()
+        started = loop.time()
+        last_scan_started_at = observed_at.isoformat()
+        last_scan_error = None
         selection_result = {}
         selected = select_new_positions(
             work_con, observed_at, metadata, telemetry=selection_result
         )
+        completed = now()
+        last_scan_completed_at = completed.isoformat()
+        last_scan_duration_ms = round((loop.time() - started) * 1000.0, 3)
         latest_scan = work_con.execute(
             """SELECT core_status,candidate_count,selected_count,
                       active_position_count,capacity,available_exposure,
@@ -510,10 +536,12 @@ async def run():
 
     async def scan_loop():
         """Completion-paced scanning on a dedicated worker thread."""
+        nonlocal last_scan_error
         while not stop_event.is_set():
             try:
                 await loop.run_in_executor(scan_executor, scan_once)
             except Exception as exc:
+                last_scan_error = type(exc).__name__
                 emit_health(
                     "DEGRADED",
                     error=f"OPPORTUNITY_SCAN_{type(exc).__name__}",
