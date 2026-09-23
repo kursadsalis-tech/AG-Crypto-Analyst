@@ -70,6 +70,7 @@ done
 
 canonical_units=(
   agca-paper-realtime-worker.service
+  agca-technical-kline-worker.service
   agca-paper-realtime-health-monitor.service
   agca-paper-realtime-health-monitor.timer
   agca-exchange-metadata-refresh.service
@@ -119,7 +120,13 @@ done
 sudo systemctl enable agca-paper-realtime-worker.service
 sudo systemctl restart agca-paper-realtime-worker.service
 
+# Exact closed 1m technical bars need one long-lived websocket owner.
+# Keep this data-only collector independent from the rotating oneshot observer.
+sudo systemctl enable agca-technical-kline-worker.service
+sudo systemctl restart agca-technical-kline-worker.service
+
 systemctl is-active --quiet agca-paper-realtime-worker.service
+systemctl is-active --quiet agca-technical-kline-worker.service
 test ! -e "$DEPLOY/crypto_data.db"
 echo "COMMIT=$(git rev-parse HEAD)"
 echo "CANONICAL_DB=$DB"
