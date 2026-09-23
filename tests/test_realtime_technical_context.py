@@ -57,9 +57,46 @@ class RealtimeTechnicalContextTests(unittest.TestCase):
                 "confidence_input": False,
                 "sizing_input": False,
                 "stop_input": False,
-                "purpose": "FORWARD_OBSERVATION_AND_LATER_CHALLENGER_EVIDENCE",
+                "purpose": "SUPPORT_CONTEXT_FOR_AUTHORITATIVE_TECHNICAL_TRADE_PLAN",
             },
         )
+
+    @staticmethod
+    def daily_candles(count=400):
+        last_day = datetime(2026, 9, 7, tzinfo=timezone.utc)
+        start = last_day - timedelta(days=count - 1)
+        rows = []
+        for index in range(count):
+            opened = start + timedelta(days=index)
+            close = 80.0 + 0.05 * index + math.sin(index / 19.0)
+            rows.append([
+                int(opened.timestamp() * 1000),
+                close - 0.2,
+                close + 0.8,
+                close - 0.8,
+                close,
+                100.0,
+                int((opened + timedelta(days=1)).timestamp() * 1000) - 1,
+                20_000.0 + 20.0 * index,
+                0, 0, 0, 0,
+            ])
+        return rows
+
+    def test_build_adds_long_regime_frames_without_changing_execution_authority(self):
+        generated = datetime(2026, 9, 8, 1, 5, tzinfo=timezone.utc)
+        context = rtc.build(
+            self.candles(), symbol="BTCUSDT", generated_at=generated,
+            market_scope="TEST", daily_candles=self.daily_candles(),
+        )
+        self.assertIn("1d", context["timeframes"])
+        self.assertIn("3d", context["timeframes"])
+        self.assertIn("1w", context["timeframes"])
+        self.assertIn("1M", context["timeframes"])
+        self.assertIn("support_1h_72", context["levels"])
+        self.assertIn("support_4h_20", context["levels"])
+        self.assertIn("trend_1d", context["summary"])
+        self.assertTrue(context["observation_only"])
+        self.assertFalse(context["authority"]["ranking_input"])
 
     def test_latest_cache_is_local_only_and_freshness_bounded(self):
         con = sqlite3.connect(":memory:")
