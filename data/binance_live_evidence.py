@@ -68,6 +68,46 @@ def _technical_kline_symbols(universe):
     })
 
 
+async def collect_closed_technical_bars(universe, *, observe_until_ms):
+    """Collect only broad-universe closed 1m klines through a boundary.
+
+    Used when the full observer starts too late in a minute to collect its
+    behavior sample span.  Keeping this lightweight kline stream alive during
+    the alignment wait prevents gaps in the local technical cache.
+    """
+    symbols = _technical_kline_symbols(universe)
+    if not symbols:
+        return []
+
+    params = [f"{symbol.lower()}@kline_1m" for symbol in symbols]
+    url = MARKET_STREAM_BASE + "/".join(params)
+    context = ssl.create_default_context(cafile=certifi.where())
+    bars = []
+    async with websockets.connect(
+        url,
+        ssl=context,
+        open_timeout=OPEN_TIMEOUT_SECONDS,
+        ping_interval=20,
+        ping_timeout=10,
+        max_queue=4096,
+    ) as socket:
+        while int(time.time() * 1000) < int(observe_until_ms):
+            remaining = (
+                int(observe_until_ms) - int(time.time() * 1000)
+            ) / 1000.0
+            try:
+                async with asyncio.timeout(max(0.05, min(1.0, remaining))):
+                    raw = await socket.recv()
+            except TimeoutError:
+                continue
+            message = _normalize_message(raw)
+            if isinstance(message, dict) and message.get("e") == "kline":
+                bar = normalize_closed_1m_kline(message)
+                if bar is not None:
+                    bars.append(bar)
+    return bars
+
+
 def _positive(value):
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
