@@ -264,7 +264,7 @@ def binance_subscription_params(symbols, market_type="SPOT", channels=None):
         channels = (
             ("ticker", "aggTrade")
             if market_type_filter == "SPOT"
-            else ("bookTicker", "trade")
+            else ("bookTicker", "aggTrade")
         )
     return [
         f"{symbol.lower()}@{channel}"
