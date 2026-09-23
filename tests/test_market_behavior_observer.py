@@ -9,6 +9,16 @@ from scripts import collect_closed_behavior_minute as observer
 
 
 class MarketBehaviorObserverTests(unittest.TestCase):
+    def test_alignment_catches_up_kline_when_behavior_window_is_too_short(self):
+        target, catchup = observer.collection_alignment(30_000, 38)
+        self.assertEqual(target, 120_000)
+        self.assertEqual(catchup, 60_000)
+
+    def test_alignment_uses_next_minute_when_full_behavior_span_fits(self):
+        target, catchup = observer.collection_alignment(20_000, 38)
+        self.assertEqual(target, 60_000)
+        self.assertIsNone(catchup)
+
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
             "s": "AAAUSDT", "c": "10", "o": "9", "q": "10000000",
