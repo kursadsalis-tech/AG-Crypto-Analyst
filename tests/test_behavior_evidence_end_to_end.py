@@ -7,6 +7,7 @@ from data.behavior_event_forward_measurement import audit
 from database.causal_evidence_store import (
     evidence_for_closed_minute, save_exact_macro_event,
 )
+from database.behavior_event_outcome_store import settle_queued_outcomes
 from database.market_behavior_store import persist_closed_minute
 from database.runtime_store import connect
 
@@ -61,6 +62,7 @@ class BehaviorEvidenceEndToEndTests(unittest.TestCase):
             )
             persist_closed_minute(database, behavior_report(360_000, 102))
             with connect(database) as con:
+                settle_queued_outcomes(con, limit=50)
                 result = audit(con)
         self.assertEqual(result["exact_minute_join_events"], 1)
         self.assertEqual(result["forward_outcomes_by_horizon"]["5"], 1)
