@@ -15,7 +15,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from database.runtime_store import connect
 from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables
 from paper_trading import experience_memory, position_management, strategy_allocator, trade_learning
 
@@ -59,9 +58,9 @@ def write_health(payload):
 
 
 def local_connection():
-    con = connect(DB_NAME, timeout=30)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=30000")
+    """Use the local SQLite file directly; learning never needs remote triggers."""
+    con = sqlite3.connect(DB_NAME, timeout=5)
+    con.execute("PRAGMA busy_timeout=5000")
     return con
 
 
@@ -120,6 +119,15 @@ def main():
         raise SystemExit("Safety gate: trade learning accepts PAPER_ONLY exclusively")
 
     while True:
+        started_at = utcnow()
+        write_health({
+            "health_contract_version": HEALTH_CONTRACT_VERSION,
+            "status": "RUNNING",
+            "phase": "LEARNING_CYCLE",
+            "at": started_at.isoformat(),
+            "execution_mode": "PAPER_ONLY",
+            "may_send_real_orders": False,
+        })
         try:
             result = run_cycle()
             write_health({
