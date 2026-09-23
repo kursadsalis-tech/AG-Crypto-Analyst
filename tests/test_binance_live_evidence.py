@@ -36,7 +36,36 @@ class BinanceLiveEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(row["funding"]["rate"], 0.0001)
         self.assertIn("20", row["order_book"]["depths"])
-        self.assertEqual(result["transport"], "USD_M_WEBSOCKET_STREAMS")
+        self.assertEqual(result["transport"], "USD_M_ROUTED_WEBSOCKET_STREAMS")
+
+    def test_current_routed_endpoints_are_split_by_channel_class(self):
+        self.assertEqual(
+            live.ALL_MARKET_TICKER_URL,
+            "wss://fstream.binance.com/market/ws/!ticker@arr",
+        )
+        self.assertEqual(
+            live.ALL_BOOK_TICKER_URL,
+            "wss://fstream.binance.com/public/ws/!bookTicker",
+        )
+        self.assertTrue(live.PUBLIC_STREAM_BASE.endswith("/public/stream?streams="))
+        self.assertTrue(live.MARKET_STREAM_BASE.endswith("/market/stream?streams="))
+
+    def test_cm_payload_is_rejected_from_usdm_evidence(self):
+        states = {
+            "BTCUSDT": live._DeepState(
+                symbol="BTCUSDT", instrument="BTC-USDT-SWAP"
+            )
+        }
+        live._apply_public(states, {
+            "e": "depthUpdate", "s": "BTCUSDT", "E": 1000, "st": 2,
+            "b": [["100", "1"]], "a": [["101", "1"]],
+        }, 1000)
+        self.assertEqual(states["BTCUSDT"].bids, [])
+        live._apply_trade(states, {
+            "e": "aggTrade", "s": "BTCUSDT", "E": 1000, "T": 1000,
+            "st": 2, "p": "100", "q": "1", "m": False,
+        }, 1000)
+        self.assertEqual(states["BTCUSDT"].trade_count, 0)
 
     def test_trade_window_resets_after_snapshot(self):
         state = live._DeepState(
