@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from paper_trading.position_policy import PositionState, evaluate, initialize
+from paper_trading.position_policy import (
+    PositionState, evaluate, initialize, initialize_with_levels,
+)
 
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
@@ -24,6 +26,39 @@ class PositionPolicyTests(unittest.TestCase):
                           maximum_exit_at=NOW + timedelta(hours=4))
         self.assertEqual((result.action, result.close_fraction), ("REDUCE", 0.25))
         self.assertGreater(result.stop_price, 100)
+
+    def test_technical_levels_are_exact_and_replace_fixed_r_targets(self):
+        state = initialize_with_levels(
+            "LONG", 100, 98.5, 101.25, 103.5
+        )
+        self.assertEqual(state.stop_price, 98.5)
+        self.assertEqual(state.tp1_price, 101.25)
+        self.assertEqual(state.tp2_price, 103.5)
+        before = evaluate(
+            state, 101.0, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(before.action, "HOLD")
+        at_tp1 = evaluate(
+            state, 101.25, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(
+            (at_tp1.action, at_tp1.reason),
+            ("REDUCE", "TAKE_PROFIT_TECHNICAL_1"),
+        )
+
+    def test_short_technical_levels_validate_direction(self):
+        state = initialize_with_levels(
+            "SHORT", 100, 102, 98.5, 96
+        )
+        result = evaluate(
+            state, 98.5, thesis_supported=True, now=NOW,
+            maximum_exit_at=NOW + timedelta(hours=4),
+        )
+        self.assertEqual(result.reason, "TAKE_PROFIT_TECHNICAL_1")
+        with self.assertRaisesRegex(ValueError, "inconsistent"):
+            initialize_with_levels("SHORT", 100, 98, 102, 104)
 
     def test_three_opposing_events_invalidate_thesis(self):
         state = initialize("SHORT", 100, 2)
