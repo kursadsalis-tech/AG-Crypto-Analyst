@@ -8,7 +8,6 @@ import fcntl
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 import time
@@ -23,58 +22,16 @@ from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
 from data.binance_liquidation_channel import probe
 from data.binance_live_evidence import (
-    collect_closed_technical_bars,
     collect_minute_snapshots,
     fetch_market_tickers,
 )
 from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
-from database.technical_bar_store import persist_bars as persist_technical_bars
 from database.causal_evidence_store import evidence_for_closed_minute
 
 
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
-
-
-PRE_REFRESH_KLINE_GUARD_SECONDS = 15
-TECHNICAL_SYMBOL_RECENCY_MINUTES = 5
-
-
-def pre_refresh_technical_boundary(now_ms, guard_seconds=PRE_REFRESH_KLINE_GUARD_SECONDS):
-    """Return the imminent minute close if route refresh could straddle it."""
-    next_end_ms = (int(now_ms) // MINUTE_MS + 1) * MINUTE_MS
-    remaining = (next_end_ms - int(now_ms)) / 1000.0
-    return next_end_ms if remaining <= float(guard_seconds) else None
-
-
-def cached_technical_universe(database, now_ms, *, recency_minutes=TECHNICAL_SYMBOL_RECENCY_MINUTES):
-    """Build a local recent-symbol set so kline capture can start before refresh."""
-    if not database:
-        return {"selected": []}
-    cutoff = int(now_ms) - int(recency_minutes) * MINUTE_MS
-    try:
-        with sqlite3.connect(database, timeout=5) as connection:
-            rows = connection.execute("""
-                SELECT DISTINCT symbol
-                FROM technical_minute_bars
-                WHERE provider='BINANCE'
-                  AND market_type='USD_M_PERPETUAL'
-                  AND close_time_ms>=?
-                ORDER BY symbol
-            """, (cutoff,)).fetchall()
-    except sqlite3.OperationalError:
-        return {"selected": []}
-    return {"selected": [{"symbol": str(row[0]).upper()} for row in rows]}
-
-
-def collection_alignment(now_ms, required_span_seconds):
-    """Return target behavior-minute close and optional kline catch-up close."""
-    next_end_ms = (int(now_ms) // MINUTE_MS + 1) * MINUTE_MS
-    remaining = (next_end_ms - int(now_ms)) / 1000.0
-    if remaining >= float(required_span_seconds):
-        return next_end_ms, None
-    return next_end_ms + MINUTE_MS, next_end_ms
 
 
 def refresh_market_route():
@@ -101,20 +58,18 @@ def write_json_atomic(path, payload):
 async def collect_minute(route, universe, contract_values, args, minute_end_ms):
     duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
     liquidation_task = asyncio.create_task(probe(duration, contract_values))
-    closed_bars = []
     market_task = asyncio.create_task(collect_minute_snapshots(
         route,
         universe,
         samples=args.samples,
         cadence_seconds=args.cadence_seconds,
-        closed_bar_sink=closed_bars,
-        observe_until_ms=minute_end_ms + 1_000,
+        closed_bar_sink=None,
+        observe_until_ms=None,
     ))
     market_snapshots, liquidations = await asyncio.gather(
         market_task, liquidation_task
     )
-    bundles = [build_bundle(market, liquidations) for market in market_snapshots]
-    return bundles, closed_bars
+    return [build_bundle(market, liquidations) for market in market_snapshots]
 
 
 def main():
@@ -142,25 +97,6 @@ def main():
         except BlockingIOError as exc:
             raise SystemExit("Another market behavior observer owns the lock") from exc
     if args.refresh_live_universe:
-        guard_now_ms = int(time.time() * 1000)
-        guard_end_ms = pre_refresh_technical_boundary(guard_now_ms)
-        if guard_end_ms is not None and args.database:
-            cached_universe = cached_technical_universe(
-                args.database, guard_now_ms
-            )
-            if cached_universe["selected"]:
-                guard_bars = asyncio.run(
-                    collect_closed_technical_bars(
-                        cached_universe,
-                        observe_until_ms=guard_end_ms + 1_000,
-                    )
-                )
-                if guard_bars:
-                    persist_technical_bars(
-                        args.database,
-                        guard_bars,
-                        now_ms=guard_end_ms,
-                    )
         universe, route = refresh_market_route()
     else:
         if not args.route or not args.universe:
@@ -172,28 +108,10 @@ def main():
 
     required_span = (args.samples - 1) * args.cadence_seconds + 8
     now_ms = int(time.time() * 1000)
-    minute_end_ms, catchup_end_ms = collection_alignment(
-        now_ms, required_span
-    )
-    catchup_technical_bars = []
-    if catchup_end_ms is not None:
-        catchup_technical_bars = asyncio.run(
-            collect_closed_technical_bars(
-                universe,
-                observe_until_ms=catchup_end_ms + 1_000,
-            )
-        )
+    minute_end_ms, _ = collection_alignment(now_ms, required_span)
 
-    bundles, closed_technical_bars = asyncio.run(
+    bundles = asyncio.run(
         collect_minute(route, universe, contract_values, args, minute_end_ms))
-    closed_technical_bars = catchup_technical_bars + closed_technical_bars
-    technical_persistence = None
-    if args.database:
-        technical_persistence = persist_technical_bars(
-            args.database,
-            closed_technical_bars,
-            now_ms=minute_end_ms,
-        )
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
@@ -215,22 +133,15 @@ def main():
         "market_transport": "WEBSOCKET_ONLY",
         "broad_market_stream": "ALL_MARKET_24H_TICKER",
         "deep_streams": [
-            "DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING", "KLINE_1M"
+            "DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING"
         ],
         "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
     }
     if args.database:
-        result["technical_bar_persistence"] = technical_persistence
         result["sqlite_persistence"] = persist_closed_minute(
             args.database, result, args.retention_days)
-        result["collection_contract"]["closed_technical_bars"] = len(
-            closed_technical_bars
-        )
-        result["collection_contract"]["technical_bar_source"] = (
-            "BINANCE_USD_M_WS_KLINE_1M"
-        )
     write_json_atomic(args.output, result)
     if args.health_output:
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
