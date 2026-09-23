@@ -19,9 +19,8 @@ import websockets
 WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
 BINANCE_SPOT_WS_URL = "wss://data-stream.binance.vision/ws"
 BINANCE_USDM_WS_URL = "wss://fstream.binance.com/public/ws"
-# Preserve the existing raw-trade flow socket until its channel is validated on
-# Binance's new market endpoint; quote migration must not silently remove flow.
-BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/ws"
+# USD-M trade flow belongs to Binance's routed Market websocket.
+BINANCE_USDM_TRADE_WS_URL = "wss://fstream.binance.com/market/stream"
 MAX_EVENT_AGE_MS = 2_000
 BINANCE_DISPATCH_INTERVAL_SECONDS = 0.05
 BINANCE_DISPATCH_BATCH_MAX = 64
@@ -177,6 +176,12 @@ def apply_binance_message(
     event = message.get("e")
     symbol = str(message.get("s") or "").upper()
     if event not in {"24hrTicker", "bookTicker", "depthUpdate", "aggTrade", "trade"} or not symbol:
+        return []
+    if (
+        market_type == "USD_M_PERPETUAL"
+        and message.get("st") is not None
+        and int(message["st"]) != 1
+    ):
         return []
     timestamp = int(message.get("E", 0))
     if timestamp <= 0 or received_ms - timestamp > MAX_EVENT_AGE_MS or timestamp > received_ms + 500:
@@ -385,7 +390,7 @@ def _flow_process_entry(symbol_queue, snapshot_queue, stopped):
             channels=channels, flow_sink=sink,
         )) for market_type, channels in (
             ("SPOT", ("aggTrade",)),
-            ("USD_M_PERPETUAL", ("trade",)),
+            ("USD_M_PERPETUAL", ("aggTrade",)),
         )]
         tasks.extend((
             asyncio.create_task(refresh_symbols()),
@@ -614,6 +619,14 @@ async def _binance_stream(
                             continue
                         received_ms = int(time.time() * 1000)
                         message = json.loads(raw)
+                        if (
+                            market_type == "USD_M_PERPETUAL"
+                            and flow_sink is not None
+                            and isinstance(message, dict)
+                            and "stream" in message
+                            and "data" in message
+                        ):
+                            message = message["data"]
                         if message.get("code") is not None:
                             if health_callback:
                                 health_callback(
