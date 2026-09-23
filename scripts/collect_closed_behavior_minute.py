@@ -35,12 +35,32 @@ HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 
 
 def collection_alignment(now_ms, required_span_seconds):
-    """Return the behavior-minute close and any skipped partial close."""
+    """Return the target close and an optional not-before collection boundary.
+
+    If the observer starts too late to fit every required sample in the current
+    minute, the next minute is intentionally skipped and collection is delayed
+    until that skipped boundary.  Starting collection immediately while merely
+    relabeling it as the following minute produces fewer than the mandatory
+    samples inside the target minute and makes every row ineligible.
+    """
     next_end_ms = (int(now_ms) // MINUTE_MS + 1) * MINUTE_MS
     remaining = (next_end_ms - int(now_ms)) / 1000.0
     if remaining >= float(required_span_seconds):
         return next_end_ms, None
     return next_end_ms + MINUTE_MS, next_end_ms
+
+
+def wait_for_collection_window(not_before_ms):
+    """Delay late-start recovery so snapshots belong to the target minute."""
+    if not_before_ms is None:
+        return 0.0
+    delay = max(
+        0.0,
+        (int(not_before_ms) - int(time.time() * 1000)) / 1000.0,
+    )
+    if delay > 0.0:
+        time.sleep(delay + 0.02)
+    return delay
 
 
 def refresh_market_route():
@@ -117,7 +137,12 @@ def main():
 
     required_span = (args.samples - 1) * args.cadence_seconds + 8
     now_ms = int(time.time() * 1000)
-    minute_end_ms, _ = collection_alignment(now_ms, required_span)
+    minute_end_ms, collection_not_before_ms = collection_alignment(
+        now_ms, required_span
+    )
+    alignment_wait_seconds = wait_for_collection_window(
+        collection_not_before_ms
+    )
 
     bundles = asyncio.run(
         collect_minute(route, universe, contract_values, args, minute_end_ms))
@@ -147,6 +172,8 @@ def main():
         "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
+        "alignment_wait_ms": int(round(alignment_wait_seconds * 1000.0)),
+        "late_start_recovery": bool(collection_not_before_ms is not None),
     }
     if args.database:
         result["sqlite_persistence"] = persist_closed_minute(
