@@ -126,7 +126,7 @@ def recent_cached_symbols(
         with sqlite3.connect(database_path, timeout=5) as con:
             rows = con.execute(
                 """SELECT DISTINCT symbol
-                   FROM technical_minute_bars
+                   FROM technical_minute_bars INDEXED BY ix_technical_minute_bars_close
                    WHERE provider='BINANCE'
                      AND market_type='USD_M_PERPETUAL'
                      AND close_time_ms>=?

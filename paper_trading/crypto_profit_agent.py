@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 import requests
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
@@ -888,8 +889,19 @@ def _adverse_same_setup_reentry_blocked(con, row):
 
 
 def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
-    behavior_result = behavior_decision_core.evaluate(con, now)
-    snapshot = portfolio_snapshot(con, now)
+    diagnostics = telemetry if telemetry is not None else {}
+    phase_timings = diagnostics.setdefault("phase_timings_ms", {})
+    def measured(name, function, *args, **kwargs):
+        diagnostics["active_phase"] = name
+        started = time.monotonic()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            phase_timings[name] = round(phase_timings.get(name, 0.0) +
+                (time.monotonic() - started) * 1000, 3)
+            diagnostics["active_phase"] = None
+    behavior_result = measured("behavior_evaluation", behavior_decision_core.evaluate, con, now)
+    snapshot = measured("portfolio_valuation", portfolio_snapshot, con, now)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
@@ -959,10 +971,14 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
         try:
-            plan = technical_trade_plan.build_for_candidate(
+            plan = measured("technical_planning", technical_trade_plan.build_for_candidate,
                 con, row, now=now, market_type=tier.market_type
             )
-        except Exception:
+        except Exception as exc:
+            diagnostics.setdefault("technical_plan_errors", []).append({
+                "symbol": row["symbol"], "error_type": type(exc).__name__,
+                "detail": str(exc)[:160],
+            })
             reject("TECHNICAL_PLAN_UNAVAILABLE")
             continue
         if not bool(plan["risk"]["risk_compatible"]):

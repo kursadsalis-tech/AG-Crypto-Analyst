@@ -36,7 +36,7 @@ def runtime_source_state(repo_path=None):
             check=False, capture_output=True, text=True, timeout=2,
         )
         dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            ["git", "--no-optional-locks", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
             check=False, capture_output=True, text=True, timeout=2,
         )
         if sha.returncode != 0 or dirty.returncode != 0:

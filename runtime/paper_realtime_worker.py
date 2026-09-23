@@ -76,7 +76,7 @@ def worker_process_source_state(repo_path=None):
             check=False, capture_output=True, text=True, timeout=2,
         )
         dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            ["git", "--no-optional-locks", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
             check=False, capture_output=True, text=True, timeout=2,
         )
         if sha.returncode != 0 or dirty.returncode != 0:
@@ -299,6 +299,7 @@ async def run():
     last_scan_error_detail = None
     last_scan_sqlite_error_name = None
     last_scan_sqlite_error_code = None
+    last_scan_diagnostics = {}
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -426,6 +427,9 @@ async def run():
                 "error_detail": last_scan_error_detail,
                 "sqlite_error_name": last_scan_sqlite_error_name,
                 "sqlite_error_code": last_scan_sqlite_error_code,
+                "phase_timings_ms": dict(last_scan_diagnostics.get("phase_timings_ms", {})),
+                "active_phase": last_scan_diagnostics.get("active_phase"),
+                "technical_plan_errors": last_scan_diagnostics.get("technical_plan_errors", []),
             },
         })
         details["process_runtime_source"] = process_runtime_source
@@ -523,7 +527,7 @@ async def run():
         nonlocal last_scan_started_at, last_scan_completed_at
         nonlocal last_scan_duration_ms, last_scan_error
         nonlocal last_scan_error_detail, last_scan_sqlite_error_name
-        nonlocal last_scan_sqlite_error_code
+        nonlocal last_scan_sqlite_error_code, last_scan_diagnostics
         observed_at = now()
         started = loop.time()
         last_scan_started_at = observed_at.isoformat()
@@ -541,6 +545,7 @@ async def run():
             for attempt in range(1, attempts + 1):
                 work_con = scan_connection()
                 selection_result = {}
+                last_scan_diagnostics = selection_result
                 try:
                     selected = select_new_positions(
                         work_con, observed_at, metadata,

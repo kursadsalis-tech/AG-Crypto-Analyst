@@ -39,6 +39,7 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
                     close_time_ms INTEGER,
                     provider TEXT
                 )""")
+                con.execute("CREATE INDEX ix_technical_minute_bars_close ON technical_minute_bars(close_time_ms)")
                 con.executemany(
                     "INSERT INTO technical_minute_bars VALUES(?,?,?,?)",
                     [
