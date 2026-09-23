@@ -26,8 +26,20 @@ class ObserverServiceContractTests(unittest.TestCase):
         macro = (ROOT / "deploy/agca-exact-macro-observer.timer").read_text()
         behavior = (ROOT / "deploy/agca-market-behavior-observer.timer").read_text()
         self.assertIn("OnUnitInactiveSec=1min", macro)
+        self.assertIn("OnCalendar=*-*-* *:*:05", behavior)
+        self.assertNotIn("OnUnitInactiveSec=", behavior)
         self.assertIn("Persistent=false", macro)
         self.assertIn("Persistent=false", behavior)
+
+    def test_technical_kline_worker_is_long_lived_binance_paper_only(self):
+        service = (ROOT / "deploy/agca-technical-kline-worker.service").read_text()
+        self.assertIn("Type=simple", service)
+        self.assertIn("Environment=AGCA_EXECUTION_MODE=PAPER_ONLY", service)
+        self.assertIn("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10", service)
+        self.assertIn("-m runtime.technical_kline_worker", service)
+        self.assertIn("Restart=always", service)
+        self.assertIn("MemoryMax=256M", service)
+        self.assertIn("CPUQuota=40%", service)
 
     def test_attestation_service_declares_both_observer_freshness_limits(self):
         service = (ROOT / "deploy/agca-cloud-attestation.service").read_text()
