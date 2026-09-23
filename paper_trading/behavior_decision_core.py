@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,8 @@ EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
 ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
+PATTERN_CACHE_CONTRACT_VERSION = "PAPER_BEHAVIOR_PATTERN_CACHE_V1"
+MAX_PATTERN_CACHE_AGE_SECONDS = 15 * 60
 
 
 def iso(value):
@@ -114,6 +117,22 @@ def ensure_tables(con):
             real_order_allowed INTEGER NOT NULL DEFAULT 0,
             UNIQUE(calibration_version,event_kind,pattern_key,direction,
                    closed_count,cutoff_position_id)
+        );
+        CREATE TABLE IF NOT EXISTS paper_behavior_pattern_cache (
+            cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            generated_at TEXT NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            outcome_cutoff_at TEXT,
+            pattern_count INTEGER NOT NULL,
+            patterns_json TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            real_order_allowed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS ix_behavior_pattern_cache_latest
+        ON paper_behavior_pattern_cache(horizon_minutes,generated_at DESC);
+        CREATE INDEX IF NOT EXISTS ix_behavior_missed_review_join
+        ON paper_behavior_missed_opportunities(
+            review_status,event_id,instrument,evidence_minute_end_ms
         );
     """)
 
@@ -229,8 +248,13 @@ def calibrate_pattern(pattern, feedback):
     return calibrated
 
 
-def settle_missed_opportunities(con):
-    """Attach immutable 4h cost-after counterfactuals to coverage/risk misses."""
+def settle_missed_opportunities(con, limit=None):
+    """Attach immutable 4h cost-after counterfactuals to coverage/risk misses.
+
+    A bounded limit lets the background learning worker drain historical misses
+    without monopolizing the SQLite writer lock.  Inline/test callers preserve
+    the previous all-matching behavior when no limit is supplied.
+    """
     if not con.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
         AND name='behavior_event_forward_outcomes'""").fetchone():
         return 0
@@ -245,14 +269,20 @@ def settle_missed_opportunities(con):
     }
     if not required.issubset(columns):
         return 0
-    rows = con.execute("""SELECT m.missed_id,m.direction,o.outcome_available_at,
+    sql = """SELECT m.missed_id,m.direction,o.outcome_available_at,
         o.return_from_pre_event_pct,o.spread_bps_mean
         FROM paper_behavior_missed_opportunities m
         JOIN behavior_event_forward_outcomes o
           ON o.event_id=m.event_id AND o.instrument=m.instrument
          AND o.event_minute_end_timestamp_ms=m.evidence_minute_end_ms
          AND o.horizon_minutes=?
-        WHERE m.review_status='AWAITING_OUTCOME'""", (HORIZON_MINUTES,)).fetchall()
+        WHERE m.review_status='AWAITING_OUTCOME'
+        ORDER BY m.missed_id"""
+    params = [HORIZON_MINUTES]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(max(1, int(limit)))
+    rows = con.execute(sql, tuple(params)).fetchall()
     for missed_id, direction, available_at, raw_return, spread in rows:
         signed = float(raw_return) if direction == "LONG" else -float(raw_return)
         cost = ROUND_TRIP_FEE_PCT + EXTRA_COST_BUFFER_PCT + float(spread or 0) / 100.0
@@ -382,6 +412,116 @@ def learned_patterns(con, now=None):
     }
 
 
+def _patterns_to_json(patterns):
+    payload = [
+        {"event_kind": key[0], "flow_pattern": key[1], "pattern": value}
+        for key, value in sorted(patterns.items())
+    ]
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _patterns_from_json(raw):
+    rows = json.loads(raw or "[]")
+    output = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("event_kind")), str(item.get("flow_pattern")))
+        pattern = item.get("pattern")
+        if isinstance(pattern, dict):
+            output[key] = pattern
+    return output
+
+
+def refresh_pattern_cache(con, now=None, missed_limit=2000):
+    """Compute historical behavior learning off the realtime decision path."""
+    now = now or datetime.now(timezone.utc)
+    ensure_tables(con)
+    settled = settle_missed_opportunities(con, limit=missed_limit)
+    # Release any missed-opportunity updates before the intentionally heavier
+    # historical aggregation so the learner cannot hold the writer lock for the
+    # full scan.
+    con.commit()
+    patterns = learned_patterns(con, now)
+    cutoff = con.execute(
+        """SELECT MAX(outcome_available_at)
+           FROM behavior_event_forward_outcomes
+           WHERE horizon_minutes=? AND outcome_available_at<=?""",
+        (HORIZON_MINUTES, iso(now)),
+    ).fetchone()[0]
+    con.execute(
+        """INSERT INTO paper_behavior_pattern_cache(
+               generated_at,horizon_minutes,outcome_cutoff_at,pattern_count,
+               patterns_json,contract_version,real_order_allowed
+           ) VALUES(?,?,?,?,?,?,0)""",
+        (
+            iso(now), HORIZON_MINUTES, cutoff, len(patterns),
+            _patterns_to_json(patterns), PATTERN_CACHE_CONTRACT_VERSION,
+        ),
+    )
+    con.execute(
+        """DELETE FROM paper_behavior_pattern_cache
+           WHERE cache_id NOT IN (
+               SELECT cache_id FROM paper_behavior_pattern_cache
+               WHERE horizon_minutes=?
+               ORDER BY cache_id DESC LIMIT 12
+           ) AND horizon_minutes=?""",
+        (HORIZON_MINUTES, HORIZON_MINUTES),
+    )
+    con.commit()
+    return {
+        "generated_at": iso(now),
+        "outcome_cutoff_at": cutoff,
+        "pattern_count": len(patterns),
+        "settled_missed": settled,
+        "contract_version": PATTERN_CACHE_CONTRACT_VERSION,
+        "real_orders": False,
+    }
+
+
+def load_cached_patterns(con, now=None, max_age_seconds=MAX_PATTERN_CACHE_AGE_SECONDS):
+    """Load the latest bounded learning snapshot without historical rescans."""
+    now = now or datetime.now(timezone.utc)
+    row = con.execute(
+        """SELECT generated_at,outcome_cutoff_at,pattern_count,patterns_json,
+                  contract_version
+           FROM paper_behavior_pattern_cache
+           WHERE horizon_minutes=? AND generated_at<=?
+           ORDER BY cache_id DESC LIMIT 1""",
+        (HORIZON_MINUTES, iso(now)),
+    ).fetchone()
+    if not row:
+        return None, {"status": "MISSING"}
+    try:
+        generated = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            generated = generated.replace(tzinfo=timezone.utc)
+        generated = generated.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None, {"status": "INVALID_TIMESTAMP"}
+    age = (now - generated).total_seconds()
+    if age < -60.0 or age > float(max_age_seconds):
+        return None, {
+            "status": "STALE",
+            "generated_at": str(row[0]),
+            "age_seconds": age,
+            "maximum_age_seconds": float(max_age_seconds),
+        }
+    try:
+        patterns = _patterns_from_json(row[3])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, {"status": "INVALID_PAYLOAD", "generated_at": str(row[0])}
+    return patterns, {
+        "status": "READY",
+        "generated_at": str(row[0]),
+        "outcome_cutoff_at": row[1],
+        "pattern_count": int(row[2]),
+        "age_seconds": age,
+        "maximum_age_seconds": float(max_age_seconds),
+        "contract_version": str(row[4]),
+    }
+
+
 def _latest_risk(con, now=None):
     latest = con.execute("SELECT MAX(id) FROM risk_policy_snapshots").fetchone()[0]
     if latest is None:
@@ -453,8 +593,17 @@ def _latest_risk(con, now=None):
 def evaluate(con, now=None):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
-    settle_missed_opportunities(con)
-    patterns = learned_patterns(con, now)
+    cache_required = os.getenv(
+        "AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    pattern_cache = {"status": "INLINE"}
+    if cache_required:
+        patterns, pattern_cache = load_cached_patterns(con, now)
+        if patterns is None:
+            patterns = {}
+    else:
+        settle_missed_opportunities(con)
+        patterns = learned_patterns(con, now)
     exploration_patterns = {
         key: value for key, value in patterns.items()
         if value["exploration_eligible"] and not value.get("execution_suspended", False)
@@ -492,6 +641,10 @@ def evaluate(con, now=None):
             "stale_policy_is_fail_closed": True,
         },
         "unified_forecast_used": False, "real_orders": False,
+        "pattern_source": (
+            "BACKGROUND_CACHE" if cache_required else "INLINE_COMPATIBILITY"
+        ),
+        "pattern_cache": pattern_cache,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     con.execute("""INSERT OR IGNORE INTO paper_behavior_policy_reviews(
@@ -504,6 +657,12 @@ def evaluate(con, now=None):
          else "COLLECTING_TESTABLE_HYPOTHESES"),
         review_json, int(bool(exploration_patterns)),
     ))
+    if cache_required and pattern_cache.get("status") != "READY":
+        con.commit()
+        return {
+            "status": "BEHAVIOR_PATTERN_CACHE_UNAVAILABLE",
+            "candidates": [], "review": review,
+        }
     feature_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(market_behavior_minute_features)"
     )}
