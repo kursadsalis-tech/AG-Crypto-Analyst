@@ -33,9 +33,23 @@ class RealtimeMarketTests(unittest.TestCase):
 
     def test_spot_stream_cannot_wait_forever_without_market_data(self):
         source = inspect.getsource(realtime_market._binance_stream)
-        self.assertIn("BINANCE_SPOT_NO_MARKET_DATA", source)
+        self.assertGreaterEqual(source.count("BINANCE_SPOT_NO_MARKET_DATA"), 2)
         self.assertIn("BINANCE_SPOT_SILENCE_TIMEOUT_SECONDS", source)
-        self.assertIn("spot_endpoint_index", source)
+        # The actual Binance reconnect handler must rotate endpoints.  A
+        # previous regression accidentally put this logic in the unused OKX
+        # handler, leaving Spot pinned forever to the silent primary endpoint.
+        handler = source.rsplit("except (OSError", 1)[1]
+        self.assertIn("spot_endpoint_index + 1", handler)
+        self.assertIn('metrics["failover_count"]', handler)
+        self.assertNotIn(
+            "spot_endpoint_index",
+            inspect.getsource(realtime_market._okx_stream),
+        )
+
+    def test_quote_metrics_expose_spot_failover_diagnostics(self):
+        metrics = realtime_market.new_quote_metrics()
+        self.assertEqual(metrics["failover_count"], 0)
+        self.assertIsNone(metrics["last_disconnect_error"])
 
     def test_subscribes_execution_channels_for_dynamic_symbols(self):
         args = subscription_args(["CRVUSDT", "SOLUSDT"])
