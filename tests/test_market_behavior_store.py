@@ -1,5 +1,7 @@
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -77,6 +79,33 @@ class MarketBehaviorStoreTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, (120_000, "MACRO"))
             self.assertNotIn(EXTERNAL_EVIDENCE_TABLE, REMOTE_RUNTIME_TABLES)
+
+    def test_persist_closed_minute_waits_through_transient_writer_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "behavior.db"
+            blocker = sqlite3.connect(path, timeout=1, check_same_thread=False)
+            blocker.execute("CREATE TABLE lock_probe(id INTEGER PRIMARY KEY)")
+            blocker.commit()
+            blocker.execute("BEGIN IMMEDIATE")
+            blocker.execute("INSERT INTO lock_probe DEFAULT VALUES")
+
+            def release():
+                time.sleep(0.15)
+                blocker.commit()
+
+            releaser = threading.Thread(target=release)
+            releaser.start()
+            result = persist_closed_minute(path, report(120_000))
+            releaser.join(timeout=2)
+            blocker.close()
+
+            self.assertFalse(releaser.is_alive())
+            self.assertEqual(result["upserted"], 1)
+            with sqlite3.connect(path) as check:
+                count = check.execute(
+                    f"SELECT COUNT(*) FROM {TABLE}"
+                ).fetchone()[0]
+            self.assertEqual(count, 1)
 
     def test_rejects_open_minute(self):
         with tempfile.TemporaryDirectory() as tmp:
