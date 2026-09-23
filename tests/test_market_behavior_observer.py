@@ -25,7 +25,7 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         )
         self.assertEqual(
             universe["selection_contract"]["transport"],
-            "USD_M_WEBSOCKET_ALL_MARKET_TICKER",
+            "USD_M_ROUTED_WEBSOCKET_TICKER_PLUS_BOOK",
         )
         self.assertEqual(route["deep_stream_instruments"], ["AAA-USDT-SWAP"])
 

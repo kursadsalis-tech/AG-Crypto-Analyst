@@ -11,8 +11,8 @@ import certifi
 import websockets
 
 
-VERSION = "BINANCE_LIQUIDATION_CHANNEL_V1"
-WS_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
+VERSION = "BINANCE_LIQUIDATION_CHANNEL_V2_ROUTED"
+WS_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr"
 
 
 def _instrument(symbol):
@@ -24,6 +24,8 @@ def _instrument(symbol):
 
 def normalize_event(message):
     if not isinstance(message, dict) or message.get("e") != "forceOrder":
+        return None
+    if message.get("st") is not None and int(message["st"]) != 1:
         return None
     order = message.get("o") or {}
     try:

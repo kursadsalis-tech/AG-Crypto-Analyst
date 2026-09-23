@@ -14,6 +14,10 @@ class BinanceMarketUniverseTests(unittest.TestCase):
                 "s": "BTCUSDT_261225", "c": "10", "o": "9",
                 "q": "10000000", "b": "9.99", "a": "10.00",
             },
+            {
+                "s": "CMUSDT", "st": 2, "c": "10", "o": "9",
+                "q": "10000000", "b": "9.99", "a": "10.00",
+            },
         ]
         result = build_universe(
             tickers, snapshot_ms=2_000,
@@ -22,7 +26,7 @@ class BinanceMarketUniverseTests(unittest.TestCase):
         self.assertEqual(result["selection_contract"]["exchange"], "BINANCE")
         self.assertEqual(
             result["selection_contract"]["transport"],
-            "USD_M_WEBSOCKET_ALL_MARKET_TICKER",
+            "USD_M_ROUTED_WEBSOCKET_TICKER_PLUS_BOOK",
         )
         self.assertEqual(result["selected_count"], 1)
         self.assertEqual(result["selected"][0]["symbol"], "NEWUSDT")

@@ -186,7 +186,7 @@ class RealtimeMarketTests(unittest.TestCase):
         )
         self.assertEqual(
             realtime_market.BINANCE_USDM_TRADE_WS_URL,
-            "wss://fstream.binance.com/ws",
+            "wss://fstream.binance.com/market/stream",
         )
 
     def test_incremental_depth_cannot_be_mistaken_for_best_book(self):
@@ -245,19 +245,32 @@ class RealtimeMarketTests(unittest.TestCase):
         self.assertEqual((state.bid_quote_volume, state.ask_quote_volume), (198, 303))
 
         state = realtime_market.apply_binance_message(states, {
-            "e": "trade", "s": "BTCUSDT", "E": NOW + 1,
+            "e": "aggTrade", "s": "BTCUSDT", "E": NOW + 1,
             "p": "100", "q": "2", "m": False,
         }, NOW + 1, market_type="USD_M_PERPETUAL")[0]
         self.assertEqual(state.trade_buy_notional, 200)
         self.assertEqual(state.market_timestamp_ms, NOW + 1)
         self.assertEqual(state.trade_timestamp_ms, NOW + 1)
 
+    def test_cm_trade_payload_cannot_enter_usdm_flow(self):
+        states = {}
+        self.assertEqual(realtime_market.apply_binance_message(
+            states,
+            {
+                "e": "aggTrade", "s": "BTCUSDT", "E": NOW, "st": 2,
+                "p": "100", "q": "1", "m": False,
+            },
+            NOW,
+            market_type="USD_M_PERPETUAL",
+        ), [])
+        self.assertFalse(states)
+
     def test_usdm_subscription_is_dynamic_and_does_not_include_spot(self):
         params = realtime_market.binance_subscription_params(
             [("SOLUSDT", "USD_M_PERPETUAL"), ("BTCUSDT", "SPOT")],
             "USD_M_PERPETUAL",
         )
-        self.assertEqual(params, ["solusdt@bookTicker", "solusdt@trade"])
+        self.assertEqual(params, ["solusdt@bookTicker", "solusdt@aggTrade"])
 
     def test_usdm_quote_and_flow_channels_can_be_isolated(self):
         symbols = [("BTCUSDT", "USD_M_PERPETUAL")]
@@ -265,10 +278,10 @@ class RealtimeMarketTests(unittest.TestCase):
             symbols, "USD_M_PERPETUAL", channels=("bookTicker",)
         )
         flow = realtime_market.binance_subscription_params(
-            symbols, "USD_M_PERPETUAL", channels=("trade",)
+            symbols, "USD_M_PERPETUAL", channels=("aggTrade",)
         )
         self.assertEqual(quotes, ["btcusdt@bookTicker"])
-        self.assertEqual(flow, ["btcusdt@trade"])
+        self.assertEqual(flow, ["btcusdt@aggTrade"])
 
 
     def test_latest_state_queue_coalesces_hot_symbol_and_snapshots_state(self):
@@ -439,8 +452,11 @@ class FlowIsolationTests(unittest.TestCase):
                     self.count += 1
                     if self.count == 100:
                         stop.set()
-                    return json.dumps({"e": "trade", "s": "BTCUSDT", "E": NOW,
-                                       "p": "100", "q": "2", "m": False})
+                    return json.dumps({
+                        "stream": "btcusdt@aggTrade",
+                        "data": {"e": "aggTrade", "s": "BTCUSDT", "E": NOW,
+                                 "st": 1, "p": "100", "q": "2", "m": False},
+                    })
 
             async def forbidden(*_):
                 self.fail("raw trade reached decision dispatcher")
@@ -449,7 +465,7 @@ class FlowIsolationTests(unittest.TestCase):
                     patch.object(realtime_market.time, "time", return_value=NOW/1000):
                 await realtime_market._binance_stream(
                     cache.symbols, forbidden, stop, market_type="USD_M_PERPETUAL",
-                    channels=("trade",), flow_sink=cache,
+                    channels=("aggTrade",), flow_sink=cache,
                 )
             quote = LiveState("BTCUSDT")
             cache.apply_to(quote, NOW)

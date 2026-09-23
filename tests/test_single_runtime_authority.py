@@ -126,6 +126,16 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
             self.assertNotIn("fapi.binance.com", text, relative)
             self.assertNotIn("/fapi/v1/", text, relative)
 
+    def test_active_binance_paths_do_not_use_retired_usdm_websocket_route(self):
+        retired = "wss://fstream.binance.com/ws"
+        for relative in (
+            "data/binance_live_evidence.py",
+            "data/binance_liquidation_channel.py",
+            "paper_trading/realtime_market.py",
+        ):
+            text=(ROOT/relative).read_text(encoding="utf-8")
+            self.assertNotIn(retired, text, relative)
+
     def test_behavior_observer_service_declares_canonical_binance_source(self):
         service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text(
             encoding="utf-8"
