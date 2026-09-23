@@ -340,6 +340,8 @@ async def run():
             symbol_received = metric["received_by_symbol_ms"].copy()
             result[market_type] = {
                 "endpoint": metric.get("endpoint"),
+                "failover_count": int(metric.get("failover_count") or 0),
+                "last_disconnect_error": metric.get("last_disconnect_error"),
                 "received_total": metric["received_total"],
                 "accepted_total": metric["accepted_total"],
                 "stale_received_total": metric["stale_received_total"],
