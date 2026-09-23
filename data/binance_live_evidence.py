@@ -327,15 +327,15 @@ async def collect_minute_snapshots(
         return []
 
     public_params = [
+        f"{symbol.lower()}@depth20@500ms" for symbol in sorted(states)
+    ]
+    trade_params = [
         item
         for symbol in sorted(states)
         for item in (
-            f"{symbol.lower()}@depth20@500ms",
+            f"{symbol.lower()}@aggTrade",
             f"{symbol.lower()}@markPrice@1s",
         )
-    ]
-    trade_params = [
-        f"{symbol.lower()}@aggTrade" for symbol in sorted(states)
     ]
     context = ssl.create_default_context(cafile=certifi.where())
     stop = asyncio.Event()
@@ -387,7 +387,11 @@ async def collect_minute_snapshots(
                 message = _normalize_message(raw)
                 if isinstance(message, dict) and message.get("result") is None and "id" in message:
                     continue
-                _apply_trade(states, message, int(time.time() * 1000))
+                received_ms = int(time.time() * 1000)
+                if isinstance(message, dict) and message.get("e") == "markPriceUpdate":
+                    _apply_public(states, message, received_ms)
+                else:
+                    _apply_trade(states, message, received_ms)
 
     tasks = [
         asyncio.create_task(public_receiver()),
