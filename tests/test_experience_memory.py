@@ -70,6 +70,13 @@ class ExperienceMemoryTests(unittest.TestCase):
             "expected_net_edge_pct": 1.25,
             "expected_profit_per_risk": 2.5,
             "expected_profit_usdt": 12.5,
+            "technical_plan": {
+                "version": "TEST_TECHNICAL_PLAN",
+                "symbol": "BTCUSDT", "direction": "LONG",
+                "timeframes_used": ["1m", "5m", "15m", "1h", "4h"],
+                "risk": {"invalidation_price": 98.0},
+                "authority": {"entry_input": True, "stop_input": True},
+            },
         })
         memory.capture_decision_thesis(
             self.con, position_id=1, row=row, agent_version="agent",
