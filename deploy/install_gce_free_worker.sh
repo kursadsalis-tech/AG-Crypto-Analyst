@@ -19,6 +19,20 @@ if [[ -e "$DEPLOY/crypto_data.db" ]]; then
 fi
 
 cd "$DEPLOY"
+
+# Interrupted SSH sessions can leave .git/index.lock behind after the git
+# process is already gone. Heal only that stale case; never delete the lock
+# while any git process is still active for this user.
+if [[ -e .git/index.lock ]]; then
+  if pgrep -u "$(id -u)" -af '[g]it( |$)' >/dev/null; then
+    echo "Refusing deployment: .git/index.lock exists while a git process is active" >&2
+    pgrep -u "$(id -u)" -af '[g]it( |$)' >&2 || true
+    exit 6
+  fi
+  echo "Removing stale .git/index.lock from interrupted prior operation"
+  rm -f .git/index.lock
+fi
+
 git diff --quiet && git diff --cached --quiet || {
   echo "Refusing deployment with local git changes" >&2
   exit 5
