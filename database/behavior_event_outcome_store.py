@@ -57,6 +57,12 @@ def ensure_outcome_table(connection):
         CREATE INDEX IF NOT EXISTS ix_behavior_event_outcome_independence
         ON {OUTCOME_TABLE}(independence_unit,horizon_minutes)
     """)
+    connection.execute(f"""
+        CREATE INDEX IF NOT EXISTS ix_behavior_event_outcome_learning_cutoff
+        ON {OUTCOME_TABLE}(
+            horizon_minutes,outcome_available_at,kind,independence_unit
+        )
+    """)
 
 
 def _applies(symbols_json, instrument):

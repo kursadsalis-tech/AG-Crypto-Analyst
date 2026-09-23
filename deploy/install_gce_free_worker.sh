@@ -71,6 +71,7 @@ done
 canonical_units=(
   agca-paper-realtime-worker.service
   agca-technical-kline-worker.service
+  agca-behavior-learning-worker.service
   agca-paper-realtime-health-monitor.service
   agca-paper-realtime-health-monitor.timer
   agca-exchange-metadata-refresh.service
@@ -114,6 +115,11 @@ for timer in "${active_timers[@]}"; do
   sudo systemctl enable --now "$timer"
 done
 
+# Historical behavior learning is intentionally outside the realtime decision
+# hot path. Start its low-priority cache worker before restarting the consumer.
+sudo systemctl enable agca-behavior-learning-worker.service
+sudo systemctl restart agca-behavior-learning-worker.service
+
 # A deployment must replace the running worker process, not only ensure the
 # unit is enabled. enable --now leaves an already-running process on the old
 # checkout/commit, which makes runtime source attestation lie about the deploy.
@@ -127,6 +133,7 @@ sudo systemctl restart agca-technical-kline-worker.service
 
 systemctl is-active --quiet agca-paper-realtime-worker.service
 systemctl is-active --quiet agca-technical-kline-worker.service
+systemctl is-active --quiet agca-behavior-learning-worker.service
 test ! -e "$DEPLOY/crypto_data.db"
 echo "COMMIT=$(git rev-parse HEAD)"
 echo "CANONICAL_DB=$DB"
