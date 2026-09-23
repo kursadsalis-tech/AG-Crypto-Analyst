@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import math
 import statistics
-import time
 from datetime import datetime, timezone
 
 from analysis import realtime_technical_context
@@ -11,7 +10,7 @@ from database.technical_bar_store import load_recent
 
 
 VERSION = "TECHNICAL_TRADE_PLAN_V2_ADAPTIVE_LOCAL"
-MIN_ONE_MINUTE_BARS = 360
+MIN_ONE_MINUTE_BARS = 24
 MAX_BAR_AGE_SECONDS = 180
 MIN_STOP_PCT = 0.50
 MAX_STOP_PCT = 5.00
@@ -60,6 +59,27 @@ def _atr(rows, period=14):
         previous = rows[index - 1]["close"]
         values.append(max(high - low, abs(high - previous), abs(low - previous)))
     return statistics.fmean(values[-period:])
+
+
+def contiguous_tail(rows):
+    """Return only the newest gap-free 1m sequence.
+
+    Archive/bootstrap history may be older than the live stream. Technical
+    indicators must never bridge a missing interval as if those bars were
+    adjacent.
+    """
+    ordered = sorted(rows, key=lambda item: int(item["open_time_ms"]))
+    if not ordered:
+        return []
+    start = 0
+    for index in range(1, len(ordered)):
+        delta = (
+            int(ordered[index]["open_time_ms"])
+            - int(ordered[index - 1]["open_time_ms"])
+        )
+        if delta != 60_000:
+            start = index
+    return ordered[start:]
 
 
 def aggregate(rows, minutes):
@@ -130,18 +150,29 @@ def _trend_value(value):
 
 
 def choose_timeframes(candidate, frames, higher):
-    """Select only the horizons relevant to this setup; never use all blindly."""
-    selected = ["1m", "5m", "15m", "1h"]
-    five, fifteen = frames["5m"], frames["15m"]
-    if (
-        int(candidate.get("horizon") or candidate.get("horizon_hours") or 4) >= 4
-        or five["trend_score"] * fifteen["trend_score"] <= 0
-        or max(five["atr14_pct"], fifteen["atr14_pct"]) >= 1.5
-    ):
+    """Select only horizons that are relevant *and* actually available."""
+    selected = [
+        name for name in ("1m", "5m", "15m") if name in frames
+    ]
+    selected.append("1h")
+
+    lower = [frames[name] for name in ("5m", "15m") if name in frames]
+    conflict = (
+        len(lower) >= 2
+        and lower[0]["trend_score"] * lower[1]["trend_score"] <= 0
+    )
+    elevated_lower_volatility = bool(
+        lower and max(item["atr14_pct"] for item in lower) >= 1.5
+    )
+    horizon = int(
+        candidate.get("horizon") or candidate.get("horizon_hours") or 4
+    )
+    if horizon >= 4 or conflict or elevated_lower_volatility:
         selected.append("4h")
 
-    event_kind = str(((candidate.get("evidence") or {}).get("event") or {}).get("kind") or "").upper()
-    horizon = int(candidate.get("horizon") or candidate.get("horizon_hours") or 4)
+    event_kind = str(
+        ((candidate.get("evidence") or {}).get("event") or {}).get("kind") or ""
+    ).upper()
     regime = (higher or {}).get("regime") or {}
     requested_long = []
     if horizon >= 24 or event_kind in {"NEWS", "ONCHAIN", "WHALE", "MACRO"}:
@@ -152,7 +183,10 @@ def choose_timeframes(candidate, frames, higher):
         requested_long.append("1M")
     missing = [name for name in requested_long if name not in regime]
     if missing:
-        raise ValueError("required long-regime technical context unavailable: " + ",".join(missing))
+        raise ValueError(
+            "required long-regime technical context unavailable: "
+            + ",".join(missing)
+        )
     selected.extend(requested_long)
     return list(dict.fromkeys(selected))
 
@@ -160,19 +194,27 @@ def choose_timeframes(candidate, frames, higher):
 def _weighted_score(direction, selected, frames, higher):
     side = 1.0 if direction == "LONG" else -1.0
     scores = {
-        "1m": frames["1m"]["trend_score"],
-        "5m": frames["5m"]["trend_score"],
-        "15m": frames["15m"]["trend_score"],
-        "1h": _trend_value(((higher or {}).get("summary") or {}).get("trend_1h")),
-        "4h": _trend_value(((higher or {}).get("summary") or {}).get("trend_4h")),
+        name: payload["trend_score"] for name, payload in frames.items()
     }
+    scores.update({
+        "1h": _trend_value(
+            ((higher or {}).get("summary") or {}).get("trend_1h")
+        ),
+        "4h": _trend_value(
+            ((higher or {}).get("summary") or {}).get("trend_4h")
+        ),
+    })
     for name, payload in ((higher or {}).get("regime") or {}).items():
         scores[name] = _trend_value(payload.get("trend"))
     base_weights = {
-        "1m": 0.10, "5m": 0.20, "15m": 0.25, "1h": 0.20, "4h": 0.15,
+        "1m": 0.10, "5m": 0.20, "15m": 0.25,
+        "1h": 0.20, "4h": 0.15,
         "1d": 0.05, "3d": 0.025, "1w": 0.025, "1M": 0.025,
     }
-    active = [(name, base_weights[name], scores.get(name, 0.0)) for name in selected]
+    active = [
+        (name, base_weights[name], scores.get(name, 0.0))
+        for name in selected
+    ]
     weight_sum = sum(weight for _, weight, _ in active) or 1.0
     return _clip(
         side * sum(weight * score for _, weight, score in active) / weight_sum,
@@ -211,6 +253,9 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     """, (symbol, int(now.timestamp() * 1000))).fetchone()[0]
     if latest is None:
         raise ValueError("technical minute bar cache unavailable")
+    latest_age = now.timestamp() - float(latest) / 1000.0
+    if latest_age < -1.0 or latest_age > MAX_BAR_AGE_SECONDS:
+        raise ValueError("technical minute bar cache is stale")
     higher = realtime_technical_context.load_latest(con, symbol, now=now)
     if higher is None:
         raise ValueError("fresh higher-timeframe technical context unavailable")
@@ -227,21 +272,19 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     rows = load_recent(
         con, symbol, limit=1440, before_ms=int(now.timestamp() * 1000)
     )
-    if len(rows) < MIN_ONE_MINUTE_BARS:
+    one = contiguous_tail(rows)
+    if len(one) < MIN_ONE_MINUTE_BARS:
         raise ValueError(
-            f"insufficient exact USD-M technical bars ({len(rows)}/{MIN_ONE_MINUTE_BARS})"
+            "insufficient contiguous exact USD-M technical bars "
+            f"({len(one)}/{MIN_ONE_MINUTE_BARS})"
         )
-    latest_age = now.timestamp() - float(rows[-1]["close_time_ms"]) / 1000.0
-    if latest_age < -1.0 or latest_age > MAX_BAR_AGE_SECONDS:
-        raise ValueError("technical minute bar cache is stale")
-    one = rows
+    frames = {"1m": frame_metrics(one)}
     five = aggregate(one, 5)
+    if len(five) >= 24:
+        frames["5m"] = frame_metrics(five)
     fifteen = aggregate(one, 15)
-    frames = {
-        "1m": frame_metrics(one),
-        "5m": frame_metrics(five),
-        "15m": frame_metrics(fifteen),
-    }
+    if len(fifteen) >= 24:
+        frames["15m"] = frame_metrics(fifteen)
 
     selected = choose_timeframes(candidate, frames, higher)
     score = _weighted_score(direction, selected, frames, higher)
@@ -253,22 +296,31 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     quality_multiplier = _clip(1.0 + 0.20 * score, 0.80, 1.20)
 
     current = frames["1m"]["close"]
-    atr_fast = max(frames["5m"]["atr14"], current * 0.0001)
-    atr_setup = max(frames["15m"]["atr14"], atr_fast)
+    fast_name = "5m" if "5m" in frames else "1m"
+    setup_name = (
+        "15m" if "15m" in frames
+        else "5m" if "5m" in frames
+        else "1m"
+    )
+    atr_fast = max(frames[fast_name]["atr14"], current * 0.0001)
+    atr_setup = max(frames[setup_name]["atr14"], atr_fast)
     levels = (higher or {}).get("levels") or {}
 
-    supports = _finite_levels([
-        frames["1m"]["support20"], frames["5m"]["support20"], frames["5m"]["support48"],
-        frames["15m"]["support20"], frames["15m"]["support48"],
-        frames["5m"]["ema21"], frames["15m"]["ema21"],
-        levels.get("support_1h_72"), levels.get("support_4h_20"),
-    ], below=current)
-    resistances = _finite_levels([
-        frames["1m"]["resistance20"], frames["5m"]["resistance20"], frames["5m"]["resistance48"],
-        frames["15m"]["resistance20"], frames["15m"]["resistance48"],
-        frames["5m"]["ema21"], frames["15m"]["ema21"],
-        levels.get("resistance_1h_72"), levels.get("resistance_4h_20"),
-    ], above=current)
+    support_values = [
+        levels.get("support_1h_72"), levels.get("support_4h_20")
+    ]
+    resistance_values = [
+        levels.get("resistance_1h_72"), levels.get("resistance_4h_20")
+    ]
+    for frame in frames.values():
+        support_values.extend([
+            frame["support20"], frame["support48"], frame["ema21"],
+        ])
+        resistance_values.extend([
+            frame["resistance20"], frame["resistance48"], frame["ema21"],
+        ])
+    supports = _finite_levels(support_values, below=current)
+    resistances = _finite_levels(resistance_values, above=current)
 
     pullback = 0.15 if score >= 0.35 else (0.55 if score <= -0.25 else 0.30)
     zone_half = max(0.12 * atr_setup, 0.20 * atr_fast)
@@ -324,7 +376,8 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         "technical_source_market": "BINANCE_USD_M_PERPETUAL",
         "source_reference_price": current,
         "generated_at": _iso(now),
-        "data_cutoff_ms": int(rows[-1]["close_time_ms"]),
+        "data_cutoff_ms": int(one[-1]["close_time_ms"]),
+        "contiguous_one_minute_bar_count": len(one),
         "timeframes_used": selected,
         "technical_score": score,
         "relation_to_trigger_direction": relation,
