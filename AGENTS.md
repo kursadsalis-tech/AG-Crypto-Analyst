@@ -105,6 +105,24 @@ mirrors or temporary folders.
   prompt until the user explicitly says `oturum bitti`. Continue normal work
   without treating each implementation response as the end of a session.
 
+## Core architecture rule: specialist workers, one trade authority
+
+- AGCA should use small specialist workers/services for bounded responsibilities
+  such as market-data collection, technical context, behavior evidence, risk,
+  execution-state telemetry and learning support. These workers may run in
+  parallel so the trading path does not wait for unrelated collection work.
+- Every specialist must have an explicit input, output, ownership boundary and
+  a clear statement of what authority it does **not** have.
+- Specialist workers produce evidence, state or bounded analysis; they do not
+  independently open/close positions, mutate live policy or become competing
+  decision loops.
+- A common orchestrator combines eligible evidence, while the canonical realtime
+  PAPER lifecycle remains the single trade-decision/execution authority.
+- When a continuous data obligation is required, prefer a long-lived collector
+  over forcing that responsibility into a rotating/oneshot observer.
+- Add a new worker only when the responsibility is separable, measurable and
+  improves latency, reliability or clarity without creating duplicate authority.
+
 ## Product mission
 
 - Build AGCA into an adaptive, market-wide trading system that can read public
