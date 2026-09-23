@@ -3,10 +3,11 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from database.market_behavior_store import (
-    EXTERNAL_EVIDENCE_TABLE, TABLE, persist_closed_minute,
+    EXTERNAL_EVIDENCE_TABLE, TABLE, bootstrap_schema, persist_closed_minute,
 )
 from database.runtime_store import REMOTE_RUNTIME_TABLES
 
@@ -79,6 +80,41 @@ class MarketBehaviorStoreTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, (120_000, "MACRO"))
             self.assertNotIn(EXTERNAL_EVIDENCE_TABLE, REMOTE_RUNTIME_TABLES)
+
+    def test_repeated_persistence_uses_plain_sqlite_and_no_schema_ddl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "behavior.db"
+            bootstrap_schema(path)
+            statements = []
+            original = sqlite3.connect
+
+            class TracedConnection(sqlite3.Connection):
+                pass
+
+            def traced_connect(*args, **kwargs):
+                kwargs["factory"] = TracedConnection
+                con = original(*args, **kwargs)
+                con.set_trace_callback(statements.append)
+                return con
+
+            with unittest.mock.patch(
+                "database.market_behavior_store.sqlite3.connect",
+                side_effect=traced_connect,
+            ):
+                persist_closed_minute(path, report(120_000))
+
+            normalized = "\n".join(statements).upper()
+            self.assertNotIn("CREATE TABLE", normalized)
+            self.assertNotIn("CREATE INDEX", normalized)
+            self.assertNotIn("ALTER TABLE", normalized)
+
+    def test_observer_store_does_not_use_runtime_connection(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "database/market_behavior_store.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("from database.runtime_store import connect", source)
+        self.assertIn("sqlite3.connect(database_path", source)
 
     def test_persist_closed_minute_waits_through_transient_writer_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
