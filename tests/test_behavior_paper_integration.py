@@ -30,9 +30,78 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             close_time INTEGER, quote_volume REAL
         )""")
         self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
-        rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
+        rules_patch = patch.object(
+            agent, "rules_for",
+            return_value=ExecutionRules(.000001, .000001, 5),
+        )
         rules_patch.start()
         self.addCleanup(rules_patch.stop)
+
+        def planned(_con, candidate, now=None):
+            generated = now or NOW
+            price = float(candidate["current_price"])
+            stop_pct = float(candidate.get("stop_reference_pct") or 2.0)
+            direction = candidate["direction"]
+            if direction == "LONG":
+                stop = price * (1.0 - stop_pct / 100.0)
+                tp1 = price * (1.0 + stop_pct / 100.0)
+                tp2 = price * (1.0 + 2.0 * stop_pct / 100.0)
+            else:
+                stop = price * (1.0 + stop_pct / 100.0)
+                tp1 = price * (1.0 - stop_pct / 100.0)
+                tp2 = price * (1.0 - 2.0 * stop_pct / 100.0)
+            return {
+                "version": agent.technical_trade_plan.VERSION,
+                "symbol": candidate["symbol"],
+                "direction": direction,
+                "generated_at": generated.isoformat(),
+                "source": "TEST_LOCAL_TECHNICAL_EVIDENCE",
+                "timeframes_available": ["1h", "4h"],
+                "timeframes_used": ["1h", "4h"],
+                "technical_score": 0.25,
+                "relation_to_trigger_direction": "SUPPORTS_DIRECTION",
+                "quality_multiplier": 1.0,
+                "entry": {
+                    "low": price * 0.99,
+                    "high": price * 1.01,
+                    "anchor": price,
+                    "basis": "TEST",
+                },
+                "risk": {
+                    "invalidation_price": stop,
+                    "stop_distance_pct": stop_pct,
+                    "risk_compatible": stop_pct <= 5.0,
+                    "minimum_policy_stop_pct": 0.5,
+                    "maximum_policy_stop_pct": 5.0,
+                    "basis": "TEST",
+                },
+                "targets": {
+                    "tp1_price": tp1,
+                    "tp2_price": tp2,
+                    "tp1_reward_pct": stop_pct,
+                    "tp2_reward_pct": 2.0 * stop_pct,
+                    "basis": "TEST",
+                },
+                "authority": {
+                    "direction_override": False,
+                    "ranking_input": True,
+                    "sizing_input": True,
+                    "entry_input": True,
+                    "stop_input": True,
+                    "take_profit_input": True,
+                    "single_indicator_hard_veto": False,
+                    "network_call_in_decision_path": False,
+                },
+                "real_order_allowed": False,
+            }
+
+        plan_patch = patch.object(
+            agent.technical_trade_plan,
+            "build_for_candidate",
+            side_effect=planned,
+        )
+        plan_patch.start()
+        self.addCleanup(plan_patch.stop)
         self.addCleanup(self.con.close)
 
     def candidate(self):
@@ -91,23 +160,36 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             (leverage, margin, tier, market),
             (1.0, 50.0, "PAPER_RISK_TIER_1", "SPOT"),
         )
-        thesis = self.con.execute(
-            "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
+        thesis_row = self.con.execute(
+            "SELECT decision_source,outcome_known_at_capture,thesis_json "
+            "FROM paper_agent_decision_theses"
         ).fetchone()
-        self.assertEqual(thesis, ("MARKET_BEHAVIOR_CORE", 0))
+        self.assertEqual(thesis_row[:2], ("MARKET_BEHAVIOR_CORE", 0))
+        frozen = json.loads(thesis_row[2])
+        self.assertEqual(
+            frozen["technical_trade_plan"]["version"],
+            agent.technical_trade_plan.VERSION,
+        )
+        self.assertIn(
+            "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            frozen["capabilities_under_test"],
+        )
 
-    def test_shadow_technical_context_is_frozen_but_not_a_decision_input(self):
+    def test_support_context_and_authoritative_plan_are_frozen(self):
         context = {
             "version": agent.realtime_technical_context.VERSION,
             "symbol": "BTCUSDT",
             "generated_at": (NOW - timedelta(minutes=5)).isoformat(),
             "as_of": (NOW - timedelta(hours=1)).isoformat(),
+            "daily_as_of": None,
             "market_scope": "TEST",
             "observation_only": True,
             "real_order_allowed": False,
             "timeframes": ["1h", "4h"],
             "advanced_1h": {"rsi14": 0.2},
             "structure_4h": {"trend": "BULLISH"},
+            "long_frames": {},
+            "levels": {},
             "summary": {"alignment": "ALIGNED_BULLISH"},
             "authority": {
                 "direction_input": False,
@@ -115,7 +197,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
                 "confidence_input": False,
                 "sizing_input": False,
                 "stop_input": False,
-                "purpose": "FORWARD_OBSERVATION_AND_LATER_CHALLENGER_EVIDENCE",
+                "purpose": "SUPPORT_CONTEXT_FOR_AUTHORITATIVE_TECHNICAL_TRADE_PLAN",
             },
         }
         agent.realtime_technical_context.save_latest(self.con, context, 0.5)
@@ -134,22 +216,28 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT thesis_json FROM paper_agent_decision_theses"
         ).fetchone()[0])
         self.assertEqual(
-            thesis["technical_context_observed"]["summary"]["alignment"],
+            thesis["technical_support_context"]["summary"]["alignment"],
             "ALIGNED_BULLISH",
         )
+        self.assertTrue(
+            thesis["technical_trade_plan"]["authority"]["ranking_input"]
+        )
         self.assertIn(
-            "TECHNICAL_CONTEXT_SHADOW",
-            thesis["capabilities_observed_but_not_decision_inputs"],
+            "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            thesis["capabilities_under_test"],
         )
         self.assertNotIn(
             "TECHNICAL_CONTEXT_SHADOW",
-            thesis["capabilities_under_test"],
+            thesis["capabilities_observed_but_not_decision_inputs"],
         )
 
-    def test_missing_stop_reference_is_rejected_before_position_write(self):
+
+    def test_missing_technical_plan_is_rejected_before_position_write(self):
         candidate = self.candidate()
-        candidate.pop("stop_reference_pct")
-        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+        with patch.object(
+            agent.technical_trade_plan, "build_for_candidate",
+            side_effect=ValueError("technical support unavailable"),
+        ), patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             selected = agent.select_new_positions(self.con, NOW)
@@ -160,7 +248,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         reasons = json.loads(self.con.execute(
             "SELECT reason_counts_json FROM paper_behavior_selection_runs"
         ).fetchone()[0])
-        self.assertEqual(reasons, {"STOP_REFERENCE_MISSING_OR_INVALID": 1})
+        self.assertEqual(reasons, {"TECHNICAL_PLAN_UNAVAILABLE": 1})
 
     def test_adverse_same_setup_reentry_requires_one_risk_unit_reset(self):
         first = self.fingerprinted_candidate(70, 100.0)
@@ -599,8 +687,11 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
 
     def test_low_conviction_long_fills_through_spot_route(self):
         candidate = self.candidate()
-        candidate.update({"decision_id": 9, "symbol": "CRVUSDT",
-                          "evidence_sha256": "c" * 64})
+        candidate.update({
+            "decision_id": 9, "symbol": "CRVUSDT",
+            "current_price": 0.5, "target_price": 0.51,
+            "evidence_sha256": "c" * 64,
+        })
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
@@ -634,13 +725,13 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
                 FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
+            ("CANCELLED", "TECHNICAL_PLAN_STALE_OR_INVALID"),
         )
         event = self.con.execute("""SELECT event_type,reason,real_order_allowed
             FROM paper_position_events ORDER BY event_id DESC LIMIT 1""").fetchone()
         self.assertEqual(
             event,
-            ("ENTRY_REJECTED", "ENTRY_OBSERVATION_WINDOW_EXPIRED", 0),
+            ("ENTRY_REJECTED", "TECHNICAL_PLAN_STALE_OR_INVALID", 0),
         )
 
     def test_failed_dynamic_entry_releases_capacity_after_ten_minutes(self):
@@ -661,7 +752,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertEqual(
             self.con.execute("""SELECT status,cancel_reason
                 FROM paper_agent_positions""").fetchone(),
-            ("CANCELLED", "EXACT_SPOT_ENTRY_CAPTURE_EXPIRED"),
+            ("CANCELLED", "TECHNICAL_PLAN_STALE_OR_INVALID"),
         )
 
     def test_missing_okx_spot_management_route_cancels_before_open(self):
