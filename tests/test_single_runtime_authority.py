@@ -115,6 +115,17 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         self.assertNotIn("agca-okx-copy-trader-collector.service", canonical)
         self.assertNotIn("agca-okx-copy-trader-collector.timer", active)
 
+    def test_active_behavior_and_risk_paths_do_not_use_restricted_futures_rest(self):
+        for relative in (
+            "scripts/collect_closed_behavior_minute.py",
+            "data/binance_live_evidence.py",
+            "risk_manager/risk_manager.py",
+            "runtime/paper_realtime_worker.py",
+        ):
+            text=(ROOT/relative).read_text(encoding="utf-8")
+            self.assertNotIn("fapi.binance.com", text, relative)
+            self.assertNotIn("/fapi/v1/", text, relative)
+
     def test_behavior_observer_service_declares_canonical_binance_source(self):
         service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text(
             encoding="utf-8"
