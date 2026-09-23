@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import statistics
+import time
 from datetime import datetime, timezone
 
 from analysis import realtime_technical_context
@@ -14,6 +15,8 @@ MIN_ONE_MINUTE_BARS = 360
 MAX_BAR_AGE_SECONDS = 180
 MIN_STOP_PCT = 0.50
 MAX_STOP_PCT = 5.00
+MAX_ENTRY_PLAN_AGE_SECONDS = 180
+_PLAN_CACHE = {}
 
 
 def _iso(value):
@@ -200,6 +203,26 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     if direction not in {"LONG", "SHORT"}:
         raise ValueError("invalid technical-plan direction")
 
+    latest = con.execute("""
+        SELECT MAX(close_time_ms) FROM technical_minute_bars
+        WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
+          AND close_time_ms<=?
+    """, (symbol, int(now.timestamp() * 1000))).fetchone()[0]
+    if latest is None:
+        raise ValueError("technical minute bar cache unavailable")
+    higher = realtime_technical_context.load_latest(con, symbol, now=now)
+    if higher is None:
+        raise ValueError("fresh higher-timeframe technical context unavailable")
+    event_kind = str(((candidate.get("evidence") or {}).get("event") or {}).get("kind") or "")
+    horizon = int(candidate.get("horizon") or candidate.get("horizon_hours") or 4)
+    key = (
+        symbol, direction, event_kind, horizon, str(market_type),
+        int(latest), str(higher.get("generated_at") or ""),
+    )
+    cached = _PLAN_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     rows = load_recent(
         con, symbol, limit=1440, before_ms=int(now.timestamp() * 1000)
     )
@@ -218,10 +241,6 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         "5m": frame_metrics(five),
         "15m": frame_metrics(fifteen),
     }
-
-    higher = realtime_technical_context.load_latest(con, symbol, now=now)
-    if higher is None:
-        raise ValueError("fresh higher-timeframe technical context unavailable")
 
     selected = choose_timeframes(candidate, frames, higher)
     score = _weighted_score(direction, selected, frames, higher)
@@ -296,7 +315,7 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     def pct(level):
         return 100.0 * (float(level) / float(anchor) - 1.0)
 
-    return {
+    plan = {
         "version": VERSION,
         "symbol": symbol,
         "direction": direction,
@@ -339,3 +358,41 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
         },
         "real_order_allowed": False,
     }
+    _PLAN_CACHE.clear()
+    _PLAN_CACHE[key] = plan
+    return plan
+
+
+def execution_levels(plan, execution_reference_price, *, basis_ratio=None):
+    """Scale the frozen USD-M plan once to the actual execution market.
+
+    USD-M uses ratio 1. SPOT freezes a single basis ratio at first fresh quote;
+    later ticks must reuse that exact ratio so the thesis cannot drift.
+    """
+    anchor = float(plan["entry"]["anchor"])
+    reference = float(execution_reference_price)
+    if anchor <= 0 or reference <= 0:
+        raise ValueError("invalid technical execution basis")
+    market_type = str(plan.get("execution_market_type") or "USD_M_PERPETUAL")
+    if basis_ratio is None:
+        basis_ratio = 1.0 if market_type == "USD_M_PERPETUAL" else reference / anchor
+    ratio = float(basis_ratio)
+    if not math.isfinite(ratio) or ratio <= 0:
+        raise ValueError("invalid frozen technical basis ratio")
+    return {
+        "basis_ratio": ratio,
+        "entry_low": float(plan["entry"]["low"]) * ratio,
+        "entry_high": float(plan["entry"]["high"]) * ratio,
+        "invalidation_price": float(plan["risk"]["invalidation_price"]) * ratio,
+        "tp1_price": float(plan["targets"]["tp1_price"]) * ratio,
+        "tp2_price": float(plan["targets"]["tp2_price"]) * ratio,
+    }
+
+
+def plan_is_fresh(plan, now=None):
+    now = now or datetime.now(timezone.utc)
+    generated = datetime.fromisoformat(
+        str(plan["generated_at"]).replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
+    age = (now - generated).total_seconds()
+    return 0 <= age <= MAX_ENTRY_PLAN_AGE_SECONDS
