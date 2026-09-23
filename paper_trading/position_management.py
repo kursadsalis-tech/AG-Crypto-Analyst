@@ -110,6 +110,7 @@ def ensure_tables(con):
         ("liquidated", "INTEGER NOT NULL DEFAULT 0"),
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
         ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
+        ("technical_plan_json", "TEXT"),
     ):
         if position_columns and name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -131,14 +132,17 @@ def initialize_open_positions(con, now):
     # contention and block realtime startup.
     rows = con.execute("""
         SELECT p.position_id,p.symbol,p.direction,p.entry_time,p.entry_price,
-               p.quantity,p.margin_allocated,p.entry_fee
+               p.quantity,p.margin_allocated,p.entry_fee,p.technical_plan_json
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m ON m.position_id=p.position_id
         WHERE p.status='OPEN' AND m.position_id IS NULL
         ORDER BY p.position_id
     """).fetchall()
     initialized, blocked = 0, []
-    for position_id, symbol, direction, entry_time, entry_price, quantity, margin_allocated, fee in rows:
+    for (
+        position_id, symbol, direction, entry_time, entry_price, quantity,
+        margin_allocated, fee, technical_plan_json,
+    ) in rows:
         risk = con.execute("""
             SELECT volatility_stop_reference_pct FROM asset_risk_snapshots
             WHERE symbol=? AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT 1
@@ -157,6 +161,19 @@ def initialize_open_positions(con, now):
                 thesis = json.loads(thesis_row[0] or "{}")
             except (TypeError, ValueError, json.JSONDecodeError):
                 thesis = {}
+        technical_plan = {}
+        if technical_plan_json:
+            try:
+                technical_plan = json.loads(technical_plan_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                blocked.append((int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"))
+                continue
+            if (
+                technical_plan.get("symbol") != symbol
+                or technical_plan.get("direction") != direction
+            ):
+                blocked.append((int(position_id), "MISMATCHED_CURRENT_TECHNICAL_PLAN"))
+                continue
         stale_recovery = not risk and now >= parse(con.execute(
             "SELECT due_time FROM paper_agent_positions WHERE position_id=?",
             (position_id,),
@@ -172,7 +189,11 @@ def initialize_open_positions(con, now):
         volatility_stop = float(risk[0]) if risk else 5.0
         # A setup-specific invalidation may tighten the volatility envelope when
         # the frozen thesis actually provides a price level.  Never invent one.
-        invalidation_price = thesis.get("invalidation_price")
+        plan_risk = technical_plan.get("risk") or {}
+        invalidation_price = (
+            plan_risk.get("invalidation_price")
+            if technical_plan else thesis.get("invalidation_price")
+        )
         invalidation_stop = None
         if invalidation_price is not None:
             try:
@@ -184,7 +205,10 @@ def initialize_open_positions(con, now):
             except (TypeError, ValueError):
                 invalidation_stop = None
         frozen_risk = thesis.get("execution_risk") or {}
-        frozen_stop = frozen_risk.get("planned_stop_distance_pct")
+        frozen_stop = (
+            plan_risk.get("stop_distance_pct")
+            if technical_plan else frozen_risk.get("planned_stop_distance_pct")
+        )
         if frozen_stop is not None:
             try:
                 frozen_stop = float(frozen_stop)
@@ -221,9 +245,15 @@ def initialize_open_positions(con, now):
                    "thesis_invalidation_stop_pct": invalidation_stop,
                    "selected_stop_reference_pct": stop_reference,
                    "stop_reference_basis": (
-                       "FROZEN_SELECTION_RISK_PLAN" if frozen_stop is not None
+                       "CURRENT_REVALIDATED_TECHNICAL_PLAN"
+                       if technical_plan
+                       else "FROZEN_SELECTION_RISK_PLAN"
+                       if frozen_stop is not None
                        else "LEGACY_VOLATILITY_ENVELOPE"
                    ),
+                   "technical_plan_version": technical_plan.get("version"),
+                   "technical_plan_generated_at": technical_plan.get("generated_at"),
+                   "technical_plan_as_of": technical_plan.get("as_of"),
                    "planned_stop_and_fee_risk_usdt": frozen_risk.get(
                        "planned_stop_and_fee_risk_usdt"
                    ),
