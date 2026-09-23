@@ -27,7 +27,11 @@ def ensure_table(connection):
             taker_imbalance_snapshot_last REAL NOT NULL,
             spread_bps_mean REAL NOT NULL,
             mid_price_first REAL,
+            mid_price_high REAL,
+            mid_price_low REAL,
             mid_price_last REAL,
+            aggressive_buy_notional_usd REAL NOT NULL DEFAULT 0,
+            aggressive_sell_notional_usd REAL NOT NULL DEFAULT 0,
             open_interest_usd_first REAL NOT NULL,
             open_interest_usd_last REAL NOT NULL,
             open_interest_usd_change REAL NOT NULL,
@@ -54,9 +58,19 @@ def ensure_table(connection):
             "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'"
         )
         existing_columns.add("market_data_provider")
-    for column in ("mid_price_first", "mid_price_last"):
+    for column in (
+        "mid_price_first", "mid_price_high", "mid_price_low", "mid_price_last"
+    ):
         if column not in existing_columns:
             connection.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} REAL")
+    for column in (
+        "aggressive_buy_notional_usd", "aggressive_sell_notional_usd"
+    ):
+        if column not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE {TABLE} ADD COLUMN {column} "
+                "REAL NOT NULL DEFAULT 0"
+            )
     connection.execute(f"""
         CREATE TABLE IF NOT EXISTS {EXTERNAL_EVIDENCE_TABLE} (
             event_id TEXT NOT NULL,
@@ -94,13 +108,14 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     sample_count,max_sample_gap_ms,book_imbalance_20_mean,
                     book_imbalance_20_last,taker_imbalance_snapshot_mean,
                     taker_imbalance_snapshot_last,spread_bps_mean,
-                    mid_price_first,mid_price_last,
+                    mid_price_first,mid_price_high,mid_price_low,mid_price_last,
+                    aggressive_buy_notional_usd,aggressive_sell_notional_usd,
                     open_interest_usd_first,open_interest_usd_last,
                     open_interest_usd_change,funding_rate_last,
                     long_liquidation_notional_usd_estimate,
                     short_liquidation_notional_usd_estimate,liquidation_event_count,
                     quality_gates_json,eligible_for_learning,created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(instrument,minute_end_timestamp_ms) DO UPDATE SET
                     market_data_provider=excluded.market_data_provider,
                     sample_count=excluded.sample_count,
@@ -111,7 +126,11 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                     taker_imbalance_snapshot_last=excluded.taker_imbalance_snapshot_last,
                     spread_bps_mean=excluded.spread_bps_mean,
                     mid_price_first=excluded.mid_price_first,
+                    mid_price_high=excluded.mid_price_high,
+                    mid_price_low=excluded.mid_price_low,
                     mid_price_last=excluded.mid_price_last,
+                    aggressive_buy_notional_usd=excluded.aggressive_buy_notional_usd,
+                    aggressive_sell_notional_usd=excluded.aggressive_sell_notional_usd,
                     open_interest_usd_first=excluded.open_interest_usd_first,
                     open_interest_usd_last=excluded.open_interest_usd_last,
                     open_interest_usd_change=excluded.open_interest_usd_change,
@@ -129,7 +148,11 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
                 row["book_imbalance_20_mean"], row["book_imbalance_20_last"],
                 row["taker_imbalance_snapshot_mean"], row["taker_imbalance_snapshot_last"],
                 row["spread_bps_mean"], row.get("mid_price_first"),
-                row.get("mid_price_last"), row["open_interest_usd_first"],
+                row.get("mid_price_high"), row.get("mid_price_low"),
+                row.get("mid_price_last"),
+                float(row.get("aggressive_buy_notional_usd") or 0.0),
+                float(row.get("aggressive_sell_notional_usd") or 0.0),
+                row["open_interest_usd_first"],
                 row["open_interest_usd_last"], row["open_interest_usd_change"],
                 row["funding_rate_last"], row["long_liquidation_notional_usd_estimate"],
                 row["short_liquidation_notional_usd_estimate"], row["liquidation_event_count"],
