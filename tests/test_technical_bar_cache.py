@@ -166,6 +166,47 @@ class TechnicalBarCacheTests(unittest.TestCase):
             block.index("SELECT COUNT(*)"),
         )
 
+    def test_live_flush_releases_writer_between_batches_and_skips_counts(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            with sqlite3.connect(path) as other:
+                other.execute("CREATE TABLE writer_probe(value INTEGER)")
+            observations = []
+            def other_writer(_delay):
+                with sqlite3.connect(path, timeout=0) as other:
+                    other.execute("INSERT INTO writer_probe VALUES(1)")
+                    observations.append(other.execute(f"SELECT COUNT(*) FROM {store.TABLE}").fetchone()[0])
+            bars = [bar(symbol=f"COIN{i}USDT") for i in range(35)]
+            with mock.patch.object(store.time, "sleep", side_effect=other_writer):
+                result = store.persist_bars(path, bars, now_ms=NOW, include_counts=False)
+            self.assertEqual(observations, [16, 32])
+            self.assertEqual(result["upserted"], 35)
+            self.assertIsNone(result["row_count"])
+            self.assertFalse(result["historical_counts_computed"])
+            self.assertIn("max_write_transaction", result["timings_ms"])
+
+    def test_partial_flush_retry_is_idempotent(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            original = store._upsert_prepared
+            calls = 0
+            def fail_second_batch(connection, prepared):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise sqlite3.OperationalError("database is locked")
+                return original(connection, prepared)
+            bars = [bar(symbol=f"COIN{i}USDT") for i in range(35)]
+            with mock.patch.object(store, "_upsert_prepared", side_effect=fail_second_batch), mock.patch.object(store.time, "sleep"):
+                result = store.persist_bars(path, bars, now_ms=NOW, include_counts=False)
+            with sqlite3.connect(path) as con:
+                self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {store.TABLE}").fetchone()[0], 35)
+            self.assertEqual(result["upserted"], 35)
+
     def test_persist_bars_waits_through_transient_writer_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "technical.db"

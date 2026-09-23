@@ -1,3 +1,34 @@
+# 2026-09-23 — Observer candidate and remaining SQLite writer contention
+
+Work continues in canonical worktree `.worktrees/observer-phase-profile`, branch
+`fix/observer-phase-profile`, draft PR #94. VM is on candidate `00cdc04` detached
+for controlled acceptance; canonical main remains `ed39047` until acceptance.
+Do not replace the old, dirty primary checkout or recreate this work.
+
+Observer now runs continuously in the existing service, with one process lock,
+a 240-second per-cycle deadline and restart-on-failure. Its old timer is disabled.
+At 22:32 UTC, 12/12 eligible rows, 61.030 s cycle, 9.281 s route refresh,
+43.984 s collection, 0.006 s causal projection. Persistence still waited 7.759 s
+on another writer. Historical count/DDL overhead was removed, not gate-relaxed.
+
+Direct `/proc/locks` sampling at 17:48 UTC identified technical-kline PID 1599545
+holding the canonical WAL writer byte 120 continuously for at least 9 seconds.
+This process started after the earlier technical DDL repair; repeating that
+repair is insufficient. Realtime SQLITE_BUSY recurred, so acceptance is NOT
+complete. Current change bounds technical upserts to 16 independently valid
+closed bars per transaction, yields between groups, removes live history counts,
+and preserves phase/transaction timings across universe health refreshes.
+
+Observer candidate passed 503 tests before this additional writer repair.
+Next: targeted writer tests, final regression, deploy/restart technical worker,
+and accept consecutive fresh observer minutes plus uninterrupted selection runs.
+Latest live Spot ingest uses canonical Binance vision endpoint successfully.
+ACTIONABLE selection was blocked by PORTFOLIO_VALUATION_STALE_OR_MISSING at the
+previous observation; inspect actual current blocker after contention is fixed.
+No authority or freshness/quality thresholds changed.
+
+---
+
 # 2026-09-23 — Observer latency diagnosis in progress
 
 Canonical VM and main were verified at `ed39047`; the earlier `c90fe22`
