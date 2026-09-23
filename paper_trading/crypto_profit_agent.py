@@ -40,6 +40,7 @@ from paper_trading import execution_market_data
 from paper_trading import position_management
 from paper_trading import risk_tiering
 from analysis import realtime_technical_context
+from analysis import technical_trade_plan
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -244,6 +245,10 @@ def ensure_tables(con):
         ("risk_tier", "TEXT NOT NULL DEFAULT 'PAPER_RISK_TIER_1'"),
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
         ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
+        ("technical_plan_json", "TEXT"),
+        ("technical_plan_generated_at", "TEXT"),
+        ("technical_plan_as_of", "TEXT"),
+        ("technical_plan_version", "TEXT"),
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -879,7 +884,9 @@ def _adverse_same_setup_reentry_blocked(con, row):
     return reset_move_pct < effective_stop_pct
 
 
-def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
+def select_new_positions(
+    con, now, exchange_metadata=None, telemetry=None, *, technical_planning=False,
+):
     behavior_result = behavior_decision_core.evaluate(con, now)
     snapshot = portfolio_snapshot(con, now)
     active = con.execute("""
@@ -948,19 +955,60 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     # as selection, so a tiny high-% setup cannot crowd out a larger opportunity
     # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
     ranked_candidates = []
+    preselection_outcomes = {}
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
+        technical_plan = None
+        technical_size_multiplier = 1.0
+        if technical_planning:
+            try:
+                technical_plan = technical_trade_plan.build_for_candidate(
+                    con, row, tier.market_type, now=now,
+                )
+            except (ValueError, sqlite3.Error) as exc:
+                reason_code = "TECHNICAL_TRADE_PLAN_UNAVAILABLE"
+                reject(reason_code)
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
+                    "status": "REDDEDİLDİ",
+                    "reason": reason_code,
+                    "detail": type(exc).__name__,
+                }
+                continue
+            if not bool(technical_plan["risk"]["risk_compatible"]):
+                reason_code = "TECHNICAL_STOP_EXCEEDS_RISK_ENVELOPE"
+                reject(reason_code)
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
+                    "status": "REDDEDİLDİ", "reason": reason_code,
+                }
+                continue
+            technical_size_multiplier = float(
+                technical_plan.get("quality_multiplier") or 1.0
+            )
+            row["technical_trade_plan"] = technical_plan
+
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
+            * technical_size_multiplier
         )
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        stop_geometry = _validated_stop_geometry(row)
-        if stop_geometry is None:
-            reject("STOP_REFERENCE_MISSING_OR_INVALID")
-            continue
-        raw_stop_pct, effective_stop_pct = stop_geometry
+        if technical_plan is not None:
+            raw_stop_pct = float(technical_plan["risk"]["stop_distance_pct"])
+            effective_stop_pct = raw_stop_pct
+        else:
+            stop_geometry = _validated_stop_geometry(row)
+            if stop_geometry is None:
+                reject("STOP_REFERENCE_MISSING_OR_INVALID")
+                key = (row["symbol"], row["direction"], row["horizon"])
+                preselection_outcomes[key] = {
+                    "status": "REDDEDİLDİ",
+                    "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
+                }
+                continue
+            raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
@@ -979,9 +1027,6 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             max(0.0, sizing_cap)
             * max(0.0, float(row["expected_net_edge_pct"])) / 100.0
         )
-        # Rank against this trade's own stop geometry, not a fixed risk
-        # percentage.  The stop reference is produced from the fresh asset-risk
-        # snapshot and Position Manager clamps the same value to 0.5%-5.0%.
         stop_loss_usdt = max(0.0, sizing_cap) * effective_stop_pct / 100.0
         estimated_round_trip_cost_usdt = max(0.0, sizing_cap) * (
             2.0 * fee_rate
@@ -991,6 +1036,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             expected_profit_usdt / expected_loss_budget_usdt
             if expected_loss_budget_usdt > 0.0 else 0.0
         )
+        row["expected_profit_per_risk"] = expected_profit_per_risk
+        row["expected_profit_usdt"] = expected_profit_usdt
         ranked_candidates.append(
             (expected_profit_per_risk, expected_profit_usdt, row)
         )
@@ -1049,6 +1096,16 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         "decision_source": row.get("decision_source"),
         "experiment_tier": row.get("experiment_tier"),
         "risk_cap_pct": row.get("risk_cap_pct"),
+        "technical_plan": ({
+            "version": row["technical_trade_plan"].get("version"),
+            "profile": row["technical_trade_plan"].get("profile"),
+            "score": row["technical_trade_plan"].get("technical_score"),
+            "relation": row["technical_trade_plan"].get("relation_to_trigger_direction"),
+            "timeframes_used": row["technical_trade_plan"].get("timeframes_used"),
+            "entry": row["technical_trade_plan"].get("entry"),
+            "risk": row["technical_trade_plan"].get("risk"),
+            "targets": row["technical_trade_plan"].get("targets"),
+        } if row.get("technical_trade_plan") else None),
         "beats_open_position_on_observed_return": (
             strongest_open is not None
             and strongest_open.get("unrealized_pnl_pct") is not None
@@ -1069,6 +1126,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             "status": "DEĞERLENDİRİLİYOR", "reason": None
         } for _, _, row in ranked_candidates
     }
+    candidate_outcomes.update(preselection_outcomes)
 
     for _, _, row in ranked_candidates:
         outcome_key = (row["symbol"], row["direction"], row["horizon"])
@@ -1095,23 +1153,33 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             continue
         tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
+        technical_plan = row.get("technical_trade_plan")
+        technical_size_multiplier = (
+            float(technical_plan.get("quality_multiplier") or 1.0)
+            if technical_plan is not None else 1.0
+        )
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
+            * technical_size_multiplier
         )
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        stop_geometry = _validated_stop_geometry(row)
-        if stop_geometry is None:
-            reject("STOP_REFERENCE_MISSING_OR_INVALID")
-            candidate_outcomes[outcome_key] = {
-                "status": "REDDEDİLDİ",
-                "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
-            }
-            continue
-        raw_stop_pct, effective_stop_pct = stop_geometry
+        if technical_plan is not None:
+            raw_stop_pct = float(technical_plan["risk"]["stop_distance_pct"])
+            effective_stop_pct = raw_stop_pct
+        else:
+            stop_geometry = _validated_stop_geometry(row)
+            if stop_geometry is None:
+                reject("STOP_REFERENCE_MISSING_OR_INVALID")
+                candidate_outcomes[outcome_key] = {
+                    "status": "REDDEDİLDİ",
+                    "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
+                }
+                continue
+            raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
             snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
         )
@@ -1142,7 +1210,10 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
                 continue
             executable = estimate_order_rules(
-                reference_price=float(row["current_price"]),
+                reference_price=float(
+                    technical_plan["entry"]["anchor"]
+                    if technical_plan is not None else row["current_price"]
+                ),
                 requested_notional=notional,
                 side="BUY" if row["direction"] == "LONG" else "SELL",
                 symbol=row["symbol"], quantity_step=rules.quantity_step,
@@ -1163,10 +1234,20 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
             f"market={tier.market_type} | taker_fee_bps={fee_rate * 10000.0:.3f} | "
             f"signals={','.join(tier.signal_sources)} | "
-            f"strategy={strategy_id}"
+            + (
+                f"technical={technical_plan['relation_to_trigger_direction']} "
+                f"score={technical_plan['technical_score']:+.3f} "
+                f"profile={technical_plan['profile']} | "
+                if technical_plan is not None else ""
+            )
+            + f"strategy={strategy_id}"
         )
         p_up = row["confidence"] if row["direction"] == "LONG" else 1.0 - row["confidence"]
         p_down = row["confidence"] if row["direction"] == "SHORT" else 1.0 - row["confidence"]
+        target_price = (
+            float(technical_plan["targets"]["tp2_price"])
+            if technical_plan is not None else row["target_price"]
+        )
         cursor = con.execute("""
             INSERT OR IGNORE INTO paper_agent_positions(
                 forecast_id,agent_version,policy_version,symbol,horizon_hours,
@@ -1183,7 +1264,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             datetime.fromtimestamp(
                 row["evidence"]["evidence_minute_end_ms"] / 1000, timezone.utc
             ).isoformat(), iso(planned_entry), iso(due_time), notional,
-            row["confidence"], p_up, p_down, row["target_price"],
+            row["confidence"], p_up, p_down, target_price,
             behavior_decision_core.VERSION, row["evidence_sha256"], reason,
             tier.market_type, FORWARD_COHORT, 1, strategy_id,
             row["decision_source"], row["decision_id"],
@@ -1191,6 +1272,15 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
+            if technical_plan is not None:
+                con.execute("""UPDATE paper_agent_positions SET
+                    technical_plan_json=?,technical_plan_generated_at=?,
+                    technical_plan_as_of=?,technical_plan_version=?
+                    WHERE position_id=?""", (
+                    json.dumps(technical_plan, sort_keys=True),
+                    technical_plan["generated_at"], technical_plan["as_of"],
+                    technical_plan["version"], cursor.lastrowid,
+                ))
             row["technical_context"] = realtime_technical_context.load_latest(
                 con, row["symbol"], now=now
             )
@@ -1200,13 +1290,30 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 "gross_exposure": notional,
                 "planned_stop_distance_pct": effective_stop_pct,
                 "planned_stop_reference_pct": raw_stop_pct,
+                "planned_stop_price": (
+                    float(technical_plan["risk"]["invalidation_price"])
+                    if technical_plan is not None else None
+                ),
+                "planned_tp1_price": (
+                    float(technical_plan["targets"]["tp1_price"])
+                    if technical_plan is not None else None
+                ),
+                "planned_tp2_price": (
+                    float(technical_plan["targets"]["tp2_price"])
+                    if technical_plan is not None else None
+                ),
+                "planned_trade_risk_budget_usdt": trade_risk_budget,
                 "risk_per_trade_pct": float(row.get("risk_per_trade_pct") or 0.0),
                 "planned_stop_and_fee_risk_usdt": notional * (
                     effective_stop_pct / 100.0 + 2.0 * fee_rate
                 ),
                 "market_type": tier.market_type,
                 "taker_fee_rate": fee_rate,
-                "stop_basis": "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT",
+                "stop_basis": (
+                    "ADAPTIVE_MULTITIMEFRAME_TECHNICAL_STRUCTURE"
+                    if technical_plan is not None
+                    else "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT"
+                ),
                 "independent_signal_count": tier.independent_signal_count,
                 "signal_sources": list(tier.signal_sources),
             }
