@@ -41,6 +41,25 @@ class ObserverServiceContractTests(unittest.TestCase):
         self.assertIn("MemoryMax=256M", service)
         self.assertIn("CPUQuota=40%", service)
 
+    def test_behavior_learning_specialist_is_low_priority_and_paper_only(self):
+        service = (
+            ROOT / "deploy/agca-behavior-learning-worker.service"
+        ).read_text()
+        self.assertIn("Type=simple", service)
+        self.assertIn("Environment=AGCA_EXECUTION_MODE=PAPER_ONLY", service)
+        self.assertIn("-m runtime.behavior_learning_worker", service)
+        self.assertIn("Restart=always", service)
+        self.assertIn("Nice=15", service)
+        self.assertIn("CPUQuota=50%", service)
+        self.assertIn("MemoryMax=256M", service)
+
+    def test_realtime_worker_requires_background_behavior_cache(self):
+        service = (ROOT / "deploy/agca-paper-realtime-worker.service").read_text()
+        self.assertIn(
+            "Environment=AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED=1",
+            service,
+        )
+
     def test_attestation_service_declares_both_observer_freshness_limits(self):
         service = (ROOT / "deploy/agca-cloud-attestation.service").read_text()
         self.assertIn("AGCA_MARKET_BEHAVIOR_HEALTH_MAX_AGE_SECONDS=180", service)
