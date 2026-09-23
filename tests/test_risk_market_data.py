@@ -14,7 +14,7 @@ class RiskMarketDataTests(unittest.TestCase):
         connect.assert_called_once_with(risk_manager.DB_NAME, timeout=30)
         con.execute.assert_called_once_with("PRAGMA busy_timeout=30000")
 
-    def test_dynamic_symbol_prefers_binance_usd_m(self):
+    def test_dynamic_symbol_uses_same_exchange_spot_history_context(self):
         expected = object()
         with mock.patch.object(
             risk_manager, "fetch_closed_1h_klines", return_value=expected
@@ -25,18 +25,18 @@ class RiskMarketDataTests(unittest.TestCase):
             )
         fetch.assert_called_once_with(
             "ZORAUSDT",
-            url=risk_manager.BINANCE_USD_M_KLINES_URL,
-            source_prefix="BINANCE_USD_M_KLINES",
+            url=risk_manager.BINANCE_KLINES_URL,
+            source_prefix="BINANCE_SPOT_KLINES_FOR_USDM_RISK_CONTEXT",
         )
 
-    def test_dynamic_symbol_fails_closed_when_binance_usdm_is_unavailable(self):
+    def test_dynamic_symbol_fails_closed_when_binance_history_is_unavailable(self):
         with mock.patch.object(
             risk_manager,
             "fetch_closed_1h_klines",
-            side_effect=RuntimeError("canonical Binance USD-M unavailable"),
+            side_effect=RuntimeError("canonical Binance history unavailable"),
         ):
             with self.assertRaisesRegex(
-                RuntimeError, "canonical Binance USD-M unavailable"
+                RuntimeError, "canonical Binance history unavailable"
             ):
                 risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT")
 

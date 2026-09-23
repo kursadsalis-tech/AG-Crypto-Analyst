@@ -559,6 +559,7 @@ def evaluate(con, now=None):
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
          long_liq, short_liq, liq_count, quality_json, mid_first) = raw
+        quality_gates = json.loads(quality_json)
         pattern = _flow_pattern(float(book), float(taker))
         symbol = _symbol(instrument)
         risk = risks.get(symbol)
@@ -614,6 +615,7 @@ def _candidate_for_hypothesis(
     liq_count, quality_json,
 ):
     """Persist one immutable single-source or confluence PAPER hypothesis."""
+    quality_gates = json.loads(quality_json)
     hypothesis_pattern = "ANY_FLOW" if event_only else pattern
     if not risk or not risk["allowed"]:
         con.execute("""INSERT OR IGNORE INTO paper_behavior_missed_opportunities(
@@ -635,8 +637,12 @@ def _candidate_for_hypothesis(
     elif event_only:
         capabilities = [kind, "CAUSAL_EXTERNAL_EVENT", "SPREAD_COST", "RISK_GATE"]
     else:
-        capabilities = ["ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST",
-                        "OPEN_INTEREST", "FUNDING", "LIQUIDATIONS", "RISK_GATE"]
+        capabilities = [
+            "ORDER_BOOK", "TAKER_FLOW", "SPREAD_COST",
+            "FUNDING", "LIQUIDATIONS", "RISK_GATE",
+        ]
+        if quality_gates.get("open_interest_available") is True:
+            capabilities.append("OPEN_INTEREST")
     directional_signals = [{"source": primary_source,
                             "direction": learned["direction"]}]
     if not event_only and kind not in {"MARKET_STRUCTURE", "PRICE_ACTION"}:
@@ -658,11 +664,15 @@ def _candidate_for_hypothesis(
             "instrument": instrument, "book_imbalance": float(book),
             "taker_imbalance": float(taker), "spread_bps": float(spread),
             "mid_price": float(mid),
-            "open_interest_change_pct": 100.0 * float(oi_change) / max(abs(float(oi_first)), 1e-9),
+            "open_interest_change_pct": (
+                100.0 * float(oi_change) / max(abs(float(oi_first)), 1e-9)
+                if quality_gates.get("open_interest_available") is True
+                else None
+            ),
             "funding_rate": float(funding), "long_liquidation_usd": float(long_liq),
             "short_liquidation_usd": float(short_liq),
             "liquidation_events": int(liq_count),
-            "quality_gates": json.loads(quality_json),
+            "quality_gates": quality_gates,
         },
         "learned_pattern": learned,
         "execution_calibration": {

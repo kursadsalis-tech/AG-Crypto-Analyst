@@ -65,7 +65,18 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
             "required_sources": len(complete) == len(instrument_samples),
             "liquidation_channel": bool(channel_states) and all(channel_states),
             "valid_mid_price": first_mid is not None and last_mid is not None,
+            "open_interest_available": all(
+                bool((row.get("open_interest") or {}).get("available"))
+                for row in instrument_samples
+            ),
         }
+        mandatory_quality = (
+            gates["minimum_samples"]
+            and gates["maximum_gap"]
+            and gates["required_sources"]
+            and gates["liquidation_channel"]
+            and gates["valid_mid_price"]
+        )
         rows.append({
             "instrument": instrument,
             "minute_start_timestamp_ms": minute_start_ms,
@@ -96,7 +107,7 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                 if event["liquidated_side"] == "SHORT"),
             "liquidation_event_count": len(events),
             "quality_gates": gates,
-            "eligible_for_learning": all(gates.values()),
+            "eligible_for_learning": mandatory_quality,
         })
     outside_instruments = sorted({event["instrument"] for event in liquidation_events.values()
                                   if event["instrument"] not in samples})

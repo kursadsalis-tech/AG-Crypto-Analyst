@@ -72,7 +72,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.con.execute(
             "INSERT INTO market_behavior_minute_features VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ("BTC-USDT-SWAP", "BINANCE", minute, 1, .25, .35, 1.0, 100.0, 1_000_000,
-             25_000, .0001, 0, 1000, 1, json.dumps({"all": True})),
+             25_000, .0001, 0, 1000, 1, json.dumps({"all": True, "open_interest_available": True})),
         )
         self.con.execute(
             "INSERT INTO causal_minute_external_evidence VALUES(?,?,?,?,?,?)",
@@ -183,6 +183,28 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertTrue(chart)
         self.assertEqual(chart[0]["evidence"]["capabilities_used"],
                          ["PRICE_ACTION", "SPREAD_COST", "RISK_GATE"])
+
+    def test_unavailable_open_interest_is_not_claimed_as_used_capability(self):
+        self.add_history(days=3)
+        self.add_current()
+        self.con.execute(
+            "UPDATE market_behavior_minute_features "
+            "SET quality_gates_json=?",
+            (json.dumps({
+                "all": True,
+                "open_interest_available": False,
+            }),),
+        )
+        result = core.evaluate(self.con, NOW)
+        candidate = result["candidates"][0]
+        self.assertNotIn(
+            "OPEN_INTEREST", candidate["evidence"]["capabilities_used"]
+        )
+        self.assertIsNone(
+            candidate["evidence"]["market_behavior"][
+                "open_interest_change_pct"
+            ]
+        )
 
     def test_cost_after_multiday_pattern_creates_behavior_candidate(self):
         self.add_history(days=3)

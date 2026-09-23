@@ -135,11 +135,11 @@ def build_readiness(root=PROJECT_ROOT):
         if behavior_service_path.is_file() else ""
     )
     canonical_provider = {
-        "behavior_service_binance_timeout": (
-            "AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS=3" in behavior_service_text
+        "behavior_service_binance_websocket_timeout": (
+            "AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10" in behavior_service_text
         ),
-        "behavior_service_no_alternate_timeout": (
-            "AGCA_OKX_REQUEST_TIMEOUT_SECONDS" not in behavior_service_text
+        "behavior_service_has_no_binance_rest_timeout": (
+            "AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS" not in behavior_service_text
         ),
     }
     failures.extend(
