@@ -71,9 +71,16 @@ def save_state(con, status, message, success_at=None):
     con.commit()
 
 
+
+def runtime_connection():
+    """Use the same bounded SQLite writer wait as the risk snapshot path."""
+    con = runtime_connect(DB_NAME, timeout=30)
+    con.execute("PRAGMA busy_timeout=30000")
+    return con
+
 def main(force=False):
     now = utcnow()
-    con = runtime_connect(DB_NAME)
+    con = runtime_connection()
     try:
         ensure_state_table(con)
         if not force and not is_due(con, now):
