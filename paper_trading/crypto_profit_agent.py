@@ -40,6 +40,7 @@ from paper_trading import execution_market_data
 from paper_trading import position_management
 from paper_trading import risk_tiering
 from analysis import realtime_technical_context
+from analysis import technical_trade_plan
 
 
 DB_NAME = forecast_engine.DB_NAME
@@ -244,6 +245,7 @@ def ensure_tables(con):
         ("risk_tier", "TEXT NOT NULL DEFAULT 'PAPER_RISK_TIER_1'"),
         ("independent_signal_count", "INTEGER NOT NULL DEFAULT 1"),
         ("signal_sources_json", "TEXT NOT NULL DEFAULT '[\"LEGACY\"]'"),
+        ("technical_basis_ratio", "REAL"),
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
@@ -950,15 +952,33 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     ranked_candidates = []
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
+        try:
+            plan = technical_trade_plan.build_for_candidate(
+                con, row, now=now, market_type=tier.market_type
+            )
+        except Exception:
+            reject("TECHNICAL_PLAN_UNAVAILABLE")
+            continue
+        if not bool(plan["risk"]["risk_compatible"]):
+            reject("TECHNICAL_RISK_GEOMETRY_INFEASIBLE")
+            continue
+        row["technical_plan"] = plan
+        row["technical_context"] = realtime_technical_context.load_latest(
+            con, row["symbol"], now=now
+        )
+        row["stop_reference_pct"] = float(plan["risk"]["stop_distance_pct"])
+        technical_multiplier = float(plan["quality_multiplier"])
+        tier = risk_tiering.tier_for(row)
         fee_rate = taker_fee_rate(tier.market_type)
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
+            * technical_multiplier
         )
         position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
         stop_geometry = _validated_stop_geometry(row)
         if stop_geometry is None:
-            reject("STOP_REFERENCE_MISSING_OR_INVALID")
+            reject("TECHNICAL_STOP_GEOMETRY_INVALID")
             continue
         raw_stop_pct, effective_stop_pct = stop_geometry
         trade_risk_budget = (
@@ -999,6 +1019,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             item[0],
             item[1],
             float(item[2]["expected_net_edge_pct"]),
+            float((item[2].get("technical_plan") or {}).get("technical_score") or 0.0),
             float(item[2]["confidence"]),
         ),
         reverse=True,
@@ -1049,6 +1070,13 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
         "decision_source": row.get("decision_source"),
         "experiment_tier": row.get("experiment_tier"),
         "risk_cap_pct": row.get("risk_cap_pct"),
+        "technical_score": (row.get("technical_plan") or {}).get("technical_score"),
+        "technical_relation": (
+            row.get("technical_plan") or {}
+        ).get("relation_to_trigger_direction"),
+        "technical_timeframes": (
+            row.get("technical_plan") or {}
+        ).get("timeframes_used"),
         "beats_open_position_on_observed_return": (
             strongest_open is not None
             and strongest_open.get("unrealized_pnl_pct") is not None
@@ -1094,10 +1122,19 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             }
             continue
         tier = risk_tiering.tier_for(row)
+        plan = row.get("technical_plan")
+        if not isinstance(plan, dict):
+            reason_code = "TECHNICAL_PLAN_UNAVAILABLE"
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ", "reason": reason_code,
+            }
+            continue
         fee_rate = taker_fee_rate(tier.market_type)
         base_margin = (
             snapshot["equity"] * tier.margin_fraction
             * float(row.get("execution_size_multiplier", 1.0))
+            * float(plan["quality_multiplier"])
         )
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
@@ -1159,6 +1196,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             f"cost_after_win={100*row['confidence']:.1f}% | "
             f"mean_net_edge={row['expected_net_edge_pct']:.3f}% | "
             f"execution_size_multiplier={row.get('execution_size_multiplier', 1.0):.3f} | "
+            f"technical_score={plan['technical_score']:.3f} | "
+            f"technical_frames={','.join(plan['timeframes_used'])} | "
             f"tier={row.get('experiment_tier', 'EXPLORATORY_LEARNING')} | "
             f"risk_tier={tier.tier} | leverage={tier.leverage:g}x | "
             f"market={tier.market_type} | taker_fee_bps={fee_rate * 10000.0:.3f} | "
@@ -1191,9 +1230,6 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
             tier.independent_signal_count, json.dumps(tier.signal_sources),
         ))
         if cursor.rowcount == 1:
-            row["technical_context"] = realtime_technical_context.load_latest(
-                con, row["symbol"], now=now
-            )
             row["execution_risk"] = {
                 "risk_tier": tier.tier, "leverage": tier.leverage,
                 "margin_allocated": notional / tier.leverage,
@@ -1206,7 +1242,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 ),
                 "market_type": tier.market_type,
                 "taker_fee_rate": fee_rate,
-                "stop_basis": "FRESH_ASSET_VOLATILITY_RISK_SNAPSHOT",
+                "stop_basis": "TECHNICAL_STRUCTURE_PLUS_ATR_FROZEN_PLAN",
+                "technical_score": float(plan["technical_score"]),
+                "technical_timeframes": list(plan["timeframes_used"]),
                 "independent_signal_count": tier.independent_signal_count,
                 "signal_sources": list(tier.signal_sources),
             }
