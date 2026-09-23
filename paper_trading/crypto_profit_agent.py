@@ -537,14 +537,18 @@ def fill_pending(con, now, exchange_metadata=None):
     cancelled = cancel_expired_pending_entries(con, now)
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
-               market_type
+               market_type,decision_source
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
         ORDER BY selected_at,position_id
     """).fetchall()
     filled = 0
     for (position_id, symbol, planned_entry_time, notional, direction, leverage,
-         market_type) in rows:
+         market_type, decision_source) in rows:
+        # Behavior candidates require the frozen technical entry zone and must
+        # only fill from the realtime authoritative state callback.
+        if decision_source == "MARKET_BEHAVIOR_CORE":
+            continue
         planned = parse_time(planned_entry_time)
         metadata = (
             exchange_metadata.get(market_type)
