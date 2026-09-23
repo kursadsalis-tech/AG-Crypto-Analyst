@@ -56,6 +56,15 @@ fi
 
 sudo install -d -o kursadsalis -g kursadsalis -m 700 "$DATA_DIR"
 
+# Bootstrap local-only observer tables once per deployment. The minute observer
+# itself only verifies schema and must not execute CREATE/ALTER DDL while the
+# live SQLite database is under continuous writes.
+AGCA_SCHEMA_DB="$DB" .venv/bin/python - <<'PY'
+import os
+from database.market_behavior_store import bootstrap_schema
+bootstrap_schema(os.environ["AGCA_SCHEMA_DB"])
+PY
+
 if ! swapon --show | grep -q .; then
   sudo fallocate -l 2G /swapfile
   sudo chmod 600 /swapfile

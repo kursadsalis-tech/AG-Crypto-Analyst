@@ -116,6 +116,7 @@ def main():
     args = parser.parse_args()
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
+    cycle_started = time.monotonic()
     lock_handle = None
     if args.lock_file:
         lock_path = Path(args.lock_file)
@@ -125,6 +126,7 @@ def main():
             fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise SystemExit("Another market behavior observer owns the lock") from exc
+    route_started = time.monotonic()
     if args.refresh_live_universe:
         universe, route = refresh_market_route()
     else:
@@ -132,6 +134,7 @@ def main():
             parser.error("--route and --universe are required without --refresh-live-universe")
         route = json.loads(Path(args.route).read_text(encoding="utf-8"))
         universe = json.loads(Path(args.universe).read_text(encoding="utf-8"))
+    route_refresh_ms = round((time.monotonic() - route_started) * 1000.0, 3)
     contract_values = {row["instrument"]: row.get("contract_value", 1.0)
                        for row in universe.get("selected", [])}
 
@@ -144,8 +147,12 @@ def main():
         collection_not_before_ms
     )
 
+    collection_started = time.monotonic()
     bundles = asyncio.run(
         collect_minute(route, universe, contract_values, args, minute_end_ms))
+    collection_ms = round(
+        (time.monotonic() - collection_started) * 1000.0, 3
+    )
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
@@ -175,9 +182,21 @@ def main():
         "alignment_wait_ms": int(round(alignment_wait_seconds * 1000.0)),
         "late_start_recovery": bool(collection_not_before_ms is not None),
     }
+    persistence_ms = None
     if args.database:
+        persistence_started = time.monotonic()
         result["sqlite_persistence"] = persist_closed_minute(
             args.database, result, args.retention_days)
+        persistence_ms = round(
+            (time.monotonic() - persistence_started) * 1000.0, 3
+        )
+    result["runtime_timings_ms"] = {
+        "route_refresh": route_refresh_ms,
+        "alignment_wait": int(round(alignment_wait_seconds * 1000.0)),
+        "collection": collection_ms,
+        "persistence": persistence_ms,
+        "total_cycle": round((time.monotonic() - cycle_started) * 1000.0, 3),
+    }
     write_json_atomic(args.output, result)
     if args.health_output:
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
@@ -195,6 +214,7 @@ def main():
             "report_sha256": hashlib.sha256(canonical).hexdigest(),
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
+            "runtime_timings_ms": result.get("runtime_timings_ms"),
             "forward_outcomes_settled": (
                 result.get("sqlite_persistence", {})
                 .get("forward_outcomes", {}).get("settled", 0)

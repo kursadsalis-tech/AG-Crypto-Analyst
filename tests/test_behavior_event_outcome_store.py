@@ -125,6 +125,16 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
             self.assertAlmostEqual(rows[1][1], 2.0)
             self.assertEqual(rows[0][2], rows[1][2])
 
+    def test_closed_minute_settlement_hot_path_never_runs_schema_ddl(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "database/behavior_event_outcome_store.py"
+        ).read_text(encoding="utf-8")
+        start = source.index("def settle_outcomes_for_closed_minute(")
+        block = source[start:]
+        self.assertIn("_require_outcome_table(connection)", block)
+        self.assertNotIn("ensure_outcome_table(connection)", block)
+
     def test_symbol_scope_and_local_only_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "runtime.db"
