@@ -73,6 +73,21 @@ class TechnicalBarCacheTests(unittest.TestCase):
         )
         con.close()
 
+    def test_recent_bar_read_uses_ordered_range_without_history_sort(self):
+        con = sqlite3.connect(":memory:")
+        store.ensure_table(con)
+        plan = con.execute(f"""EXPLAIN QUERY PLAN
+            SELECT open_time_ms,close_time_ms,open,high,low,close,
+                   volume,quote_volume,trade_count,taker_buy_quote_volume,source
+            FROM {store.TABLE}
+            WHERE symbol=? AND market_type=? AND provider=? AND close_time_ms<=?
+            ORDER BY close_time_ms DESC LIMIT ?""",
+            ("BTCUSDT", store.MARKET_TYPE, store.PROVIDER, NOW, 24)).fetchall()
+        details = " ".join(str(row[3]) for row in plan)
+        self.assertIn("ix_technical_minute_bars_symbol_close", details)
+        self.assertNotIn("TEMP B-TREE", details)
+        con.close()
+
     def test_hot_read_paths_do_not_run_schema_ddl(self):
         con = sqlite3.connect(":memory:")
         store.ensure_table(con)

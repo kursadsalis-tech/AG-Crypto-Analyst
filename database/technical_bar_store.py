@@ -300,7 +300,7 @@ def load_recent(connection, symbol, *, limit=720, before_ms=None):
                volume,quote_volume,trade_count,taker_buy_quote_volume,source
         FROM {TABLE}
         WHERE {where}
-        ORDER BY open_time_ms DESC
+        ORDER BY close_time_ms DESC
         LIMIT ?
     """, tuple(params)).fetchall()
     return [{
