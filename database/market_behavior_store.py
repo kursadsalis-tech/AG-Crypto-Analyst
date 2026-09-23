@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from datetime import datetime, timezone
 
 from database.runtime_store import connect
@@ -78,13 +80,28 @@ def ensure_table(connection):
     """)
 
 
-def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTION_DAYS):
+def _writer_connection(database_path):
+    connection = connect(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=30000")
+    return connection
+
+
+def _database_locked(exc):
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and "database is locked" in str(exc).lower()
+    )
+
+
+def _persist_closed_minute_once(
+    database_path, report, retention_days=DEFAULT_RETENTION_DAYS
+):
     if not report.get("minute_is_closed"):
         raise ValueError("only closed minutes may be persisted")
     minute_end = int(report["minute_end_timestamp_ms"])
     cutoff = minute_end - int(retention_days) * 86_400_000
     created_at = datetime.now(timezone.utc).isoformat()
-    with connect(database_path) as connection:
+    with _writer_connection(database_path) as connection:
         ensure_table(connection)
         for row in report.get("rows", []):
             connection.execute(f"""
@@ -179,3 +196,22 @@ def persist_closed_minute(database_path, report, retention_days=DEFAULT_RETENTIO
             "external_evidence_row_count": external_count,
             "forward_outcomes": forward_outcomes,
             "remote_mirror_enabled_for_table": False}
+
+
+def persist_closed_minute(
+    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, attempts=4
+):
+    """Persist one already-collected closed minute with bounded lock retries."""
+    if not report.get("minute_is_closed"):
+        raise ValueError("only closed minutes may be persisted")
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return _persist_closed_minute_once(
+                database_path, report, retention_days
+            )
+        except sqlite3.OperationalError as exc:
+            if not _database_locked(exc) or attempt >= attempts:
+                raise
+        time.sleep(min(0.5 * attempt, 2.0))
+    raise RuntimeError("unreachable market-behavior persistence retry state")

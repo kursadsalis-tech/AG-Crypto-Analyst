@@ -1,6 +1,8 @@
 """Local-only bounded cache of canonical Binance USD-M closed technical bars."""
 from __future__ import annotations
 
+import sqlite3
+import time
 from datetime import datetime, timezone
 
 from database.runtime_store import connect
@@ -104,10 +106,22 @@ def upsert_bars(connection, bars):
     return len(prepared)
 
 
-def persist_bars(database_path, bars, *, now_ms=None, retention_days=DEFAULT_RETENTION_DAYS):
-    now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
-    cutoff = now_ms - int(retention_days) * 86_400_000
-    with connect(database_path) as connection:
+def _writer_connection(database_path):
+    connection = connect(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=30000")
+    return connection
+
+
+def _database_locked(exc):
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and "database is locked" in str(exc).lower()
+    )
+
+
+def _persist_bars_once(database_path, bars, *, now_ms, retention_days):
+    cutoff = int(now_ms) - int(retention_days) * 86_400_000
+    with _writer_connection(database_path) as connection:
         inserted = upsert_bars(connection, bars)
         pruned = connection.execute(
             f"DELETE FROM {TABLE} WHERE close_time_ms < ?", (cutoff,)
@@ -120,6 +134,26 @@ def persist_bars(database_path, bars, *, now_ms=None, retention_days=DEFAULT_RET
         "retention_days": int(retention_days),
         "remote_mirror_enabled_for_table": False,
     }
+
+
+def persist_bars(
+    database_path, bars, *, now_ms=None,
+    retention_days=DEFAULT_RETENTION_DAYS, attempts=4,
+):
+    """Persist prepared closed bars with bounded fresh-connection retries."""
+    now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return _persist_bars_once(
+                database_path, bars, now_ms=now_ms,
+                retention_days=retention_days,
+            )
+        except sqlite3.OperationalError as exc:
+            if not _database_locked(exc) or attempt >= attempts:
+                raise
+        time.sleep(min(0.5 * attempt, 2.0))
+    raise RuntimeError("unreachable technical-bar persistence retry state")
 
 
 def recent_count(connection, symbol, *, since_ms):

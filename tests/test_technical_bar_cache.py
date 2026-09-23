@@ -1,8 +1,12 @@
 import csv
 import io
 import sqlite3
+import tempfile
+import threading
+import time
 import unittest
 import zipfile
+from pathlib import Path
 
 from data import binance_technical_bars as technical
 from database import technical_bar_store as store
@@ -68,6 +72,33 @@ class TechnicalBarCacheTests(unittest.TestCase):
             [{"symbol": "ETHUSDT", "count": 0}],
         )
         con.close()
+
+    def test_persist_bars_waits_through_transient_writer_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            blocker = sqlite3.connect(path, timeout=1, check_same_thread=False)
+            blocker.execute("CREATE TABLE lock_probe(id INTEGER PRIMARY KEY)")
+            blocker.commit()
+            blocker.execute("BEGIN IMMEDIATE")
+            blocker.execute("INSERT INTO lock_probe DEFAULT VALUES")
+
+            def release():
+                time.sleep(0.15)
+                blocker.commit()
+
+            releaser = threading.Thread(target=release)
+            releaser.start()
+            result = store.persist_bars(path, [bar()], now_ms=NOW)
+            releaser.join(timeout=2)
+            blocker.close()
+
+            self.assertFalse(releaser.is_alive())
+            self.assertEqual(result["upserted"], 1)
+            with sqlite3.connect(path) as check:
+                count = check.execute(
+                    f"SELECT COUNT(*) FROM {store.TABLE}"
+                ).fetchone()[0]
+            self.assertEqual(count, 1)
 
     def test_technical_bar_cache_is_never_remote_mirrored(self):
         self.assertNotIn(store.TABLE, REMOTE_RUNTIME_TABLES)

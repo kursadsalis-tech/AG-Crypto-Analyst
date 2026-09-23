@@ -174,12 +174,13 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
     """
     from database.runtime_store import connect
     from database.technical_bar_store import (
-        ensure_table, symbols_needing_bootstrap, upsert_bars,
+        ensure_table, persist_bars, symbols_needing_bootstrap,
     )
 
     now = now or datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
-    with connect(database_path) as con:
+    with connect(database_path, timeout=30) as con:
+        con.execute("PRAGMA busy_timeout=30000")
         ensure_table(con)
         needed = symbols_needing_bootstrap(
             con, symbols, now_ms=now_ms, minimum_bars=360, lookback_hours=36
@@ -210,15 +211,13 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
 
     inserted = 0
     if fetched:
-        with connect(database_path) as con:
-            ensure_table(con)
-            for symbol in sorted(fetched):
-                inserted += upsert_bars(con, fetched[symbol])
-            cutoff = now_ms - 3 * 86_400_000
-            con.execute(
-                "DELETE FROM technical_minute_bars WHERE close_time_ms < ?",
-                (cutoff,),
-            )
+        prepared = []
+        for symbol in sorted(fetched):
+            prepared.extend(fetched[symbol])
+        persisted = persist_bars(
+            database_path, prepared, now_ms=now_ms, retention_days=3
+        )
+        inserted = int(persisted["upserted"])
     return {
         "needed": len(needed),
         "ready": len(fetched),
