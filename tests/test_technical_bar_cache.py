@@ -107,6 +107,65 @@ class TechnicalBarCacheTests(unittest.TestCase):
         ))
         con.close()
 
+    def test_repeated_persistence_uses_plain_sqlite_and_no_schema_ddl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            statements = []
+            original = sqlite3.connect
+
+            class TracedConnection(sqlite3.Connection):
+                pass
+
+            def traced_connect(*args, **kwargs):
+                kwargs["factory"] = TracedConnection
+                con = original(*args, **kwargs)
+                con.set_trace_callback(statements.append)
+                return con
+
+            from unittest import mock
+            with mock.patch(
+                "database.technical_bar_store.sqlite3.connect",
+                side_effect=traced_connect,
+            ):
+                store.persist_bars(path, [bar()], now_ms=NOW)
+
+            normalized = "\n".join(statements).upper()
+            self.assertNotIn("CREATE TABLE", normalized)
+            self.assertNotIn("CREATE INDEX", normalized)
+
+    def test_technical_writer_does_not_use_runtime_connection(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "database/technical_bar_store.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("from database.runtime_store import connect", source)
+        self.assertIn("sqlite3.connect(database_path", source)
+
+    def test_retention_index_exists_and_writer_commits_before_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            with sqlite3.connect(path) as con:
+                indexes = {
+                    row[1] for row in con.execute(
+                        "PRAGMA index_list(technical_minute_bars)"
+                    ).fetchall()
+                }
+            self.assertIn("ix_technical_minute_bars_close", indexes)
+
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "database/technical_bar_store.py"
+        ).read_text(encoding="utf-8")
+        start = source.index("def _persist_bars_once(")
+        end = source.index("\n\ndef persist_bars(", start)
+        block = source[start:end]
+        self.assertLess(
+            block.index("connection.commit()"),
+            block.index("SELECT COUNT(*)"),
+        )
+
     def test_persist_bars_waits_through_transient_writer_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "technical.db"
