@@ -34,6 +34,15 @@ from database.causal_evidence_store import evidence_for_closed_minute
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 
 
+def collection_alignment(now_ms, required_span_seconds):
+    """Return the behavior-minute close and any skipped partial close."""
+    next_end_ms = (int(now_ms) // MINUTE_MS + 1) * MINUTE_MS
+    remaining = (next_end_ms - int(now_ms)) / 1000.0
+    if remaining >= float(required_span_seconds):
+        return next_end_ms, None
+    return next_end_ms + MINUTE_MS, next_end_ms
+
+
 def refresh_market_route():
     tickers = asyncio.run(fetch_market_tickers())
     snapshot_ms = int(time.time() * 1000)
