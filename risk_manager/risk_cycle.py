@@ -6,6 +6,7 @@ from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 
 from risk_manager import risk_manager
+from data.binance_technical_bars import bootstrap_missing as bootstrap_technical_bars
 
 
 DB_NAME = risk_manager.DB_NAME
@@ -81,6 +82,19 @@ def main(force=False):
 
         try:
             result = risk_manager.main()
+            behavior_symbols = risk_manager.behavior_risk_symbols(con, now)
+            try:
+                technical_bootstrap = bootstrap_technical_bars(
+                    DB_NAME, behavior_symbols, now=now, max_workers=4
+                )
+            except Exception as bootstrap_exc:
+                technical_bootstrap = {
+                    "needed": len(behavior_symbols),
+                    "ready": 0,
+                    "bars": 0,
+                    "errors": {"SUPPORT_CYCLE": type(bootstrap_exc).__name__},
+                }
+            result["technical_bar_bootstrap"] = technical_bootstrap
             source_errors = result.get("source_errors") or {}
             if result.get("market_state") == "DATA_BLOCKED":
                 status = "DATA_BLOCKED"
@@ -95,7 +109,10 @@ def main(force=False):
                 f"source_errors={len(source_errors)} | "
                 f"technical_contexts={result.get('technical_context_count', 0)} | "
                 f"technical_ms={result.get('technical_context_compute_ms', 0.0):.3f} | "
-                f"technical_errors={len(result.get('technical_context_errors') or {})}"
+                f"technical_errors={len(result.get('technical_context_errors') or {})} | "
+                f"bar_bootstrap={technical_bootstrap.get('ready', 0)}/"
+                f"{technical_bootstrap.get('needed', 0)} | "
+                f"bar_rows={technical_bootstrap.get('bars', 0)}"
             )
             save_state(con, status, message, now if status == "SUCCESS" else None)
             print(f"Risk Manager cycle: {status} | {message}")
