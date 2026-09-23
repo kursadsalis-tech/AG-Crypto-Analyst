@@ -16,7 +16,10 @@ def report(end, instrument="AAA"):
         "book_imbalance_20_mean": 0.1, "book_imbalance_20_last": 0.2,
         "taker_imbalance_snapshot_mean": -0.1, "taker_imbalance_snapshot_last": -0.2,
         "spread_bps_mean": 1, "open_interest_usd_first": 100,
-        "mid_price_first": 10, "mid_price_last": 11,
+        "mid_price_first": 10, "mid_price_high": 12, "mid_price_low": 9,
+        "mid_price_last": 11,
+        "aggressive_buy_notional_usd": 100,
+        "aggressive_sell_notional_usd": 80,
         "open_interest_usd_last": 110, "open_interest_usd_change": 10,
         "funding_rate_last": 0.0001,
         "long_liquidation_notional_usd_estimate": 0,
@@ -39,11 +42,15 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             persist_closed_minute(path, report(100_000))
             with sqlite3.connect(path) as connection:
                 count = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
-                provider = connection.execute(
-                    f"SELECT market_data_provider FROM {TABLE}"
-                ).fetchone()[0]
+                provider, high, low, buy, sell = connection.execute(
+                    f"""SELECT market_data_provider,mid_price_high,mid_price_low,
+                               aggressive_buy_notional_usd,
+                               aggressive_sell_notional_usd
+                        FROM {TABLE}"""
+                ).fetchone()
             self.assertEqual(count, 1)
             self.assertEqual(provider, "BINANCE")
+            self.assertEqual((high, low, buy, sell), (12, 9, 100, 80))
             self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
 
     def test_retention_prunes_old_rows(self):
