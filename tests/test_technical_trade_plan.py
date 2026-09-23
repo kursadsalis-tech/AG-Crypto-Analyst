@@ -103,7 +103,7 @@ class TechnicalTradePlanTests(unittest.TestCase):
         rtc.save_latest(self.con, context, 0.5)
         self.con.commit()
 
-    def add_minutes(self, count=360):
+    def add_minutes(self, count=420):
         last_end = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
         first_start = last_end - count * 60_000
         for index in range(count):
