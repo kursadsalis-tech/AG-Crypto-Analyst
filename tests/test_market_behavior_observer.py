@@ -9,46 +9,15 @@ from scripts import collect_closed_behavior_minute as observer
 
 
 class MarketBehaviorObserverTests(unittest.TestCase):
-    def test_alignment_catches_up_kline_when_behavior_window_is_too_short(self):
-        target, catchup = observer.collection_alignment(30_000, 38)
+    def test_alignment_skips_partial_behavior_window(self):
+        target, skipped = observer.collection_alignment(30_000, 38)
         self.assertEqual(target, 120_000)
-        self.assertEqual(catchup, 60_000)
+        self.assertEqual(skipped, 60_000)
 
     def test_alignment_uses_next_minute_when_full_behavior_span_fits(self):
-        target, catchup = observer.collection_alignment(20_000, 38)
+        target, skipped = observer.collection_alignment(20_000, 38)
         self.assertEqual(target, 60_000)
-        self.assertIsNone(catchup)
-
-    def test_pre_refresh_guard_protects_imminent_boundary(self):
-        self.assertEqual(
-            observer.pre_refresh_technical_boundary(55_000, guard_seconds=10),
-            60_000,
-        )
-        self.assertIsNone(
-            observer.pre_refresh_technical_boundary(40_000, guard_seconds=10)
-        )
-
-    def test_cached_technical_universe_uses_only_recent_binance_usdm_symbols(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "technical.db"
-            import sqlite3
-            with sqlite3.connect(path) as con:
-                con.execute("""CREATE TABLE technical_minute_bars(
-                    symbol TEXT, provider TEXT, market_type TEXT, close_time_ms INTEGER
-                )""")
-                con.executemany(
-                    "INSERT INTO technical_minute_bars VALUES(?,?,?,?)",
-                    [
-                        ("BTCUSDT","BINANCE","USD_M_PERPETUAL",299_000),
-                        ("ETHUSDT","BINANCE","USD_M_PERPETUAL",10_000),
-                        ("ARBUSDT","OTHER","USD_M_PERPETUAL",299_000),
-                        ("BCHUSDT","BINANCE","SPOT",299_000),
-                    ],
-                )
-            result = observer.cached_technical_universe(
-                str(path), 300_000, recency_minutes=1
-            )
-        self.assertEqual(result, {"selected": [{"symbol": "BTCUSDT"}]})
+        self.assertIsNone(skipped)
 
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
@@ -70,6 +39,24 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         )
         self.assertEqual(route["deep_stream_instruments"], ["AAA-USDT-SWAP"])
 
+    def test_behavior_collection_does_not_request_technical_kline_sink(self):
+        args = type("Args", (), {"samples": 1, "cadence_seconds": 1})()
+        with patch.object(
+            observer, "probe", new=AsyncMock(return_value=[]),
+        ), patch.object(
+            observer, "collect_minute_snapshots",
+            new=AsyncMock(return_value=[]),
+        ) as collect:
+            import asyncio
+            asyncio.run(observer.collect_minute(
+                {"deep_stream_instruments": []},
+                {"selected": []},
+                {},
+                args,
+                int(observer.time.time() * 1000) + 1_000,
+            ))
+        self.assertIsNone(collect.await_args.kwargs["closed_bar_sink"])
+        self.assertIsNone(collect.await_args.kwargs["observe_until_ms"])
 
     def test_atomic_health_write_is_private_and_complete(self):
         with tempfile.TemporaryDirectory() as tmp:

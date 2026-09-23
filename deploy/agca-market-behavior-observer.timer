@@ -3,7 +3,7 @@ Description=Run AGCA lightweight market behavior observer every minute
 
 [Timer]
 OnBootSec=30s
-OnUnitInactiveSec=1s
+OnCalendar=*-*-* *:*:05
 AccuracySec=1s
 Persistent=false
 Unit=agca-market-behavior-observer.service
