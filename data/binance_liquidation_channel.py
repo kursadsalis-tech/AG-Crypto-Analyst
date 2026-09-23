@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import certifi
 import websockets
 
+from data.binance_live_evidence import measured_connection
+
 
 VERSION = "BINANCE_LIQUIDATION_CHANNEL_V2_ROUTED"
 WS_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr"
@@ -52,15 +54,15 @@ def normalize_event(message):
     }
 
 
-async def probe(duration_seconds=8, contract_values=None):
+async def probe(duration_seconds=8, contract_values=None, *, timings=None):
     del contract_values  # Binance USD-M quantities are base-asset quantities.
     context = ssl.create_default_context(cafile=certifi.where())
     events = []
     connected = False
     invalid = 0
     try:
-        async with websockets.connect(
-            WS_URL, open_timeout=10, ping_interval=20, ping_timeout=10,
+        async with measured_connection(
+            WS_URL, timings=timings, phase="liquidation", open_timeout=10, ping_interval=20, ping_timeout=10,
             ssl=context, max_queue=1024,
         ) as socket:
             connected = True

@@ -1,3 +1,24 @@
+# 2026-09-23 — Observer latency diagnosis in progress
+
+Canonical VM and main were verified at `ed39047`; the earlier `c90fe22`
+checkpoint has been superseded. Existing outcome-background and technical-writer
+fixes are already deployed and must not be repeated.
+
+Live observer evidence at 17:27 UTC: 196.133 s total, 70.301 s collection,
+85.862 s persistence, 19.761 s route refresh, 12/12 eligible rows. PAPER_ONLY
+and Binance remain canonical. Acceptance has NOT passed.
+
+Read-only production measurements: behavior COUNT(*) 35.231 s for 171336 rows;
+external-evidence COUNT(*) 6.776 s for 23340 rows. VM showed 87–92% instantaneous
+I/O wait; database 4.6 GB. These measurements identify expensive reporting work,
+not yet the complete cause of persistence delay. Added SQL-operation/commit and
+WebSocket handshake/observation/close telemetry to isolate the remaining work.
+Full local regression: 498 tests passed. Next: measure instrumented live cycle,
+remove proven hot-path overhead, and validate consecutive fresh minutes plus
+realtime selection progress and absence of SQLite stalls before claiming repair.
+
+---
+
 # 2026-09-23 — P1 shadow technical context live-accepted
 
 P1 is live-accepted on the canonical VM as observation-only technical context.

@@ -63,8 +63,8 @@ def wait_for_collection_window(not_before_ms):
     return delay
 
 
-def refresh_market_route():
-    tickers = asyncio.run(fetch_market_tickers())
+def refresh_market_route(timings=None):
+    tickers = asyncio.run(fetch_market_tickers(timings=timings))
     snapshot_ms = int(time.time() * 1000)
     universe = build_universe(tickers, snapshot_ms=snapshot_ms)
     if not universe.get("selected"):
@@ -84,9 +84,9 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-async def collect_minute(route, universe, contract_values, args, minute_end_ms):
+async def collect_minute(route, universe, contract_values, args, minute_end_ms, timings=None):
     duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
-    liquidation_task = asyncio.create_task(probe(duration, contract_values))
+    liquidation_task = asyncio.create_task(probe(duration, contract_values, timings=timings))
     market_task = asyncio.create_task(collect_minute_snapshots(
         route,
         universe,
@@ -94,6 +94,7 @@ async def collect_minute(route, universe, contract_values, args, minute_end_ms):
         cadence_seconds=args.cadence_seconds,
         closed_bar_sink=None,
         observe_until_ms=None,
+        timings=timings,
     ))
     market_snapshots, liquidations = await asyncio.gather(
         market_task, liquidation_task
@@ -126,9 +127,10 @@ def main():
             fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise SystemExit("Another market behavior observer owns the lock") from exc
+    transport_timings = {}
     route_started = time.monotonic()
     if args.refresh_live_universe:
-        universe, route = refresh_market_route()
+        universe, route = refresh_market_route(transport_timings)
     else:
         if not args.route or not args.universe:
             parser.error("--route and --universe are required without --refresh-live-universe")
@@ -149,7 +151,7 @@ def main():
 
     collection_started = time.monotonic()
     bundles = asyncio.run(
-        collect_minute(route, universe, contract_values, args, minute_end_ms))
+        collect_minute(route, universe, contract_values, args, minute_end_ms, transport_timings))
     collection_ms = round(
         (time.monotonic() - collection_started) * 1000.0, 3
     )
@@ -190,6 +192,7 @@ def main():
         persistence_ms = round(
             (time.monotonic() - persistence_started) * 1000.0, 3
         )
+    result["transport_timings_ms"] = transport_timings
     result["runtime_timings_ms"] = {
         "route_refresh": route_refresh_ms,
         "alignment_wait": int(round(alignment_wait_seconds * 1000.0)),
@@ -215,6 +218,9 @@ def main():
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
             "runtime_timings_ms": result.get("runtime_timings_ms"),
+            "transport_timings_ms": transport_timings,
+            "sql_timings_ms": result.get("sqlite_persistence", {}).get("sql_timings_ms"),
+            "write_attempts": result.get("sqlite_persistence", {}).get("write_attempts"),
             "forward_outcomes_settled": (
                 result.get("sqlite_persistence", {})
                 .get("forward_outcomes", {}).get("settled", 0)

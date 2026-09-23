@@ -121,6 +121,44 @@ def _writer_connection(database_path):
     return connection
 
 
+class _TimedConnection:
+    """Measure bounded SQL operation labels without logging values or payloads."""
+
+    def __init__(self, connection, timings):
+        self.connection = connection
+        self.timings = timings
+
+    def execute(self, sql, parameters=()):
+        words = sql.split()
+        operation = words[0].upper()
+        table = next((name for name in (
+            TABLE, EXTERNAL_EVIDENCE_TABLE, "behavior_outcome_settlement_queue",
+            "sqlite_master",
+        ) if name in sql), "schema")
+        label = f"{operation.lower()}_{table}"
+        started = time.monotonic()
+        try:
+            return self.connection.execute(sql, parameters)
+        finally:
+            self.timings[label] = self.timings.get(label, 0.0) + (
+                time.monotonic() - started
+            ) * 1000.0
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        started = time.monotonic()
+        try:
+            return self.connection.__exit__(*args)
+        finally:
+            self.timings["transaction_exit"] = self.timings.get(
+                "transaction_exit", 0.0
+            ) + (time.monotonic() - started) * 1000.0
+            self.connection.close()
+
+
 def _database_locked(exc):
     return (
         isinstance(exc, sqlite3.OperationalError)
@@ -129,14 +167,15 @@ def _database_locked(exc):
 
 
 def _persist_closed_minute_once(
-    database_path, report, retention_days=DEFAULT_RETENTION_DAYS
+    database_path, report, retention_days=DEFAULT_RETENTION_DAYS, *, timings=None
 ):
     if not report.get("minute_is_closed"):
         raise ValueError("only closed minutes may be persisted")
     minute_end = int(report["minute_end_timestamp_ms"])
     cutoff = minute_end - int(retention_days) * 86_400_000
     created_at = datetime.now(timezone.utc).isoformat()
-    with _writer_connection(database_path) as connection:
+    timings = timings if timings is not None else {}
+    with _TimedConnection(_writer_connection(database_path), timings) as connection:
         if not _schema_ready(connection):
             raise RuntimeError("market behavior observer schema unavailable")
         for row in report.get("rows", []):
@@ -254,12 +293,18 @@ def persist_closed_minute(
         probe.close()
     if not ready:
         bootstrap_schema(database_path)
+    timings = {}
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         try:
-            return _persist_closed_minute_once(
-                database_path, report, retention_days
+            result = _persist_closed_minute_once(
+                database_path, report, retention_days, timings=timings
             )
+            result["sql_timings_ms"] = {
+                key: round(value, 3) for key, value in timings.items()
+            }
+            result["write_attempts"] = attempt
+            return result
         except sqlite3.OperationalError as exc:
             if not _database_locked(exc) or attempt >= attempts:
                 raise

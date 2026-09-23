@@ -15,6 +15,7 @@ import math
 import os
 import ssl
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -35,6 +36,29 @@ MAX_EVENT_AGE_MS = 5_000
 OPEN_TIMEOUT_SECONDS = float(
     os.getenv("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS", "10")
 )
+
+
+@asynccontextmanager
+async def measured_connection(url, *, timings=None, phase="socket", **kwargs):
+    """Separate handshake, observation and close latency without frame logging."""
+    started = time.monotonic()
+    entered = closing = None
+    try:
+        async with websockets.connect(url, **kwargs) as socket:
+            entered = time.monotonic()
+            try:
+                yield socket
+            finally:
+                closing = time.monotonic()
+    finally:
+        finished = time.monotonic()
+        if timings is not None:
+            timings[f"{phase}_connect"] = round(
+                ((entered or finished) - started) * 1000, 3
+            )
+            if entered is not None and closing is not None:
+                timings[f"{phase}_observe"] = round((closing - entered) * 1000, 3)
+                timings[f"{phase}_close"] = round((finished - closing) * 1000, 3)
 
 
 def _is_um(message):
@@ -125,11 +149,11 @@ def _book_notional(levels, depth):
     return total
 
 
-async def _collect_ticker_rows(duration_seconds):
+async def _collect_ticker_rows(duration_seconds, timings=None):
     context = ssl.create_default_context(cafile=certifi.where())
     rows = {}
-    async with websockets.connect(
-        ALL_MARKET_TICKER_URL,
+    async with measured_connection(
+        ALL_MARKET_TICKER_URL, timings=timings, phase="ticker",
         ssl=context,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
@@ -156,11 +180,11 @@ async def _collect_ticker_rows(duration_seconds):
     return rows
 
 
-async def _collect_book_rows(duration_seconds):
+async def _collect_book_rows(duration_seconds, timings=None):
     context = ssl.create_default_context(cafile=certifi.where())
     rows = {}
-    async with websockets.connect(
-        ALL_BOOK_TICKER_URL,
+    async with measured_connection(
+        ALL_BOOK_TICKER_URL, timings=timings, phase="book",
         ssl=context,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
@@ -184,7 +208,7 @@ async def _collect_book_rows(duration_seconds):
     return rows
 
 
-async def fetch_market_tickers(timeout_seconds=8):
+async def fetch_market_tickers(timeout_seconds=8, *, timings=None):
     """Return broad USD-M ticker rows enriched with live best bid/ask.
 
     Binance's routed Market all-ticker stream no longer carries best bid/ask.
@@ -192,8 +216,8 @@ async def fetch_market_tickers(timeout_seconds=8):
     Both are canonical Binance streams and merged by exact symbol.
     """
     duration = max(2.0, float(timeout_seconds))
-    ticker_task = asyncio.create_task(_collect_ticker_rows(min(duration, 3.0)))
-    book_task = asyncio.create_task(_collect_book_rows(min(duration, 6.0)))
+    ticker_task = asyncio.create_task(_collect_ticker_rows(min(duration, 3.0), timings))
+    book_task = asyncio.create_task(_collect_book_rows(min(duration, 6.0), timings))
     tickers, books = await asyncio.gather(ticker_task, book_task)
 
     merged = []
@@ -429,6 +453,7 @@ async def collect_minute_snapshots(
     hydration_timeout_seconds=6.0,
     closed_bar_sink=None,
     observe_until_ms=None,
+    timings=None,
 ):
     """Collect deep evidence and exact closed 1m bars over one observer minute."""
     universe_rows = {
@@ -479,8 +504,8 @@ async def collect_minute_snapshots(
     connectivity = {"public": False, "market": False, "technical": False}
 
     async def public_receiver():
-        async with websockets.connect(
-            public_url,
+        async with measured_connection(
+            public_url, timings=timings, phase="public",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
@@ -498,8 +523,8 @@ async def collect_minute_snapshots(
                 _apply_public(states, message, int(time.time() * 1000))
 
     async def market_receiver():
-        async with websockets.connect(
-            market_url,
+        async with measured_connection(
+            market_url, timings=timings, phase="market",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
@@ -523,8 +548,8 @@ async def collect_minute_snapshots(
     async def technical_receiver():
         if not technical_params:
             return
-        async with websockets.connect(
-            technical_url,
+        async with measured_connection(
+            technical_url, timings=timings, phase="technical",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,

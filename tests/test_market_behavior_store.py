@@ -49,6 +49,16 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             self.assertEqual(provider, "BINANCE")
             self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
 
+    def test_sql_timings_expose_operations_and_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = persist_closed_minute(Path(tmp) / "test.db", report(120_000))
+        timings = result["sql_timings_ms"]
+        self.assertIn("insert_market_behavior_minute_features", timings)
+        self.assertIn("select_market_behavior_minute_features", timings)
+        self.assertIn("transaction_exit", timings)
+        self.assertEqual(result["write_attempts"], 1)
+        self.assertTrue(all(value >= 0 for value in timings.values()))
+
     def test_retention_prunes_old_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.db"

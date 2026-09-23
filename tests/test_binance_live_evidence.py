@@ -6,6 +6,23 @@ from data import binance_live_evidence as live
 
 
 class BinanceLiveEvidenceTests(unittest.TestCase):
+    def test_transport_timings_survive_receiver_cancellation(self):
+        timings = {}
+        socket = AsyncMock()
+
+        async def run():
+            with patch.object(live.websockets, "connect", return_value=socket):
+                with patch.object(live.time, "monotonic", side_effect=[1, 2, 5, 7]):
+                    with self.assertRaises(asyncio.CancelledError):
+                        async with live.measured_connection("wss://example", timings=timings):
+                            raise asyncio.CancelledError()
+        socket.__aexit__.return_value = False
+        asyncio.run(run())
+        self.assertEqual(timings, {
+            "socket_connect": 1000, "socket_observe": 3000, "socket_close": 2000,
+        })
+        socket.__aexit__.assert_awaited_once()
+
     def test_snapshot_normalizes_websocket_book_flow_and_funding(self):
         state = live._DeepState(
             symbol="BTCUSDT", instrument="BTC-USDT-SWAP",
