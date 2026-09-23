@@ -462,8 +462,7 @@ async def run():
             )
             db = connect(DB_NAME, timeout=timeout_seconds)
             db.execute(
-                "PRAGMA busy_timeout=?",
-                (max(100, int(timeout_seconds * 1000)),),
+                f"PRAGMA busy_timeout={max(100, int(timeout_seconds * 1000))}"
             )
             scan_local.connection = db
         return db
