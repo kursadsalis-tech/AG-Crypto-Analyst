@@ -339,6 +339,7 @@ async def run():
             last_received = metric["last_received_ms"]
             symbol_received = metric["received_by_symbol_ms"].copy()
             result[market_type] = {
+                "endpoint": metric.get("endpoint"),
                 "received_total": metric["received_total"],
                 "accepted_total": metric["accepted_total"],
                 "stale_received_total": metric["stale_received_total"],
