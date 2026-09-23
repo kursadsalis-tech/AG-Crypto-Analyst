@@ -8,6 +8,7 @@ execution authority.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import math
 import statistics
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 from analysis import advanced_technical_features as advanced
 
 
-VERSION = "REALTIME_TECHNICAL_CONTEXT_V1_SHADOW"
+VERSION = "REALTIME_TECHNICAL_CONTEXT_V2_ADAPTIVE_SOURCE"
 MIN_HOURLY_CANDLES = advanced.LOOKBACK + 1
 MIN_4H_BARS = 21
 MAX_GENERATED_AGE_SECONDS = 30 * 60
@@ -144,6 +145,9 @@ def _four_hour_context(bars):
     result = {
         "bar_count": len(bars),
         "as_of": _iso(bars[-1]["close_time"]),
+        "latest_close": latest,
+        "support_price_20": support,
+        "resistance_price_20": resistance,
         "latest_return_pct": 100.0 * _safe_ratio(closes[-1] - closes[-2], closes[-2]),
         "return_24h_pct": 100.0 * _safe_ratio(closes[-1] - closes[-7], closes[-7]),
         "fast_slow_spread_pct": 100.0 * _safe_ratio(fast - slow, latest),
@@ -170,7 +174,112 @@ def _four_hour_context(bars):
     return result
 
 
-def build(candles, *, symbol, generated_at=None, market_scope="RISK_MANAGER_CLOSED_1H"):
+
+def _normalize_daily(candles):
+    rows = []
+    for raw in candles or []:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 8:
+            continue
+        opened_ms, closed_ms = int(raw[0]), int(raw[6])
+        values = [float(raw[1]), float(raw[2]), float(raw[3]), float(raw[4]), float(raw[7])]
+        if not all(math.isfinite(value) for value in values):
+            continue
+        if min(values[:4]) <= 0 or values[4] < 0:
+            continue
+        rows.append({
+            "open_time": datetime.fromtimestamp(opened_ms / 1000.0, tz=timezone.utc),
+            "close_time": datetime.fromtimestamp(closed_ms / 1000.0, tz=timezone.utc),
+            "open": values[0], "high": values[1], "low": values[2],
+            "close": values[3], "quote_volume": values[4],
+        })
+    rows.sort(key=lambda row: row["open_time"])
+    return rows
+
+
+def _aggregate_calendar(rows, frame):
+    groups = {}
+    for row in rows:
+        opened = row["open_time"]
+        if frame == "3d":
+            epoch_day = int(opened.timestamp() // 86400)
+            key = ("3d", epoch_day // 3)
+            expected = 3
+        elif frame == "1w":
+            start = (opened - __import__("datetime").timedelta(days=opened.weekday())).date()
+            key = ("1w", start.isoformat())
+            expected = 7
+        elif frame == "1M":
+            key = ("1M", opened.year, opened.month)
+            expected = calendar.monthrange(opened.year, opened.month)[1]
+        else:
+            raise ValueError("unsupported regime frame")
+        groups.setdefault((key, expected), []).append(row)
+    output = []
+    for (_, expected), members in sorted(groups.items(), key=lambda item: item[1][0]["open_time"]):
+        members = sorted(members, key=lambda row: row["open_time"])
+        if len(members) != expected:
+            continue
+        if any(
+            (members[index]["open_time"] - members[index - 1]["open_time"]).days != 1
+            for index in range(1, len(members))
+        ):
+            continue
+        output.append({
+            "open_time": members[0]["open_time"],
+            "close_time": members[-1]["close_time"],
+            "open": members[0]["open"],
+            "high": max(row["high"] for row in members),
+            "low": min(row["low"] for row in members),
+            "close": members[-1]["close"],
+            "quote_volume": sum(row["quote_volume"] for row in members),
+        })
+    return output
+
+
+def _regime_frame(rows, minimum):
+    if len(rows) < minimum:
+        raise ValueError("insufficient completed regime bars")
+    closes = [row["close"] for row in rows]
+    highs = [row["high"] for row in rows]
+    lows = [row["low"] for row in rows]
+    latest = closes[-1]
+    fast = statistics.fmean(closes[-3:])
+    slow_window = min(10, len(closes))
+    slow = statistics.fmean(closes[-slow_window:])
+    support = min(lows[-min(20, len(lows)):])
+    resistance = max(highs[-min(20, len(highs)):])
+    spread = _safe_ratio(fast - slow, latest)
+    if spread > 0:
+        trend = "BULLISH"
+    elif spread < 0:
+        trend = "BEARISH"
+    else:
+        trend = "MIXED"
+    return {
+        "bar_count": len(rows),
+        "as_of": _iso(rows[-1]["close_time"]),
+        "trend": trend,
+        "fast_slow_spread_pct": 100.0 * spread,
+        "support_price": support,
+        "resistance_price": resistance,
+        "latest_close": latest,
+    }
+
+
+def _regime_context(daily_candles):
+    daily = _normalize_daily(daily_candles)
+    if len(daily) < 20:
+        return {}
+    frames = {"1d": _regime_frame(daily, 20)}
+    for name, minimum in (("3d", 8), ("1w", 6), ("1M", 4)):
+        try:
+            frames[name] = _regime_frame(_aggregate_calendar(daily, name), minimum)
+        except ValueError:
+            continue
+    return frames
+
+
+def build(candles, *, symbol, generated_at=None, market_scope="RISK_MANAGER_CLOSED_1H", daily_candles=None):
     """Build observation-only 1h + completed-4h context from closed risk candles."""
     generated_at = generated_at or datetime.now(timezone.utc)
     hourly = _normalize_hourly(candles)
@@ -196,6 +305,9 @@ def build(candles, *, symbol, generated_at=None, market_scope="RISK_MANAGER_CLOS
     else:
         alignment = "MIXED"
 
+    regime = _regime_context(daily_candles)
+    support_1h = min(row["low"] for row in hourly[-72:])
+    resistance_1h = max(row["high"] for row in hourly[-72:])
     return {
         "version": VERSION,
         "symbol": str(symbol).upper(),
@@ -204,7 +316,14 @@ def build(candles, *, symbol, generated_at=None, market_scope="RISK_MANAGER_CLOS
         "market_scope": str(market_scope),
         "observation_only": True,
         "real_order_allowed": False,
-        "timeframes": ["1h", "4h"],
+        "timeframes": ["1h", "4h", *regime.keys()],
+        "levels": {
+            "support_1h_72": support_1h,
+            "resistance_1h_72": resistance_1h,
+            "support_4h_20": four_hour["support_price_20"],
+            "resistance_4h_20": four_hour["resistance_price_20"],
+        },
+        "regime": regime,
         "advanced_1h": {
             name: float(value) for name, value in advanced_map.items()
         },
