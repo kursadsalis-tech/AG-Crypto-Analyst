@@ -68,6 +68,46 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(row, (98.0, 10.0))
         self.assertEqual(self.con.execute("SELECT real_order_allowed FROM paper_position_events").fetchone()[0], 0)
 
+    def test_frozen_technical_levels_initialize_and_drive_profit_take(self):
+        self.con.execute("""
+            CREATE TABLE paper_agent_decision_theses(
+                position_id INTEGER PRIMARY KEY,
+                thesis_json TEXT NOT NULL
+            )
+        """)
+        thesis = {
+            "technical_trade_plan": {
+                "risk": {"invalidation_price": 98.5},
+                "targets": {"tp1_price": 101.25, "tp2_price": 103.5},
+            },
+            "execution_risk": {
+                "planned_stop_distance_pct": 1.5,
+                "planned_stop_and_fee_risk_usdt": 16.0,
+            },
+        }
+        import json
+        self.con.execute(
+            "INSERT INTO paper_agent_decision_theses VALUES(?,?)",
+            (1, json.dumps(thesis)),
+        )
+        initialized = initialize_open_positions(
+            self.con, ENTRY + timedelta(seconds=1)
+        )
+        self.assertEqual(initialized, {"initialized": 1, "blocked": []})
+        row = self.con.execute(
+            "SELECT current_stop_price,tp1_price,tp2_price "
+            "FROM paper_position_management"
+        ).fetchone()
+        self.assertEqual(row, (98.5, 101.25, 103.5))
+        reduced = process_market_state(
+            self.con, self.live(101.25, 2),
+            ENTRY + timedelta(seconds=2), self.rules,
+        )
+        self.assertEqual(
+            (reduced["status"], reduced["reason"]),
+            ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
+        )
+
     def test_one_r_reduces_and_stop_can_close_remainder(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         reduced = process_market_state(

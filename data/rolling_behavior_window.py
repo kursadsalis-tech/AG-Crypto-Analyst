@@ -57,8 +57,26 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                   if event["instrument"] == instrument]
         first_oi = instrument_samples[0]["open_interest"]["usd"]
         last_oi = instrument_samples[-1]["open_interest"]["usd"]
-        first_mid = _mid_price(instrument_samples[0])
-        last_mid = _mid_price(instrument_samples[-1])
+        mids = [
+            value for value in (_mid_price(row) for row in instrument_samples)
+            if value is not None
+        ]
+        first_mid = mids[0] if mids else None
+        last_mid = mids[-1] if mids else None
+        high_mid = max(mids) if mids else None
+        low_mid = min(mids) if mids else None
+        aggressive_buy = sum(
+            float((row.get("recent_trades") or {}).get(
+                "buy_notional_usd_estimate"
+            ) or 0.0)
+            for row in instrument_samples
+        )
+        aggressive_sell = sum(
+            float((row.get("recent_trades") or {}).get(
+                "sell_notional_usd_estimate"
+            ) or 0.0)
+            for row in instrument_samples
+        )
         gates = {
             "minimum_samples": len(instrument_samples) >= min_samples,
             "maximum_gap": not gaps or max(gaps) <= max_gap_ms,
@@ -94,7 +112,11 @@ def aggregate_closed_minute(bundles, minute_end_ms, min_samples=4, max_gap_ms=25
                 if row["order_book"].get("spread_bps") is not None
             ]),
             "mid_price_first": first_mid,
+            "mid_price_high": high_mid,
+            "mid_price_low": low_mid,
             "mid_price_last": last_mid,
+            "aggressive_buy_notional_usd": aggressive_buy,
+            "aggressive_sell_notional_usd": aggressive_sell,
             "open_interest_usd_first": first_oi,
             "open_interest_usd_last": last_oi,
             "open_interest_usd_change": last_oi - first_oi,
