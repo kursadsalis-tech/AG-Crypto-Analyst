@@ -106,6 +106,44 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
             result["targets"]["tp2_price"], result["targets"]["tp1_price"]
         )
 
+    def test_lower_timeframes_join_only_when_contiguous_history_is_ready(self):
+        self.con.execute("DELETE FROM technical_minute_bars")
+        store.upsert_bars(self.con, minute_bars(count=30))
+        self.con.commit()
+        plan._PLAN_CACHE.clear()
+        early = plan.build_for_candidate(
+            self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL"
+        )
+        self.assertEqual(early["timeframes_used"], ["1m", "1h", "4h"])
+        self.assertEqual(early["contiguous_one_minute_bar_count"], 30)
+
+        self.con.execute("DELETE FROM technical_minute_bars")
+        store.upsert_bars(self.con, minute_bars(count=130))
+        self.con.commit()
+        plan._PLAN_CACHE.clear()
+        medium = plan.build_for_candidate(
+            self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL"
+        )
+        self.assertEqual(
+            medium["timeframes_used"], ["1m", "5m", "1h", "4h"]
+        )
+
+    def test_archive_to_live_gap_is_never_bridged_by_indicators(self):
+        self.con.execute("DELETE FROM technical_minute_bars")
+        old = minute_bars(count=360)
+        recent = minute_bars(count=20)
+        for row in old:
+            row["open_time_ms"] -= 12 * 60 * 60 * 1000
+            row["close_time_ms"] -= 12 * 60 * 60 * 1000
+        store.upsert_bars(self.con, old + recent)
+        self.con.commit()
+        plan._PLAN_CACHE.clear()
+        with self.assertRaisesRegex(ValueError, "contiguous"):
+            plan.build_for_candidate(
+                self.con, candidate(), now=NOW,
+                market_type="USD_M_PERPETUAL",
+            )
+
     def test_spot_scaling_freezes_basis_without_moving_plan_offsets(self):
         result = plan.build_for_candidate(
             self.con, candidate(), now=NOW, market_type="SPOT"
