@@ -81,9 +81,10 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
         raise ValueError("THESIS_MUST_BE_CAPTURED_WHILE_OUTCOME_UNKNOWN")
     if row.get("decision_source") == "MARKET_BEHAVIOR_CORE":
         technical_context = row.get("technical_context")
+        technical_plan = row.get("technical_plan")
+        if not isinstance(technical_plan, dict):
+            raise ValueError("BEHAVIOR_POSITION_REQUIRES_FROZEN_TECHNICAL_PLAN")
         observed_capabilities = ["UNIFIED_FORECAST_BASELINE"]
-        if technical_context is not None:
-            observed_capabilities.append("TECHNICAL_CONTEXT_SHADOW")
         thesis = {
             "position_id": int(position_id),
             "decision_source": "MARKET_BEHAVIOR_CORE",
@@ -105,8 +106,13 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
                 "risk_tier": "PAPER_RISK_TIER_1", "leverage": 1.0,
             }),
             "evidence_used": row["evidence"],
-            "technical_context_observed": technical_context,
-            "capabilities_under_test": row["evidence"]["capabilities_used"],
+            "technical_context_source": technical_context,
+            "technical_trade_plan": technical_plan,
+            "invalidation_price": technical_plan["risk"]["invalidation_price"],
+            "capabilities_under_test": [
+                *row["evidence"]["capabilities_used"],
+                "MULTITIMEFRAME_TECHNICAL_EXECUTION_PLAN",
+            ],
             "capabilities_observed_but_not_decision_inputs": observed_capabilities,
             "claims": {"outcome_used": False, "causal_claim": False,
                        "skill_already_proven": False},

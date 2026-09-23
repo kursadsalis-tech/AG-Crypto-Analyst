@@ -12,7 +12,7 @@ import sqlite3
 from database.runtime_store import connect as runtime_connect
 import statistics
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from data.truth_engine import (
@@ -185,6 +185,31 @@ def fetch_closed_1h_klines(
         selected,
         source=f"{source_prefix}:{symbol}",
         minimum_rows=MIN_CLOSED_CANDLES,
+    )
+
+
+def fetch_closed_daily_klines(symbol, limit=220):
+    """Fetch closed Binance daily bars for off-hot-path adaptive regime context."""
+    response = requests.get(
+        BINANCE_KLINES_URL,
+        params={"symbol": symbol, "interval": "1d", "limit": int(limit)},
+        timeout=20,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise RuntimeError(f"{symbol}: Binance daily kline response is not a list")
+    now_ms = int(time.time() * 1000)
+    closed = [row for row in payload if len(row) >= 8 and int(row[6]) < now_ms]
+    if len(closed) < 30:
+        raise RuntimeError(f"{symbol}: insufficient closed daily technical history")
+    return validate_closed_klines(
+        closed,
+        source=f"BINANCE_SPOT_DAILY_TECHNICAL_CONTEXT:{symbol}",
+        minimum_rows=30,
+        interval=timedelta(days=1),
+        maximum_staleness=timedelta(days=2, hours=6),
     )
 
 
@@ -660,9 +685,13 @@ def main():
                     if symbol in dynamic_symbols and symbol not in SYMBOLS
                     else "REFERENCE_SPOT"
                 )
+                daily_candles = (
+                    fetch_closed_daily_klines(symbol)
+                    if symbol in dynamic_symbols else None
+                )
                 technical = realtime_technical_context.build(
                     candles, symbol=symbol, generated_at=utcnow(),
-                    market_scope=market_scope,
+                    market_scope=market_scope, daily_candles=daily_candles,
                 )
                 elapsed_ms = (time.perf_counter() - tech_started) * 1000.0
                 technical_compute_ms += elapsed_ms
