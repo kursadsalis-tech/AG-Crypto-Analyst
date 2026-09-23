@@ -22,6 +22,7 @@ from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
 from data.binance_liquidation_channel import probe
 from data.binance_live_evidence import (
+    collect_closed_technical_bars,
     collect_minute_snapshots,
     fetch_market_tickers,
 )
@@ -33,6 +34,15 @@ from database.causal_evidence_store import evidence_for_closed_minute
 
 
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
+
+
+def collection_alignment(now_ms, required_span_seconds):
+    """Return target behavior-minute close and optional kline catch-up close."""
+    next_end_ms = (int(now_ms) // MINUTE_MS + 1) * MINUTE_MS
+    remaining = (next_end_ms - int(now_ms)) / 1000.0
+    if remaining >= float(required_span_seconds):
+        return next_end_ms, None
+    return next_end_ms + MINUTE_MS, next_end_ms
 
 
 def refresh_market_route():
@@ -111,15 +121,21 @@ def main():
 
     required_span = (args.samples - 1) * args.cadence_seconds + 8
     now_ms = int(time.time() * 1000)
-    minute_end_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
-    if (minute_end_ms - now_ms) / 1000 < required_span:
-        wait_seconds = (minute_end_ms - now_ms) / 1000 + 0.05
-        time.sleep(max(0, wait_seconds))
-        now_ms = int(time.time() * 1000)
-        minute_end_ms = (now_ms // MINUTE_MS + 1) * MINUTE_MS
+    minute_end_ms, catchup_end_ms = collection_alignment(
+        now_ms, required_span
+    )
+    catchup_technical_bars = []
+    if catchup_end_ms is not None:
+        catchup_technical_bars = asyncio.run(
+            collect_closed_technical_bars(
+                universe,
+                observe_until_ms=catchup_end_ms + 1_000,
+            )
+        )
 
     bundles, closed_technical_bars = asyncio.run(
         collect_minute(route, universe, contract_values, args, minute_end_ms))
+    closed_technical_bars = catchup_technical_bars + closed_technical_bars
 
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     result = aggregate_closed_minute(bundles, minute_end_ms)
