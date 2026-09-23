@@ -31,6 +31,14 @@ class DeployWorkerRestartTests(unittest.TestCase):
             "systemctl is-active --quiet agca-behavior-learning-worker.service",
             script,
         )
+        self.assertIn(
+            "sudo systemctl restart agca-trade-learning-worker.service",
+            script,
+        )
+        self.assertIn(
+            "systemctl is-active --quiet agca-trade-learning-worker.service",
+            script,
+        )
 
 
 if __name__ == "__main__":
