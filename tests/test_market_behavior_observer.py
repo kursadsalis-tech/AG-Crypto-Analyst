@@ -19,6 +19,37 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         self.assertEqual(target, 60_000)
         self.assertIsNone(catchup)
 
+    def test_pre_refresh_guard_protects_imminent_boundary(self):
+        self.assertEqual(
+            observer.pre_refresh_technical_boundary(55_000, guard_seconds=10),
+            60_000,
+        )
+        self.assertIsNone(
+            observer.pre_refresh_technical_boundary(40_000, guard_seconds=10)
+        )
+
+    def test_cached_technical_universe_uses_only_recent_binance_usdm_symbols(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            import sqlite3
+            with sqlite3.connect(path) as con:
+                con.execute("""CREATE TABLE technical_minute_bars(
+                    symbol TEXT, provider TEXT, market_type TEXT, close_time_ms INTEGER
+                )""")
+                con.executemany(
+                    "INSERT INTO technical_minute_bars VALUES(?,?,?,?)",
+                    [
+                        ("BTCUSDT","BINANCE","USD_M_PERPETUAL",299_000),
+                        ("ETHUSDT","BINANCE","USD_M_PERPETUAL",10_000),
+                        ("ARBUSDT","OTHER","USD_M_PERPETUAL",299_000),
+                        ("BCHUSDT","BINANCE","SPOT",299_000),
+                    ],
+                )
+            result = observer.cached_technical_universe(
+                str(path), 300_000, recency_minutes=1
+            )
+        self.assertEqual(result, {"selected": [{"symbol": "BTCUSDT"}]})
+
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
             "s": "AAAUSDT", "c": "10", "o": "9", "q": "10000000",

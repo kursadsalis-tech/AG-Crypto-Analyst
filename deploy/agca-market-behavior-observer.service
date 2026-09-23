@@ -15,7 +15,7 @@ Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
 Environment=AGCA_REMOTE_MIRROR_INLINE=0
 Environment=AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python scripts/collect_closed_behavior_minute.py --refresh-live-universe --output /var/lib/agca/reports/live_behavior_closed_minute.json --database /var/lib/agca/crypto_data.db --retention-days 30 --health-output /var/lib/agca/market-behavior-health.json --lock-file /var/lib/agca/market-behavior.lock --samples 4 --cadence-seconds 10
-TimeoutStartSec=150
+TimeoutStartSec=240
 Nice=10
 MemoryMax=384M
 CPUQuota=50%
