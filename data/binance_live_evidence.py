@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import ssl
 import time
 from dataclasses import dataclass, field
@@ -25,6 +26,9 @@ VERSION = "BINANCE_WS_LIVE_EVIDENCE_V2"
 RAW_WS_URL = "wss://fstream.binance.com/ws"
 PUBLIC_WS_URL = "wss://fstream.binance.com/public/ws"
 MAX_EVENT_AGE_MS = 5_000
+OPEN_TIMEOUT_SECONDS = float(
+    os.getenv("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS", "10")
+)
 
 
 def _instrument(symbol):
@@ -67,7 +71,7 @@ async def fetch_market_tickers(timeout_seconds=8):
     async with websockets.connect(
         RAW_WS_URL,
         ssl=context,
-        open_timeout=10,
+        open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
         ping_timeout=10,
         max_queue=128,
