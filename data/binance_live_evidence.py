@@ -61,6 +61,13 @@ def _symbol(instrument_row):
     return instrument[:-10].replace("-", "") + "USDT"
 
 
+def _technical_kline_symbols(universe):
+    """Return every broad eligible USD-M symbol needing continuous 1m bars."""
+    return sorted({
+        _symbol(row) for row in universe.get("selected", [])
+    })
+
+
 def _positive(value):
     parsed = float(value)
     if not math.isfinite(parsed) or parsed <= 0:
@@ -400,6 +407,12 @@ async def collect_minute_snapshots(
     if not states:
         return []
 
+    # Exact 1m technical bars must be continuous for the broad eligible
+    # universe, not only for the rotating 12-symbol deep-attention slice.
+    # Otherwise every rotation creates gaps and the adaptive pre-trade planner
+    # correctly fails closed forever with an unusable contiguous tail.
+    technical_symbols = _technical_kline_symbols(universe)
+
     public_params = [
         f"{symbol.lower()}@depth20@500ms" for symbol in sorted(states)
     ]
@@ -409,15 +422,18 @@ async def collect_minute_snapshots(
         for item in (
             f"{symbol.lower()}@aggTrade",
             f"{symbol.lower()}@markPrice@1s",
-            f"{symbol.lower()}@kline_1m",
         )
+    ]
+    technical_params = [
+        f"{symbol.lower()}@kline_1m" for symbol in technical_symbols
     ]
     public_url = PUBLIC_STREAM_BASE + "/".join(public_params)
     market_url = MARKET_STREAM_BASE + "/".join(market_params)
+    technical_url = MARKET_STREAM_BASE + "/".join(technical_params)
 
     context = ssl.create_default_context(cafile=certifi.where())
     stop = asyncio.Event()
-    connectivity = {"public": False, "market": False}
+    connectivity = {"public": False, "market": False, "technical": False}
 
     async def public_receiver():
         async with websockets.connect(
@@ -458,16 +474,37 @@ async def collect_minute_snapshots(
                 received_ms = int(time.time() * 1000)
                 if isinstance(message, dict) and message.get("e") == "markPriceUpdate":
                     _apply_public(states, message, received_ms)
-                elif isinstance(message, dict) and message.get("e") == "kline":
+                else:
+                    _apply_trade(states, message, received_ms)
+
+    async def technical_receiver():
+        if not technical_params:
+            return
+        async with websockets.connect(
+            technical_url,
+            ssl=context,
+            open_timeout=OPEN_TIMEOUT_SECONDS,
+            ping_interval=20,
+            ping_timeout=10,
+            max_queue=4096,
+        ) as socket:
+            connectivity["technical"] = True
+            while not stop.is_set():
+                try:
+                    async with asyncio.timeout(1):
+                        raw = await socket.recv()
+                except TimeoutError:
+                    continue
+                message = _normalize_message(raw)
+                if isinstance(message, dict) and message.get("e") == "kline":
                     bar = normalize_closed_1m_kline(message)
                     if bar is not None and closed_bar_sink is not None:
                         closed_bar_sink.append(bar)
-                else:
-                    _apply_trade(states, message, received_ms)
 
     tasks = [
         asyncio.create_task(public_receiver()),
         asyncio.create_task(market_receiver()),
+        asyncio.create_task(technical_receiver()),
     ]
     try:
         hydrate_deadline = time.monotonic() + float(hydration_timeout_seconds)
