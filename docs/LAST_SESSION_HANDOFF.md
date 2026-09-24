@@ -2,7 +2,7 @@
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-Canonical main is `ed39047`; VM candidate is `f31b6e8`, pending live acceptance.
+Canonical main is `ed39047`; VM candidate is `0e1a4ef`, pending live acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 User explicitly rejected paid cloud resources. No paid resource was created.
 
@@ -36,7 +36,12 @@ read 13.47 MB while technical/realtime read 1.59/2.20 MB. Live EXPLAIN confirmed
 all three eligibility counts/time-bound queries scanned retained raw-payload
 tables. Current change adds small partial identity/time indexes for eligible
 snapshots and eligible closed observations; query semantics and existing
-indexes are preserved. Focused external-learning regression: 8 passed.
+indexes are preserved. Live eligible-index build took 58.668 s; closed count now 4.9 ms, trader
+count 2.6 ms and bounds 1.5 ms. All use covering partial indexes.
+Follow-up stacks at 20:44:17/37/57 then isolated full-history grouping in
+continuous_improvement._latest_eligible_open. Current change uses eligible
+OPEN candidates and indexed newer-observation probes, preserving suppression
+by later CLOSED or ineligible rows. Focused regression: 15 passed.
 f31b6e8 CI: 120 integration and 517 full-suite tests passed.
 
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
@@ -51,7 +56,7 @@ still needs confirmation after the current bottleneck is removed.
 Temporary live profiling tool is currently installed at
 `/tmp/agca-profile-tools`; remove it after the investigation. No profiling
 script or alternate runtime data file was added to the repository.
-Next: deploy/bootstrap eligible research indexes, complete acceptance with all
+Next: deploy/bootstrap eligible OPEN consensus index/query, complete acceptance with all
 normal workers running, then finalize PR/merge and return VM to canonical main.
 Do not claim resolution before reliable eligible minutes below 180 s, regular
 selection runs and no observed SQLITE_BUSY/stalls have been demonstrated.

@@ -119,6 +119,11 @@ def ensure_tables(con):
             exchange,source_trader_id,source_trade_id
         ) WHERE research_eligible=1 AND status='CLOSED';
 
+        CREATE INDEX IF NOT EXISTS ix_external_trader_eligible_open_identity
+        ON external_trader_trade_observations(
+            exchange,source_trader_id,source_trade_id,observation_id,symbol,direction
+        ) WHERE research_eligible=1 AND status='OPEN';
+
         CREATE INDEX IF NOT EXISTS ix_external_trader_eligible_snapshot_identity_time
         ON external_trader_source_snapshots(
             exchange,source_trader_id,observed_at

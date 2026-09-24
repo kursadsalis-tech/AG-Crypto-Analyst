@@ -76,15 +76,20 @@ def ensure_tables(con):
 
 
 def _latest_eligible_open(con):
+    # Probe both CHECK-constrained statuses through the existing identity index.
+    # Any newer observation, including ineligible evidence, supersedes an open.
     rows = con.execute("""
         SELECT o.source_trader_id,o.symbol,o.direction,o.source_trade_id
         FROM external_trader_trade_observations o
-        JOIN (
-          SELECT exchange,source_trader_id,source_trade_id,max(observation_id) AS latest_id
-          FROM external_trader_trade_observations
-          GROUP BY exchange,source_trader_id,source_trade_id
-        ) x ON x.latest_id=o.observation_id
         WHERE o.research_eligible=1 AND o.status='OPEN'
+          AND NOT EXISTS (
+            SELECT 1 FROM external_trader_trade_observations newer
+            WHERE newer.exchange=o.exchange
+              AND newer.status IN ('OPEN','CLOSED')
+              AND newer.source_trader_id=o.source_trader_id
+              AND newer.source_trade_id=o.source_trade_id
+              AND newer.observation_id>o.observation_id
+          )
     """).fetchall()
     # One trader, one vote per symbol. Conflicting positions cancel to neutral.
     votes = defaultdict(lambda: defaultdict(set))
