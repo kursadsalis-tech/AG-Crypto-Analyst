@@ -22,6 +22,7 @@ from paper_trading.crypto_profit_agent import (
     fill_pending_from_live_state, select_new_positions,
 )
 from paper_trading.exchange_metadata import ExchangeMetadataError, load_cache, rules_for
+from paper_trading.execution_contract import MarketSnapshot
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import position_management, realtime_market
@@ -530,6 +531,21 @@ async def run():
         nonlocal last_scan_sqlite_error_code, last_scan_diagnostics
         observed_at = now()
         started = loop.time()
+        # Freeze exact-market quotes at the scan's decision time. A later tick
+        # cannot be retroactively treated as known at this selection timestamp.
+        with latest_execution_lock:
+            market_snapshots = {
+                key: MarketSnapshot(
+                    reference_price=state.last_price or 0.0,
+                    available_quote_volume=state.visible_quote_volume,
+                    observed_at=observed_at.isoformat(),
+                    best_bid=state.best_bid, best_ask=state.best_ask,
+                    quote_timestamp_ms=state.quote_timestamp_ms,
+                    liquidity_timestamp_ms=state.liquidity_timestamp_ms,
+                    market_type=state.market_type, source=state.quote_source,
+                )
+                for key, (state, _) in latest_execution_states.items()
+            }
         last_scan_started_at = observed_at.isoformat()
         last_scan_error = None
         last_scan_error_detail = None
@@ -550,6 +566,7 @@ async def run():
                     selected = select_new_positions(
                         work_con, observed_at, metadata,
                         telemetry=selection_result,
+                        market_snapshots=market_snapshots,
                     )
                     break
                 except Exception as exc:

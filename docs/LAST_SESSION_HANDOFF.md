@@ -2,7 +2,7 @@
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-VM checkout is candidate `0f1948b`; canonical main is `ed39047` pending acceptance.
+VM checkout is candidate `f30c2f2`; canonical main is `ed39047` pending acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 
 Measured and repaired: observer historical counts consumed 46.466 s of a
@@ -35,8 +35,14 @@ historical research; do not assume all I/O has been eliminated.
 
 Current ACTIONABLE blocker: PORTFOLIO_VALUATION_STALE_OR_MISSING. Direct DB
 inspection found OPEN FILUSDT and UNIUSDT SPOT with no market_klines 1h rows.
-Canonical live Spot quotes do exist. Address the actual valuation source after
-observer/scan acceptance; do not invent candle evidence or loosen freshness.
+Canonical live Spot quotes do exist. Prepared the valuation repair: realtime
+selection freezes its existing exact-market Binance quote snapshots, values
+longs at bid and shorts at ask through the existing 2 s executable-quote
+validator, and fails closed for missing/stale/future/crossed/wrong-market quotes.
+Offline reports keep their prior closed-candle path. Relevant integration/quote
+tests passed (60), plus realtime-priority tests (9); full PR CI is the final
+regression. Deploy this after f30c2f2 observer/scan acceptance, then inspect
+natural TECHNICAL_PLAN_UNAVAILABLE outcomes without weakening technical gates.
 Temporary py-spy tooling exists at VM /tmp/agca-profile-tools and must be removed
 when direct profiling is finished. No diagnostic scripts were added to repo.
 

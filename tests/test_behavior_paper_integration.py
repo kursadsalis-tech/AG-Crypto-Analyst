@@ -634,7 +634,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         }):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 0)
 
-    def test_portfolio_uses_fresh_mark_for_equity_and_gross_exposure(self):
+    def add_open_mark_position(self):
         self.con.execute("""INSERT INTO paper_agent_positions(
             forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,
             status,selected_at,as_of,planned_entry_time,due_time,notional,confidence,
@@ -651,6 +651,8 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "test", "MARKET_BEHAVIOR_CORE", 92, 1.0, 100.0, "TEST", 1, "[]",
             NOW.isoformat(), 100.0, 1.0, 0.1,
         ))
+    def test_portfolio_uses_fresh_mark_for_equity_and_gross_exposure(self):
+        self.add_open_mark_position()
         close_time = int((NOW - timedelta(minutes=5)).timestamp() * 1000)
         self.con.execute("""INSERT INTO market_klines(
             symbol,interval,open_time,open,high,low,close,volume,close_time,quote_volume
@@ -661,6 +663,45 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         self.assertTrue(snapshot["valuation_complete"])
         self.assertAlmostEqual(snapshot["gross_exposure"], 120.0)
         self.assertAlmostEqual(snapshot["unrealized_pnl"], 20.0)
+
+    def test_realtime_portfolio_values_dynamic_spot_from_executable_side(self):
+        self.add_open_mark_position()
+        quote = MarketSnapshot(
+            reference_price=999, available_quote_volume=None,
+            observed_at=NOW.isoformat(), best_bid=119, best_ask=121,
+            quote_timestamp_ms=int(NOW.timestamp()*1000)-100,
+            market_type="SPOT", source="BINANCE_SPOT_WS_TICKER_BID_ASK",
+        )
+        snapshot = agent.portfolio_snapshot(self.con, NOW,
+            market_snapshots={("MARKUSDT", "SPOT"): quote})
+        self.assertTrue(snapshot["valuation_complete"])
+        self.assertEqual(snapshot["gross_exposure"], 119)
+        self.assertEqual(snapshot["unrealized_pnl"], 19)
+        self.con.execute("UPDATE paper_agent_positions SET direction='SHORT'")
+        snapshot = agent.portfolio_snapshot(self.con, NOW,
+            market_snapshots={("MARKUSDT", "SPOT"): quote})
+        self.assertEqual(snapshot["gross_exposure"], 121)
+        self.assertEqual(snapshot["unrealized_pnl"], -21)
+
+    def test_realtime_valuation_rejects_stale_future_or_wrong_market_quote(self):
+        from dataclasses import replace
+        self.add_open_mark_position()
+        quote = MarketSnapshot(reference_price=100, available_quote_volume=None,
+            observed_at=NOW.isoformat(), best_bid=99, best_ask=101,
+            quote_timestamp_ms=int(NOW.timestamp()*1000),
+            market_type="SPOT", source="BINANCE_SPOT_WS_TICKER_BID_ASK")
+        for changed in (
+            replace(quote, quote_timestamp_ms=quote.quote_timestamp_ms-2001),
+            replace(quote, quote_timestamp_ms=quote.quote_timestamp_ms+1),
+            replace(quote, market_type="USD_M_PERPETUAL"),
+            replace(quote, best_bid=102),
+        ):
+            snapshot = agent.portfolio_snapshot(self.con, NOW,
+                market_snapshots={("MARKUSDT", "SPOT"): changed})
+            self.assertFalse(snapshot["valuation_complete"])
+            self.assertEqual(snapshot["missing_marks"], ("MARKUSDT",))
+        self.assertFalse(agent.portfolio_snapshot(
+            self.con, NOW, market_snapshots={})["valuation_complete"])
 
     def test_unexecutable_tiny_candidate_does_not_hide_later_candidate(self):
         too_small = self.candidate()

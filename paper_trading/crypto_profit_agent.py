@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from decision_engine import forecast_engine
 from paper_trading.execution_model import (
     PAPER_MARKET, execute_paper, estimate_order_rules, simulated_fill,
-    taker_fee_rate,
+    taker_fee_rate, validate_quote,
 )
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
@@ -453,7 +453,7 @@ def latest_mark(con, symbol, now=None):
     return (mark, mark_time) if mark > 0.0 else None
 
 
-def portfolio_snapshot(con, now=None):
+def portfolio_snapshot(con, now=None, *, market_snapshots=None):
     portfolio = con.execute("""
         SELECT initial_capital,cash,realized_pnl,total_fees,
                validation_cohort,evidence_start_at
@@ -462,7 +462,7 @@ def portfolio_snapshot(con, now=None):
     open_rows = con.execute("""
         SELECT p.symbol,p.direction,p.entry_price,
                COALESCE(m.remaining_quantity,p.quantity),
-               COALESCE(m.remaining_cost_basis,p.margin_allocated)
+               COALESCE(m.remaining_cost_basis,p.margin_allocated),p.market_type
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN'
@@ -472,18 +472,27 @@ def portfolio_snapshot(con, now=None):
     gross_exposure = 0.0
     valuation_complete = True
     missing_marks = []
-    for symbol, direction, entry, quantity, margin_basis in open_rows:
+    for symbol, direction, entry, quantity, margin_basis, market_type in open_rows:
         # Cash is debited by allocated margin at entry, not gross leveraged
         # notional. Equity therefore adds back only the remaining margin basis.
         # Treating margin as gross exposure would manufacture equity under
         # leverage and distort all downstream sizing.
         reserved += float(margin_basis)
-        mark_state = latest_mark(con, symbol, now)
-        if mark_state is None:
+        if market_snapshots is None:
+            mark_state = latest_mark(con, symbol, now)
+            mark = mark_state[0] if mark_state else None
+        else:
+            # Realtime risk valuation uses the same exact-market executable
+            # quote contract as fills. Dynamic Spot holdings need no unrelated
+            # research candle, and missing/stale quotes cannot borrow a mark.
+            quote = market_snapshots.get((symbol, market_type))
+            mark = None
+            if quote is not None and quote.market_type == market_type:
+                mark, _ = validate_quote(quote, "SELL" if direction == "LONG" else "BUY")
+        if mark is None:
             valuation_complete = False
             missing_marks.append(symbol)
             continue
-        mark, _ = mark_state
         qty = float(quantity)
         unrealized += directional_pnl(direction, float(entry), mark, qty)
         gross_exposure += abs(qty * mark)
@@ -892,7 +901,7 @@ def _adverse_same_setup_reentry_blocked(con, row):
     return reset_move_pct < effective_stop_pct
 
 
-def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
+def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, market_snapshots=None):
     diagnostics = telemetry if telemetry is not None else {}
     phase_timings = diagnostics.setdefault("phase_timings_ms", {})
     def measured(name, function, *args, **kwargs):
@@ -905,7 +914,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
                 (time.monotonic() - started) * 1000, 3)
             diagnostics["active_phase"] = None
     behavior_result = measured("behavior_evaluation", behavior_decision_core.evaluate, con, now)
-    snapshot = measured("portfolio_valuation", portfolio_snapshot, con, now)
+    snapshot = measured("portfolio_valuation", portfolio_snapshot, con, now,
+                        market_snapshots=market_snapshots)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
