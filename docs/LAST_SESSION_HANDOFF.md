@@ -2,7 +2,7 @@
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-VM checkout is candidate `f30c2f2`; canonical main is `ed39047` pending acceptance.
+VM checkout is candidate `efc0ea4`; canonical main is `ed39047` pending acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 
 Measured and repaired: observer historical counts consumed 46.466 s of a
@@ -13,7 +13,20 @@ writer uses bounded transactions; technical seed/tail reads use existing index
 order; insufficient contiguous bars are rejected before reading full history.
 Prior full regression passed 505 tests; subsequent focused suites and PR CI pass.
 
-Acceptance is NOT complete. f30c2f2 bounds realtime latest evidence to the
+Acceptance is NOT complete. Latest efc0ea4 window produced an ACTIONABLE
+selection (one PAPER position) without TECHNICAL_PLAN_UNAVAILABLE, so Spot
+valuation no longer blocks it. But scan then stalled in technical planning;
+only one selection run in six minutes, plus one observed SQLITE_BUSY. One
+observer minute had 0/12 eligible rows; others 12/12. Do not call this accepted.
+Current candidate replaces the narrow technical-bar timestamp index under its
+existing name with a covering bar-projection index, atomically at bootstrap.
+This removes up to 1,440 random table lookups per technical plan; keeps all
+history, geometry and market/provenance/freshness predicates unchanged. No
+technical collector restart is needed for the atomic same-name index upgrade.
+Own-trade input changes also no longer rerun unchanged external research.
+Focused regression for these changes: 37 passed. efc0ea4 full CI: 515 passed.
+
+Earlier evidence: acceptance is NOT complete. f30c2f2 bounds realtime latest evidence to the
 unchanged 180 s freshness window and moves policy-review writes after evidence
 reads. Direct live stack + WAL-lock samples proved the previous external MAX/
 EXISTS query held the realtime writer lock through retained-history reads.

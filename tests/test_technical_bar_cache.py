@@ -73,6 +73,18 @@ class TechnicalBarCacheTests(unittest.TestCase):
         )
         con.close()
 
+    def test_bootstrap_replaces_narrow_index_without_leaving_a_duplicate(self):
+        con = sqlite3.connect(":memory:")
+        store.ensure_table(con)
+        con.execute("DROP INDEX ix_technical_minute_bars_symbol_close")
+        con.execute("CREATE INDEX ix_technical_minute_bars_symbol_close ON technical_minute_bars(symbol,market_type,close_time_ms)")
+        store.ensure_table(con)
+        self.assertIn("source", [row[2] for row in con.execute(
+            "PRAGMA index_info(ix_technical_minute_bars_symbol_close)")])
+        indexes = [row[1] for row in con.execute("PRAGMA index_list(technical_minute_bars)")]
+        self.assertEqual(sum("symbol_close" in name for name in indexes), 1)
+        con.close()
+
     def test_recent_bar_read_uses_ordered_range_without_history_sort(self):
         con = sqlite3.connect(":memory:")
         store.ensure_table(con)
@@ -85,6 +97,7 @@ class TechnicalBarCacheTests(unittest.TestCase):
             ("BTCUSDT", store.MARKET_TYPE, store.PROVIDER, NOW, 24)).fetchall()
         details = " ".join(str(row[3]) for row in plan)
         self.assertIn("ix_technical_minute_bars_symbol_close", details)
+        self.assertIn("COVERING INDEX", details)
         self.assertNotIn("TEMP B-TREE", details)
         con.close()
 

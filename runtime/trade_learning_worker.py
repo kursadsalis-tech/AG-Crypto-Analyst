@@ -100,12 +100,16 @@ def learning_input_key():
                     "SELECT " + ",".join(fields) + " FROM paper_agent_positions "
                     "WHERE evidence_eligible=1 AND status='CLOSED' ORDER BY position_id"
                 ).fetchall()
-        return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+        positions = inputs.pop("closed_positions", [])
+        return {
+            "external": hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest(),
+            "positions": hashlib.sha256(json.dumps(positions, sort_keys=True).encode()).hexdigest(),
+        }
     finally:
         con.close()
 
 
-def run_cycle_once(*, initialize=True):
+def run_cycle_once(*, initialize=True, refresh_external=True):
     started = time.monotonic()
     stamp = utcnow()
     con = local_connection()
@@ -117,7 +121,8 @@ def run_cycle_once(*, initialize=True):
             con.commit()
 
         reviews = experience_memory.review_closed_positions(con, stamp)
-        learning = trade_learning.run(con, FORWARD_COHORT, stamp)
+        learning = trade_learning.run(con, FORWARD_COHORT, stamp,
+                                      refresh_external=refresh_external)
         allocations = strategy_allocator.rebalance(con, stamp)
         con.commit()
     finally:
@@ -135,11 +140,11 @@ def run_cycle_once(*, initialize=True):
     }
 
 
-def run_cycle(attempts=4, *, initialize=True):
+def run_cycle(attempts=4, *, initialize=True, refresh_external=True):
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         try:
-            result = run_cycle_once(initialize=initialize)
+            result = run_cycle_once(initialize=initialize, refresh_external=refresh_external)
             result["sqlite_attempts"] = attempt
             return result
         except sqlite3.OperationalError as exc:
@@ -171,7 +176,11 @@ def main():
             if initialized and input_key == last_input_key:
                 result = {**last_result, "skipped_unchanged_inputs": True}
             else:
-                result = run_cycle(initialize=not initialized)
+                result = run_cycle(
+                    initialize=not initialized,
+                    refresh_external=(not initialized or
+                        input_key["external"] != last_input_key["external"]),
+                )
                 initialized = True
                 # Capture the pre-cycle key: inputs arriving during a review
                 # must trigger another pass, never be marked already reviewed.

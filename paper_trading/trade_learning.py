@@ -400,7 +400,7 @@ def discover_patterns(groups):
     )
 
 
-def run(con, validation_cohort, now=None):
+def run(con, validation_cohort, now=None, *, refresh_external=True):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
     rows = load_closed(con, validation_cohort)
@@ -457,11 +457,16 @@ def run(con, validation_cohort, now=None):
                   score["trades"], score["weeks"],
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
     con.commit()
-    external_research = external_trader_learning.run_review(con, now)
-    external_research["rationale_review"] = (
-        external_trader_rationale.review_available_closed_contexts(con, now)
-    )
-    improvement = continuous_improvement.run(con, now)
+    if refresh_external:
+        external_research = external_trader_learning.run_review(con, now)
+        external_research["rationale_review"] = (
+            external_trader_rationale.review_available_closed_contexts(con, now)
+        )
+        improvement = continuous_improvement.run(con, now)
+    else:
+        # A new own-trade outcome does not change quarantined external inputs.
+        external_research = {"status": "UNCHANGED_INPUTS"}
+        improvement = {"status": "UNCHANGED_INPUTS"}
     technical_shadow = evidence["technical_shadow"]
     return {
         "status": status, "closed": len(rows), "weeks": weeks,

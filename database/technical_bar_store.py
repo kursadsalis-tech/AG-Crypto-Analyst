@@ -33,9 +33,23 @@ def ensure_table(connection):
             PRIMARY KEY(symbol,market_type,open_time_ms)
         )
     """)
+    # A non-covering timestamp index still needs up to 1,440 random table
+    # reads for each plan. Keep the complete bounded bar projection together
+    # so low-IOPS runtime disks can read a short contiguous index range.
+    columns = ("symbol", "market_type", "provider", "close_time_ms", "open_time_ms",
+               "open", "high", "low", "close", "volume", "quote_volume",
+               "trade_count", "taker_buy_quote_volume", "source")
+    existing = tuple(row[2] for row in connection.execute(
+        f"PRAGMA index_info(ix_{TABLE}_symbol_close)"))
+    if existing and existing != columns:
+        # Publish the replacement atomically under the existing name. Running
+        # collectors retain a valid schema and can keep buffering WS bars.
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        connection.execute(f"DROP INDEX ix_{TABLE}_symbol_close")
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_{TABLE}_symbol_close
-        ON {TABLE}(symbol,market_type,close_time_ms)
+        ON {TABLE}({','.join(columns)})
     """)
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_{TABLE}_close

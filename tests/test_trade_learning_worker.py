@@ -64,14 +64,27 @@ class TradeLearningWorkerTests(unittest.TestCase):
             con.close()
 
     def test_unchanged_inputs_do_not_repeat_full_learning(self):
-        with (mock.patch.object(worker, "learning_input_key", return_value="same"),
+        with (mock.patch.object(worker, "learning_input_key", return_value={"external": "same", "positions": "same"}),
               mock.patch.object(worker, "run_cycle", return_value={"learning_status": "OK"}) as cycle,
               mock.patch.object(worker, "write_health") as health,
               mock.patch.object(worker.time, "sleep", side_effect=[None, SystemExit])):
             with self.assertRaises(SystemExit):
                 worker.main()
-        cycle.assert_called_once_with(initialize=True)
+        cycle.assert_called_once_with(initialize=True, refresh_external=True)
         self.assertTrue(health.call_args.args[0]["skipped_unchanged_inputs"])
+
+    def test_new_own_trade_does_not_repeat_unchanged_external_research(self):
+        with (mock.patch.object(worker, "learning_input_key", side_effect=[
+                {"external": "same", "positions": "before"},
+                {"external": "same", "positions": "after"}]),
+              mock.patch.object(worker, "run_cycle", return_value={}) as cycle,
+              mock.patch.object(worker, "write_health"),
+              mock.patch.object(worker.time, "sleep", side_effect=[None, SystemExit])):
+            with self.assertRaises(SystemExit):
+                worker.main()
+        self.assertEqual(cycle.call_args_list, [
+            mock.call(initialize=True, refresh_external=True),
+            mock.call(initialize=False, refresh_external=False)])
 
     def test_cycle_does_not_hide_non_lock_error(self):
         with (
