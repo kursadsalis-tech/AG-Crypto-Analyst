@@ -2,75 +2,59 @@
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-VM checkout is candidate `efc0ea4`; canonical main is `ed39047` pending acceptance.
+Canonical main is `ed39047`; VM candidate is `f31b6e8`, pending live acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
+User explicitly rejected paid cloud resources. No paid resource was created.
 
-Measured and repaired: observer historical counts consumed 46.466 s of a
-48.263 s persistence phase; WS close took 5.5–9.8 s. Live paths omit counts,
-read causal evidence without mirror DDL, bound WS close, and expose SQL/WS
-phases. Observer is continuously supervised (old timer retired). Technical
-writer uses bounded transactions; technical seed/tail reads use existing index
-order; insufficient contiguous bars are rejected before reading full history.
-Prior full regression passed 505 tests; subsequent focused suites and PR CI pass.
+Measured fixes:
+- Observer retained-history counts consumed 46.466 s of 48.263 s persistence;
+  WS close took 5.5–9.8 s. Live writes omit those counts, causal reads avoid
+  mirror DDL, WS close is bounded, and health exposes SQL/transport subphases.
+- Observer now runs continuously under systemd; the obsolete minute timer is
+  retired. The process becomes active immediately and has a cycle deadline.
+- Technical writes use bounded transactions. Technical seed/tail reads use
+  indexed time order and reject insufficient contiguous history before the
+  full plan read. The technical history index now covers the entire bar
+  projection under its existing name. Its atomic live replacement took
+  147.278 s; a subsequent 1,440-bar read took 24 ms, using the covering index.
+- Realtime latest-evidence reads use the unchanged 180 s window. Policy review
+  writes follow evidence reads. Scan health records phase/error details.
+- Trade learning uses an indexed eligible cohort, cached immutable legacy audit,
+  and separate changed-input keys for own outcomes and external observations.
+  Unchanged inputs skip repeat history reviews; corrections still trigger them.
+  Historical aggregation is separated from write phases.
 
-Acceptance is NOT complete. Latest efc0ea4 window produced an ACTIONABLE
-selection (one PAPER position) without TECHNICAL_PLAN_UNAVAILABLE, so Spot
-valuation no longer blocks it. But scan then stalled in technical planning;
-only one selection run in six minutes, plus one observed SQLITE_BUSY. One
-observer minute had 0/12 eligible rows; others 12/12. Do not call this accepted.
-Current candidate replaces the narrow technical-bar timestamp index under its
-existing name with a covering bar-projection index, atomically at bootstrap.
-This removes up to 1,440 random table lookups per technical plan; keeps all
-history, geometry and market/provenance/freshness predicates unchanged. No
-technical collector restart is needed for the atomic same-name index upgrade.
-Own-trade input changes also no longer rerun unchanged external research.
-Focused regression for these changes: 37 passed. efc0ea4 full CI: 515 passed.
+Live acceptance is NOT complete. The f31b6e8 window after index bootstrap
+produced 12/12 eligible minutes in 63.017 and 64.277 s with persistence
+1.253 and 2.281 s, but also a 0/12 minute and recurring SQLITE_BUSY. Do not use
+CONNECTED/HEALTHY alone, an overwritten final error field, or a single fast
+query as acceptance. Track the last eligible minute across ineligible cycles.
 
-Earlier evidence: acceptance is NOT complete. f30c2f2 bounds realtime latest evidence to the
-unchanged 180 s freshness window and moves policy-review writes after evidence
-reads. Direct live stack + WAL-lock samples proved the previous external MAX/
-EXISTS query held the realtime writer lock through retained-history reads.
-However the next live window still failed: observer persistence 104.798 s,
-worst evidence age 197.2 s, selection gap 141.993 s and observed SQLITE_BUSY.
-Do not cite the monitor's final empty error array as a pass: its overwritten
-health samples missed the explicitly printed transient error.
+Direct follow-up profiling found trade learning in
+external_trader_learning.run_review's eligible closed-trade count. In 15 s it
+read 13.47 MB while technical/realtime read 1.59/2.20 MB. Live EXPLAIN confirmed
+all three eligibility counts/time-bound queries scanned retained raw-payload
+tables. Current change adds small partial identity/time indexes for eligible
+snapshots and eligible closed observations; query semantics and existing
+indexes are preserved. Focused external-learning regression: 8 passed.
+f31b6e8 CI: 120 integration and 517 full-suite tests passed.
 
-Remaining measured load: 45 s writer samples were dominated by the technical
-bar worker doing actual upserts/commits. The 30 GB pd-standard disk was 93.7%
-busy over 20 s (231 read IOPS, 13.6 ms mean read latency); I/O pressure avg60
-89.2%. User explicitly REJECTED paid resources on Sep 24. Do not provision a
-new disk or resize paid infrastructure. No paid resource was created.
+Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
+5 complete states, quote ages 123/123/354 ms, canonical vision fallback,
+zero stale receives, no DB writes or orders. Do not repeat without cause.
+Realtime portfolio valuation uses exact-market frozen Binance executable quotes
+(long bid/short ask, existing 2 s validator). Offline reports retain candles.
+A natural ACTIONABLE selection on efc0ea4 opened one PAPER position without
+TECHNICAL_PLAN_UNAVAILABLE. Technical-plan acceptance under sustained load
+still needs confirmation after the current bottleneck is removed.
 
-Current free-resource repair: trade learning hashes append-only observation
-high-water marks plus eligible closed-position economics and skips unchanged
-inputs. Cost corrections/new observations trigger a new review; runtime heartbeats
-do not. Keep the pre-cycle key so inputs arriving mid-review are not lost.
-Historical reads in continuous improvement/rationale/allocation now occur outside
-writer phases; unused outcome-history counts were removed from queued settlement.
-Focused regression: 25 passed. Earlier c2d8350 full PR CI passed; latest candidate
-still requires its full CI and live acceptance.
-
-c2d8350 also prepares the measured Spot valuation fix: OPEN FILUSDT and UNIUSDT
-had no research 1h candles but do have canonical live quotes. Realtime selection
-freezes exact-market Binance snapshots at scan time and uses the existing 2 s
-executable-quote validator (long at bid, short at ask). Missing/stale/future/
-crossed/wrong-market quotes fail closed. Offline reports keep the closed-candle
-path. Relevant integration/quote tests passed (60), realtime-priority tests (9).
-Deploy with the learning changes, then inspect natural technical-plan outcomes.
-
-Temporary VM profiling tools were removed from /tmp/agca-profile-tools. No
-profiling scripts were added to the repository. Runtime data occupies ~7.9 GiB;
-root disk has ~8.2 GiB free. Original user checkout remains untouched.
-
-Spot acceptance already passed using production Binance transport: 5 complete
-BTCUSDT states, quote ages 123/123/354 ms, vision fallback, zero stale receives,
-no DB mutation or order authority. Latest realtime health also confirms Spot
-and USD-M canonical WS ingest. Do not repeat this acceptance without a new need.
-
-Next: finish acceptance of fresh eligible observer minutes, regular selection,
-no SQLITE_BUSY/stall; investigate current actionable blocker with live evidence.
-Then clean final handoff/PR, merge and return VM to canonical main. Do not rerun
-finished work or remove existing user changes.
+Temporary live profiling tool is currently installed at
+`/tmp/agca-profile-tools`; remove it after the investigation. No profiling
+script or alternate runtime data file was added to the repository.
+Next: deploy/bootstrap eligible research indexes, complete acceptance with all
+normal workers running, then finalize PR/merge and return VM to canonical main.
+Do not claim resolution before reliable eligible minutes below 180 s, regular
+selection runs and no observed SQLITE_BUSY/stalls have been demonstrated.
 
 ---
 
