@@ -8,6 +8,7 @@ authority.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import tempfile
@@ -71,6 +72,39 @@ def _database_locked(exc):
     )
 
 
+def learning_input_key():
+    """Read only learning inputs; unchanged history needs no new full review."""
+    con = local_connection()
+    try:
+        tables = {row[0] for row in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        inputs = {}
+        # These sources are immutable, append-only observations. Their rowid
+        # high-water marks avoid rereading payload history on every timer tick.
+        for table in ("external_trader_source_snapshots",
+                      "external_trader_trade_observations",
+                      "external_trader_entry_contexts"):
+            inputs[table] = (con.execute(f"SELECT MAX(rowid) FROM {table}").fetchone()[0]
+                             if table in tables else None)
+        if "paper_agent_positions" in tables:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_positions)")}
+            fields = [name for name in (
+                "position_id", "exit_time", "net_pnl", "gross_pnl", "notional",
+                "entry_fee", "exit_fee", "entry_spread_cost", "exit_spread_cost",
+                "entry_slippage_cost", "exit_slippage_cost", "funding_cost",
+                "funding_source", "liquidated", "close_reason", "margin_allocated",
+                "leverage", "risk_tier", "validation_cohort",
+            ) if name in columns]
+            if {"status", "evidence_eligible", "position_id"}.issubset(columns):
+                inputs["closed_positions"] = con.execute(
+                    "SELECT " + ",".join(fields) + " FROM paper_agent_positions "
+                    "WHERE evidence_eligible=1 AND status='CLOSED' ORDER BY position_id"
+                ).fetchall()
+        return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    finally:
+        con.close()
+
+
 def run_cycle_once(*, initialize=True):
     started = time.monotonic()
     stamp = utcnow()
@@ -120,6 +154,8 @@ def main():
         raise SystemExit("Safety gate: trade learning accepts PAPER_ONLY exclusively")
 
     initialized = False
+    last_input_key = None
+    last_result = {}
     while True:
         started_at = utcnow()
         write_health({
@@ -131,8 +167,17 @@ def main():
             "may_send_real_orders": False,
         })
         try:
-            result = run_cycle(initialize=not initialized)
-            initialized = True
+            input_key = learning_input_key()
+            if initialized and input_key == last_input_key:
+                result = {**last_result, "skipped_unchanged_inputs": True}
+            else:
+                result = run_cycle(initialize=not initialized)
+                initialized = True
+                # Capture the pre-cycle key: inputs arriving during a review
+                # must trigger another pass, never be marked already reviewed.
+                last_input_key = input_key
+                last_result = result
+                result = {**result, "skipped_unchanged_inputs": False}
             write_health({
                 "health_contract_version": HEALTH_CONTRACT_VERSION,
                 "status": "HEALTHY",

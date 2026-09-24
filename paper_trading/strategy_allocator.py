@@ -70,6 +70,7 @@ def sync_strategies(con, now):
 def rebalance(con, now):
     """Reward net-after-cost performance while preserving bounded exploration."""
     sync_strategies(con, now)
+    con.commit()
     strategies = con.execute("""
         SELECT strategy_id,rule_json FROM paper_agent_strategy_allocations
         WHERE status IN ('ACTIVE','EXPLORING') ORDER BY strategy_id

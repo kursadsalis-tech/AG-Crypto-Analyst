@@ -13,38 +13,41 @@ writer uses bounded transactions; technical seed/tail reads use existing index
 order; insufficient contiguous bars are rejected before reading full history.
 Prior full regression passed 505 tests; subsequent focused suites and PR CI pass.
 
-Acceptance is NOT complete. e1a79c2 deployed, full PR CI passed. At 08:47 UTC
-observer cycle 202.787 s / persistence 87.517 s; realtime scan 108.003 s and
-selection gap 109.512 s. Same canonical workers remained active. No gate was
-weakened. Learning startup/history inefficiencies alone were not sufficient.
+Acceptance is NOT complete. f30c2f2 bounds realtime latest evidence to the
+unchanged 180 s freshness window and moves policy-review writes after evidence
+reads. Direct live stack + WAL-lock samples proved the previous external MAX/
+EXISTS query held the realtime writer lock through retained-history reads.
+However the next live window still failed: observer persistence 104.798 s,
+worst evidence age 197.2 s, selection gap 141.993 s and observed SQLITE_BUSY.
+Do not cite the monitor's final empty error array as a pass: its overwritten
+health samples missed the explicitly printed transient error.
 
-Definitive live py-spy plus /proc/locks samples at 08:50 UTC found realtime
-holding WAL writer byte 120 while blocked at behavior_decision_core.evaluate's
-external-evidence MAX/EXISTS query (line 727 in e1a79c2). It searched all retained
-external minutes although only the last 180 seconds can be eligible. The policy
-review INSERT ran before that query, retaining the writer lock throughout.
-Current candidate bounds both latest-minute searches by the existing freshness
-window and defers the review write until evidence/risk reads finish. Focused
-behavior + PAPER integration regression: 61 passed. Deploy and accept next.
+Remaining measured load: 45 s writer samples were dominated by the technical
+bar worker doing actual upserts/commits. The 30 GB pd-standard disk was 93.7%
+busy over 20 s (231 read IOPS, 13.6 ms mean read latency); I/O pressure avg60
+89.2%. User explicitly REJECTED paid resources on Sep 24. Do not provision a
+new disk or resize paid infrastructure. No paid resource was created.
 
-Additional measured waste removed in e1a79c2: ~18 s repeated immutable legacy
-audit scan and ~25 s review scan. Reuse the stored audit, drive reviews from
-frozen theses, index eligible positions and bootstrap learning once per process.
-The new index installed in 2.485 s. Background learning still does other
-historical research; do not assume all I/O has been eliminated.
+Current free-resource repair: trade learning hashes append-only observation
+high-water marks plus eligible closed-position economics and skips unchanged
+inputs. Cost corrections/new observations trigger a new review; runtime heartbeats
+do not. Keep the pre-cycle key so inputs arriving mid-review are not lost.
+Historical reads in continuous improvement/rationale/allocation now occur outside
+writer phases; unused outcome-history counts were removed from queued settlement.
+Focused regression: 25 passed. Earlier c2d8350 full PR CI passed; latest candidate
+still requires its full CI and live acceptance.
 
-Current ACTIONABLE blocker: PORTFOLIO_VALUATION_STALE_OR_MISSING. Direct DB
-inspection found OPEN FILUSDT and UNIUSDT SPOT with no market_klines 1h rows.
-Canonical live Spot quotes do exist. Prepared the valuation repair: realtime
-selection freezes its existing exact-market Binance quote snapshots, values
-longs at bid and shorts at ask through the existing 2 s executable-quote
-validator, and fails closed for missing/stale/future/crossed/wrong-market quotes.
-Offline reports keep their prior closed-candle path. Relevant integration/quote
-tests passed (60), plus realtime-priority tests (9); full PR CI is the final
-regression. Deploy this after f30c2f2 observer/scan acceptance, then inspect
-natural TECHNICAL_PLAN_UNAVAILABLE outcomes without weakening technical gates.
-Temporary py-spy tooling exists at VM /tmp/agca-profile-tools and must be removed
-when direct profiling is finished. No diagnostic scripts were added to repo.
+c2d8350 also prepares the measured Spot valuation fix: OPEN FILUSDT and UNIUSDT
+had no research 1h candles but do have canonical live quotes. Realtime selection
+freezes exact-market Binance snapshots at scan time and uses the existing 2 s
+executable-quote validator (long at bid, short at ask). Missing/stale/future/
+crossed/wrong-market quotes fail closed. Offline reports keep the closed-candle
+path. Relevant integration/quote tests passed (60), realtime-priority tests (9).
+Deploy with the learning changes, then inspect natural technical-plan outcomes.
+
+Temporary VM profiling tools were removed from /tmp/agca-profile-tools. No
+profiling scripts were added to the repository. Runtime data occupies ~7.9 GiB;
+root disk has ~8.2 GiB free. Original user checkout remains untouched.
 
 Spot acceptance already passed using production Binance transport: 5 complete
 BTCUSDT states, quote ages 123/123/354 ms, vision fallback, zero stale receives,

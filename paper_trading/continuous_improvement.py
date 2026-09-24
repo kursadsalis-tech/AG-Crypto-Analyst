@@ -156,6 +156,7 @@ def discover_candidates(con, now):
 
 def evaluate_forward(con, now):
     results = []
+    pending = []
     candidates = con.execute("""
         SELECT candidate_id,forward_start_at,rule_json
         FROM paper_agent_research_candidates
@@ -193,17 +194,20 @@ def evaluate_forward(con, now):
             "net_pnl_positive": pnl > MIN_POSITIVE_FORWARD_NET_PNL,
             "win_rate_above_50": wins > MIN_FORWARD_WIN_RATE_PCT,
         }
+        pending.append(((_iso(now), candidate_id, trades, traders, pnl, wins, status,
+                         json.dumps(evidence, sort_keys=True)), status, candidate_id))
+        results.append({"candidate_id": candidate_id, "trades": trades,
+                        "traders": traders, "net_pnl": pnl, "status": status})
+    # Finish all historical reads before acquiring the SQLite writer lock.
+    for values, status, candidate_id in pending:
         con.execute("""
             INSERT OR IGNORE INTO paper_agent_forward_evaluations(
               created_at,candidate_id,forward_trade_count,forward_trader_count,
               net_pnl,win_rate_pct,status,evidence_json,promotion_allowed
             ) VALUES(?,?,?,?,?,?,?,?,0)
-        """, (_iso(now), candidate_id, trades, traders, pnl, wins, status,
-              json.dumps(evidence, sort_keys=True)))
+        """, values)
         con.execute("UPDATE paper_agent_research_candidates SET status=? WHERE candidate_id=?",
                     (status, candidate_id))
-        results.append({"candidate_id": candidate_id, "trades": trades,
-                        "traders": traders, "net_pnl": pnl, "status": status})
     return results
 
 
@@ -211,7 +215,9 @@ def run(con, now=None):
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
     consensus = snapshot_consensus(con, now)
+    con.commit()
     created = discover_candidates(con, now)
+    con.commit()
     evaluations = evaluate_forward(con, now)
     con.commit()
     return {"version": VERSION, "consensus_symbols": len(consensus),
