@@ -252,6 +252,10 @@ def ensure_tables(con):
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
+    # Historical quarantined positions carry large payloads. Learning must seek
+    # the eligible cohort rather than read every closed legacy position.
+    con.execute("""CREATE INDEX IF NOT EXISTS idx_paper_positions_eligible_status
+        ON paper_agent_positions(evidence_eligible,status,position_id)""")
     # Legacy rows may predate explicit margin accounting.  Backfill only
     # missing values and respect the leverage recorded on that exact position;
     # never rewrite already-accounted historical rows.

@@ -120,6 +120,16 @@ class ExperienceMemoryTests(unittest.TestCase):
         row = self.con.execute("SELECT skill_proven,promotion_allowed FROM paper_agent_experience_summaries").fetchone()
         self.assertEqual(row, (0, 0))
 
+    def test_existing_legacy_audit_does_not_rescan_or_rewrite_history(self):
+        self.test_legacy_profit_is_retained_but_not_skill()
+        self.con.commit()
+        statements = []
+        self.con.set_trace_callback(statements.append)
+        summary = memory.record_legacy_summary(self.con, NOW)
+        self.assertEqual(summary["net_pnl_usdt"], 10)
+        self.assertFalse(self.con.in_transaction)
+        self.assertFalse(any("paper_agent_positions" in sql for sql in statements))
+
     def test_quarantined_lookahead_trade_is_not_learning_experience(self):
         self.con.execute("""INSERT INTO paper_agent_positions(
             position_id,status,net_pnl,notional,direction,horizon_hours,selected_at,

@@ -243,7 +243,9 @@ def run_cycle(args):
 
 
 def _cycle_timeout(signum, frame):
-    raise TimeoutError("market behavior cycle exceeded its time budget")
+    # Exit the supervised process; channel-level `except Exception` handlers
+    # must not swallow the whole-cycle deadline as a recoverable feed error.
+    raise SystemExit("market behavior cycle exceeded its time budget")
 
 
 def run_bounded_cycle(args):

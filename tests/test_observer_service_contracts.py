@@ -25,14 +25,10 @@ class ObserverServiceContractTests(unittest.TestCase):
         self.assertIn("TimeoutStopSec=15", service)
         self.assertNotIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS", service)
 
-    def test_observer_timers_are_not_installed_by_repository_files(self):
+    def test_macro_timer_is_not_installed_by_repository_files(self):
         macro = (ROOT / "deploy/agca-exact-macro-observer.timer").read_text()
-        behavior = (ROOT / "deploy/agca-market-behavior-observer.timer").read_text()
         self.assertIn("OnUnitInactiveSec=1min", macro)
-        self.assertIn("OnCalendar=*-*-* *:*:05", behavior)
-        self.assertNotIn("OnUnitInactiveSec=", behavior)
         self.assertIn("Persistent=false", macro)
-        self.assertIn("Persistent=false", behavior)
 
     def test_technical_kline_worker_is_long_lived_binance_paper_only(self):
         service = (ROOT / "deploy/agca-technical-kline-worker.service").read_text()

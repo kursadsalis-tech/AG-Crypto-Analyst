@@ -1,58 +1,42 @@
-# 2026-09-23 — Observer candidate and remaining SQLite writer contention
+# 2026-09-24 — Observer/SQLite live acceptance remains open
 
-Work continues in canonical worktree `.worktrees/observer-phase-profile`, branch
-`fix/observer-phase-profile`, draft PR #94. VM is on candidate `00cdc04` detached
-for controlled acceptance; canonical main remains `ed39047` until acceptance.
-Do not replace the old, dirty primary checkout or recreate this work.
+Canonical worktree `.worktrees/observer-phase-profile`, branch
+`fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
+VM checkout is candidate `0f1948b`; canonical main is `ed39047` pending acceptance.
+PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 
-Observer now runs continuously in the existing service, with one process lock,
-a 240-second per-cycle deadline and restart-on-failure. Its old timer is disabled.
-At 22:32 UTC, 12/12 eligible rows, 61.030 s cycle, 9.281 s route refresh,
-43.984 s collection, 0.006 s causal projection. Persistence still waited 7.759 s
-on another writer. Historical count/DDL overhead was removed, not gate-relaxed.
+Measured and repaired: observer historical counts consumed 46.466 s of a
+48.263 s persistence phase; WS close took 5.5–9.8 s. Live paths omit counts,
+read causal evidence without mirror DDL, bound WS close, and expose SQL/WS
+phases. Observer is continuously supervised (old timer retired). Technical
+writer uses bounded transactions; technical seed/tail reads use existing index
+order; insufficient contiguous bars are rejected before reading full history.
+Prior full regression passed 505 tests; subsequent focused suites and PR CI pass.
 
-Direct `/proc/locks` sampling at 17:48 UTC identified technical-kline PID 1599545
-holding the canonical WAL writer byte 120 continuously for at least 9 seconds.
-This process started after the earlier technical DDL repair; repeating that
-repair is insufficient. Realtime SQLITE_BUSY recurred, so acceptance is NOT
-complete. Current change bounds technical upserts to 16 independently valid
-closed bars per transaction, yields between groups, removes live history counts,
-and preserves phase/transaction timings across universe health refreshes.
+Acceptance is NOT complete: on Sep 24 08:33 observer total reached 178.374 s,
+persistence 69.811 s. At 08:35 total 119.504 s, persistence 8.732 s, 12/12
+eligible. Realtime restarted on 0f1948b and connected; startup SQLITE_BUSY
+occurred in legacy summary setup. Selection advances, latest blocker is
+PORTFOLIO_VALUATION_STALE_OR_MISSING. Do not weaken this or freshness gates.
 
-Observer candidate passed 503 tests before this additional writer repair.
-Next: targeted writer tests, final regression, deploy/restart technical worker,
-and accept consecutive fresh observer minutes plus uninterrupted selection runs.
-Latest live Spot ingest uses canonical Binance vision endpoint successfully.
-ACTIONABLE selection was blocked by PORTFOLIO_VALUATION_STALE_OR_MISSING at the
-previous observation; inspect actual current blocker after contention is fixed.
-No authority or freshness/quality thresholds changed.
+New direct profiling: technical writer held WAL writer lock in 75/120 samples
+across 30 seconds, while trade learner read 38 MB from disk. Bounded read-only
+profiling of learner isolated ~18 s legacy-audit scan and ~25 s position-review
+scan before another eligible-history scan exceeded the 50 s budget. Existing
+immutable legacy audit was already present. Current change reuses that audit,
+drives reviews from frozen theses, indexes eligible positions, and runs worker
+bootstrap once per process instead of each learning cycle. Deploy and measure
+before declaring success. Profiling always restored the learning service.
 
----
+Spot acceptance already passed using production Binance transport: 5 complete
+BTCUSDT states, quote ages 123/123/354 ms, vision fallback, zero stale receives,
+no DB mutation or order authority. Latest realtime health also confirms Spot
+and USD-M canonical WS ingest. Do not repeat this acceptance without a new need.
 
-# 2026-09-23 — Observer latency diagnosis in progress
-
-Canonical VM and main were verified at `ed39047`; the earlier `c90fe22`
-checkpoint has been superseded. Existing outcome-background and technical-writer
-fixes are already deployed and must not be repeated.
-
-Live observer evidence at 17:27 UTC: 196.133 s total, 70.301 s collection,
-85.862 s persistence, 19.761 s route refresh, 12/12 eligible rows. PAPER_ONLY
-and Binance remain canonical. Acceptance has NOT passed.
-
-Read-only production measurements: behavior COUNT(*) 35.231 s for 171336 rows;
-external-evidence COUNT(*) 6.776 s for 23340 rows. VM showed 87–92% instantaneous
-I/O wait; database 4.6 GB. These measurements identify expensive reporting work,
-not yet the complete cause of persistence delay. Added SQL-operation/commit and
-WebSocket handshake/observation/close telemetry to isolate the remaining work.
-Instrumented live cycle at 17:37:19 UTC: persistence 48.263 s, including
-38.442 s behavior COUNT and 8.024 s external COUNT; inserts 0.796 s and commit
-0.511 s, one attempt. WebSocket close phases cost 5.483–9.792 s. Candidate
-removes history counts from the live observer, limits snapshot close to 1 s, and
-uses a plain query-only connection for causal projection (previously repeated
-RuntimeConnection mirror DDL in an unreported phase). All phases are now exposed.
-Full local regression before close-timeout change: 500 tests passed. Next:
-validate consecutive fresh minutes plus
-realtime selection progress and absence of SQLite stalls before claiming repair.
+Next: finish acceptance of fresh eligible observer minutes, regular selection,
+no SQLITE_BUSY/stall; investigate current actionable blocker with live evidence.
+Then clean final handoff/PR, merge and return VM to canonical main. Do not rerun
+finished work or remove existing user changes.
 
 ---
 

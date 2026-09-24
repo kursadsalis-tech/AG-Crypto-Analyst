@@ -31,6 +31,18 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         self.assertEqual([call.args for call in alarm.call_args_list], [(240,), (0,)])
         self.assertEqual(handler.call_args.args, (observer.signal.SIGALRM, "previous"))
 
+    def test_cycle_deadline_cannot_be_swallowed_by_channel_error_handler(self):
+        args = type("Args", (), {"cycle_timeout_seconds": 240})()
+        def channel_cycle(_args):
+            try:
+                observer._cycle_timeout(None, None)
+            except Exception:
+                return "CHANNEL_ERROR"
+        with patch.object(observer, "run_cycle", side_effect=channel_cycle), patch.object(observer.signal, "alarm") as alarm:
+            with self.assertRaisesRegex(SystemExit, "time budget"):
+                observer.run_bounded_cycle(args)
+        self.assertEqual(alarm.call_args.args, (0,))
+
     def test_one_shot_mode_still_runs_once(self):
         with patch.object(observer.sys, "argv", ["observer", "--output", "/unused"]), patch.object(observer, "run_cycle") as cycle:
             observer.main()

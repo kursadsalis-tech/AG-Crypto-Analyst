@@ -71,15 +71,16 @@ def _database_locked(exc):
     )
 
 
-def run_cycle_once():
+def run_cycle_once(*, initialize=True):
     started = time.monotonic()
     stamp = utcnow()
     con = local_connection()
     try:
-        ensure_tables(con)
-        position_management.ensure_tables(con)
-        experience_memory.ensure_tables(con)
-        con.commit()
+        if initialize:
+            ensure_tables(con)
+            position_management.ensure_tables(con)
+            experience_memory.ensure_tables(con)
+            con.commit()
 
         reviews = experience_memory.review_closed_positions(con, stamp)
         learning = trade_learning.run(con, FORWARD_COHORT, stamp)
@@ -100,11 +101,11 @@ def run_cycle_once():
     }
 
 
-def run_cycle(attempts=4):
+def run_cycle(attempts=4, *, initialize=True):
     attempts = max(1, int(attempts))
     for attempt in range(1, attempts + 1):
         try:
-            result = run_cycle_once()
+            result = run_cycle_once(initialize=initialize)
             result["sqlite_attempts"] = attempt
             return result
         except sqlite3.OperationalError as exc:
@@ -118,6 +119,7 @@ def main():
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: trade learning accepts PAPER_ONLY exclusively")
 
+    initialized = False
     while True:
         started_at = utcnow()
         write_health({
@@ -129,7 +131,8 @@ def main():
             "may_send_real_orders": False,
         })
         try:
-            result = run_cycle()
+            result = run_cycle(initialize=not initialized)
+            initialized = True
             write_health({
                 "health_contract_version": HEALTH_CONTRACT_VERSION,
                 "status": "HEALTHY",

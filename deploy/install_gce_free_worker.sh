@@ -119,6 +119,7 @@ for unit in "${canonical_units[@]}"; do
 done
 
 sudo systemctl disable --now agca-market-behavior-observer.timer 2>/dev/null || true
+sudo rm -f /etc/systemd/system/agca-market-behavior-observer.timer
 sudo systemctl daemon-reload
 
 # These are intentionally not scheduled. Observer health is local-only and

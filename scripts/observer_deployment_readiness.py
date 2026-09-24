@@ -26,7 +26,6 @@ from scripts.observe_exact_macro_events import HEALTH_VERSION
 
 REQUIRED_FILES = (
     "deploy/agca-market-behavior-observer.service",
-    "deploy/agca-market-behavior-observer.timer",
     "deploy/agca-exact-macro-observer.service",
     "deploy/agca-exact-macro-observer.timer",
     "deploy/agca-cloud-attestation.service",

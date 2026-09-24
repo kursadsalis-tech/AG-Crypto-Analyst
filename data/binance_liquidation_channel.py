@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timezone
 
 import certifi
-import websockets
 
 from data.binance_live_evidence import measured_connection
 
