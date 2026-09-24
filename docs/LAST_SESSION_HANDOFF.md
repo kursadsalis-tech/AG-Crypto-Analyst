@@ -13,20 +13,32 @@ writer uses bounded transactions; technical seed/tail reads use existing index
 order; insufficient contiguous bars are rejected before reading full history.
 Prior full regression passed 505 tests; subsequent focused suites and PR CI pass.
 
-Acceptance is NOT complete: on Sep 24 08:33 observer total reached 178.374 s,
-persistence 69.811 s. At 08:35 total 119.504 s, persistence 8.732 s, 12/12
-eligible. Realtime restarted on 0f1948b and connected; startup SQLITE_BUSY
-occurred in legacy summary setup. Selection advances, latest blocker is
-PORTFOLIO_VALUATION_STALE_OR_MISSING. Do not weaken this or freshness gates.
+Acceptance is NOT complete. e1a79c2 deployed, full PR CI passed. At 08:47 UTC
+observer cycle 202.787 s / persistence 87.517 s; realtime scan 108.003 s and
+selection gap 109.512 s. Same canonical workers remained active. No gate was
+weakened. Learning startup/history inefficiencies alone were not sufficient.
 
-New direct profiling: technical writer held WAL writer lock in 75/120 samples
-across 30 seconds, while trade learner read 38 MB from disk. Bounded read-only
-profiling of learner isolated ~18 s legacy-audit scan and ~25 s position-review
-scan before another eligible-history scan exceeded the 50 s budget. Existing
-immutable legacy audit was already present. Current change reuses that audit,
-drives reviews from frozen theses, indexes eligible positions, and runs worker
-bootstrap once per process instead of each learning cycle. Deploy and measure
-before declaring success. Profiling always restored the learning service.
+Definitive live py-spy plus /proc/locks samples at 08:50 UTC found realtime
+holding WAL writer byte 120 while blocked at behavior_decision_core.evaluate's
+external-evidence MAX/EXISTS query (line 727 in e1a79c2). It searched all retained
+external minutes although only the last 180 seconds can be eligible. The policy
+review INSERT ran before that query, retaining the writer lock throughout.
+Current candidate bounds both latest-minute searches by the existing freshness
+window and defers the review write until evidence/risk reads finish. Focused
+behavior + PAPER integration regression: 61 passed. Deploy and accept next.
+
+Additional measured waste removed in e1a79c2: ~18 s repeated immutable legacy
+audit scan and ~25 s review scan. Reuse the stored audit, drive reviews from
+frozen theses, index eligible positions and bootstrap learning once per process.
+The new index installed in 2.485 s. Background learning still does other
+historical research; do not assume all I/O has been eliminated.
+
+Current ACTIONABLE blocker: PORTFOLIO_VALUATION_STALE_OR_MISSING. Direct DB
+inspection found OPEN FILUSDT and UNIUSDT SPOT with no market_klines 1h rows.
+Canonical live Spot quotes do exist. Address the actual valuation source after
+observer/scan acceptance; do not invent candle evidence or loosen freshness.
+Temporary py-spy tooling exists at VM /tmp/agca-profile-tools and must be removed
+when direct profiling is finished. No diagnostic scripts were added to repo.
 
 Spot acceptance already passed using production Binance transport: 5 complete
 BTCUSDT states, quote ages 123/123/354 ms, vision fallback, zero stale receives,

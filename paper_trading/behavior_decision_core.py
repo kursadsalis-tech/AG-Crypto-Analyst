@@ -671,17 +671,20 @@ def evaluate(con, now=None):
         "pattern_cache": pattern_cache,
     }
     review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    con.execute("""INSERT OR IGNORE INTO paper_behavior_policy_reviews(
-        created_at,core_version,horizon_minutes,status,evidence_json,execution_allowed
-    ) VALUES(?,?,?,?,?,?)""", (
-        iso(now), VERSION, HORIZON_MINUTES,
-        ("PROMOTION_READY_PATTERNS_AVAILABLE" if promoted_patterns
-         else "PAPER_EXPLORATION_AVAILABLE" if exploration_patterns
-         else "EXECUTION_NEGATIVE_PATTERNS_SUSPENDED" if suspended_patterns
-         else "COLLECTING_TESTABLE_HYPOTHESES"),
-        review_json, int(bool(exploration_patterns)),
-    ))
+    def record_review():
+        con.execute("""INSERT OR IGNORE INTO paper_behavior_policy_reviews(
+            created_at,core_version,horizon_minutes,status,evidence_json,execution_allowed
+        ) VALUES(?,?,?,?,?,?)""", (
+            iso(now), VERSION, HORIZON_MINUTES,
+            ("PROMOTION_READY_PATTERNS_AVAILABLE" if promoted_patterns
+             else "PAPER_EXPLORATION_AVAILABLE" if exploration_patterns
+             else "EXECUTION_NEGATIVE_PATTERNS_SUSPENDED" if suspended_patterns
+             else "COLLECTING_TESTABLE_HYPOTHESES"),
+            review_json, int(bool(exploration_patterns)),
+        ))
+
     if cache_required and pattern_cache.get("status") != "READY":
+        record_review()
         con.commit()
         return {
             "status": "BEHAVIOR_PATTERN_CACHE_UNAVAILABLE",
@@ -691,17 +694,19 @@ def evaluate(con, now=None):
         "PRAGMA table_info(market_behavior_minute_features)"
     )}
     if "market_data_provider" not in feature_columns:
+        record_review()
         con.commit()
         return {
             "status": "NO_CANONICAL_BEHAVIOR_PROVENANCE",
             "candidates": [], "review": review,
         }
     cutoff_ms = int(now.timestamp() * 1000)
+    oldest_ms = cutoff_ms - int(MAX_EVIDENCE_AGE_SECONDS * 1000)
     latest_behavior = con.execute("""SELECT MAX(minute_end_timestamp_ms)
         FROM market_behavior_minute_features
         WHERE market_data_provider='BINANCE'
-          AND eligible_for_learning=1 AND minute_end_timestamp_ms<=?""",
-        (cutoff_ms,)).fetchone()[0]
+          AND eligible_for_learning=1 AND minute_end_timestamp_ms BETWEEN ? AND ?""",
+        (oldest_ms, cutoff_ms)).fetchone()[0]
     has_market_structure_hypothesis = any(
         kind == "MARKET_STRUCTURE" for kind, _ in exploration_patterns
     )
@@ -712,24 +717,27 @@ def evaluate(con, now=None):
     # exists for the same closed minute.  The previous behavior-table-first
     # correlated MAX/EXISTS query could walk millions of retained minute rows
     # when external events were sparse, stalling the realtime opportunity scan.
+    # Even an evidence-first MAX can scan retained history when no recent event
+    # matches canonical behavior. Only the unchanged freshness window can act.
     latest_external = None
     if not has_market_structure_hypothesis:
         latest_external = con.execute("""
             SELECT MAX(e.minute_end_timestamp_ms)
             FROM causal_minute_external_evidence e
-            WHERE e.minute_end_timestamp_ms<=?
+            WHERE e.minute_end_timestamp_ms BETWEEN ? AND ?
               AND EXISTS (
                   SELECT 1 FROM market_behavior_minute_features m
                   WHERE m.minute_end_timestamp_ms=e.minute_end_timestamp_ms
                     AND m.market_data_provider='BINANCE'
                     AND m.eligible_for_learning=1
               )
-        """, (cutoff_ms,)).fetchone()[0]
+        """, (oldest_ms, cutoff_ms)).fetchone()[0]
     latest = (
         latest_behavior if has_market_structure_hypothesis or latest_external is None
         else latest_external
     )
     if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
+        record_review()
         con.commit()
         return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
     risks = _latest_risk(con, now)
@@ -751,6 +759,9 @@ def evaluate(con, now=None):
         WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
           AND eligible_for_learning=1 ORDER BY instrument
     """, (latest,)).fetchall()
+    # Keep the writer lock out of all evidence/risk reads. The remaining
+    # decision inserts are bounded by this one fresh minute's instruments.
+    record_review()
     candidates = []
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
