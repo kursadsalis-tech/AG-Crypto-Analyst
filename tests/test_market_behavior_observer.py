@@ -1,11 +1,15 @@
+import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from scripts import collect_closed_behavior_minute as observer
+from data import binance_live_evidence as live
 
 
 class MarketBehaviorObserverTests(unittest.TestCase):
@@ -58,19 +62,122 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         self.assertEqual(target, 60_000)
         self.assertIsNone(skipped)
 
-    def test_late_start_waits_until_skipped_boundary_before_collection(self):
-        with patch.object(observer.time, "time", return_value=30.0), patch.object(
-            observer.time, "sleep"
-        ) as sleeper:
-            waited = observer.wait_for_collection_window(60_000)
-        self.assertEqual(waited, 30.0)
-        sleeper.assert_called_once_with(30.02)
+    def test_late_hydration_keeps_all_four_samples_in_the_actual_target_minute(self):
+        clock = SimpleNamespace(now=20.0)
+        clock.time = clock.monotonic = lambda: clock.now
+        real_sleep = asyncio.sleep
+        active = set()
+        stamps = []
+        deadlines = []
+        completed = asyncio.Event()
 
-    def test_on_time_start_does_not_wait(self):
-        with patch.object(observer.time, "sleep") as sleeper:
-            waited = observer.wait_for_collection_window(None)
-        self.assertEqual(waited, 0.0)
-        sleeper.assert_not_called()
+        async def sleep(delay):
+            # The old eight-second setup estimate chose minute 60 here;
+            # actual hydration at second 34 would put sample 4 outside it.
+            clock.now += 14.0 if delay == 0.05 and clock.now == 20.0 else delay
+            await real_sleep(0)
+
+        @asynccontextmanager
+        async def connection(_url, *, phase, **_kwargs):
+            active.add(phase)
+            sent = False
+            async def recv():
+                nonlocal sent
+                if sent:
+                    await asyncio.Future()
+                sent = True
+                payload = {"s": "BTCUSDT", "E": int(clock.now * 1000)}
+                payload.update({"e": "depthUpdate", "b": [["100", "1"]],
+                                "a": [["101", "1"]]} if phase == "public" else
+                               {"e": "markPriceUpdate", "r": "0.001", "T": 120_000})
+                return json.dumps(payload)
+            try:
+                yield SimpleNamespace(recv=recv)
+            finally:
+                active.remove(phase)
+
+        def snapshot(_states, stamp, *_connected):
+            self.assertEqual(active, {"public", "market"})
+            stamps.append(stamp)
+            if len(stamps) == 4:
+                completed.set()
+            return {"collected_timestamp_ms": stamp}
+
+        async def probe(*_args, observe_until_ms, **_kwargs):
+            deadlines.append(observe_until_ms())
+            await completed.wait()
+            deadlines.append(observe_until_ms())
+            return {}
+
+        timings = {}
+        args = SimpleNamespace(samples=4, cadence_seconds=10)
+        with patch.object(observer, "time", clock), patch.object(live, "time", clock), patch.object(
+            asyncio, "sleep", new=sleep
+        ), patch.object(live, "measured_connection", connection), patch.object(
+            live, "_snapshot", side_effect=snapshot
+        ), patch.object(observer, "probe", new=probe), patch.object(
+            observer, "build_bundle", side_effect=lambda market, _liquidations: market
+        ):
+            bundles, target, alignment = asyncio.run(observer.collect_minute(
+                {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
+                {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
+                {}, args, timings,
+            ))
+        self.assertEqual(target, 120_000)
+        self.assertEqual(len(bundles), 4)
+        self.assertTrue(all(target - 60_000 <= stamp < target for stamp in stamps))
+        for earlier, later in zip(stamps, stamps[1:]):
+            self.assertAlmostEqual(later - earlier, 10_000, delta=1)
+        self.assertGreater(deadlines[0], 120_000)
+        self.assertEqual(deadlines[-1], target)
+        self.assertTrue(alignment["late_start_recovery"])
+        self.assertAlmostEqual(alignment["alignment_wait_ms"], 26_020, delta=1)
+        self.assertEqual(timings["deep_hydration"], 14_000)
+        self.assertEqual(active, set())
+
+    def test_collection_without_target_cancels_liquidation_instead_of_waiting(self):
+        cancelled = []
+        async def probe(*_args, **_kwargs):
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.append(True)
+        with patch.object(observer, "probe", new=probe), patch.object(
+            observer, "collect_minute_snapshots", new=AsyncMock(return_value=[])
+        ):
+            with self.assertRaisesRegex(RuntimeError, "target minute"):
+                asyncio.run(observer.collect_minute({}, {}, {}, SimpleNamespace(
+                    samples=4, cadence_seconds=10)))
+        self.assertEqual(cancelled, [True])
+
+    def test_cancelled_collection_cancels_both_stream_tasks(self):
+        cancelled = []
+        running = []
+        started = asyncio.Event()
+        async def waiting(name):
+            running.append(name)
+            if len(running) == 2:
+                started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.append(name)
+        async def probe(**_kwargs):
+            await waiting("liquidation")
+        async def collect(*_args, **_kwargs):
+            await waiting("market")
+        async def run():
+            task = asyncio.create_task(observer.collect_minute({}, {}, {}, SimpleNamespace(
+                samples=4, cadence_seconds=10)))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        with patch.object(observer, "probe", new=probe), patch.object(
+            observer, "collect_minute_snapshots", new=collect
+        ):
+            asyncio.run(run())
+        self.assertCountEqual(cancelled, ["liquidation", "market"])
 
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
@@ -94,19 +201,20 @@ class MarketBehaviorObserverTests(unittest.TestCase):
 
     def test_behavior_collection_does_not_request_technical_kline_sink(self):
         args = type("Args", (), {"samples": 1, "cadence_seconds": 1})()
-        with patch.object(
+        async def collect_snapshots(*_args, before_sampling, **_kwargs):
+            await before_sampling()
+            return []
+        with patch.object(observer.time, "time", return_value=20.0), patch.object(
             observer, "probe", new=AsyncMock(return_value=[]),
         ), patch.object(
             observer, "collect_minute_snapshots",
-            new=AsyncMock(return_value=[]),
+            new=AsyncMock(side_effect=collect_snapshots),
         ) as collect:
-            import asyncio
             asyncio.run(observer.collect_minute(
                 {"deep_stream_instruments": []},
                 {"selected": []},
                 {},
                 args,
-                int(observer.time.time() * 1000) + 1_000,
             ))
         self.assertIsNone(collect.await_args.kwargs["closed_bar_sink"])
         self.assertIsNone(collect.await_args.kwargs["observe_until_ms"])

@@ -456,6 +456,7 @@ async def collect_minute_snapshots(
     hydration_timeout_seconds=6.0,
     closed_bar_sink=None,
     observe_until_ms=None,
+    before_sampling=None,
     timings=None,
 ):
     """Collect deep evidence and exact closed 1m bars over one observer minute."""
@@ -578,7 +579,8 @@ async def collect_minute_snapshots(
         asyncio.create_task(technical_receiver()),
     ]
     try:
-        hydrate_deadline = time.monotonic() + float(hydration_timeout_seconds)
+        hydration_started = time.monotonic()
+        hydrate_deadline = hydration_started + float(hydration_timeout_seconds)
         while time.monotonic() < hydrate_deadline:
             hydrated = all(
                 state.bids and state.asks and state.funding_rate is not None
@@ -587,6 +589,11 @@ async def collect_minute_snapshots(
             if hydrated and connectivity["market"]:
                 break
             await asyncio.sleep(0.05)
+
+        if timings is not None:
+            timings["deep_hydration"] = round((time.monotonic() - hydration_started) * 1000, 3)
+        if before_sampling is not None:
+            await before_sampling()
 
         snapshots = []
         started = time.monotonic()

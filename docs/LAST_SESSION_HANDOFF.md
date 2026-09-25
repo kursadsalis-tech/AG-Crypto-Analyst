@@ -2,7 +2,7 @@
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-Canonical main is `ed39047`; VM candidate is `0e1a4ef`, pending live acceptance.
+Canonical main is `ed39047`; VM candidate is `b2ea539`, pending live acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 User explicitly rejected paid cloud resources. No paid resource was created.
 
@@ -24,25 +24,30 @@ Measured fixes:
   Unchanged inputs skip repeat history reviews; corrections still trigger them.
   Historical aggregation is separated from write phases.
 
-Live acceptance is NOT complete. The f31b6e8 window after index bootstrap
-produced 12/12 eligible minutes in 63.017 and 64.277 s with persistence
-1.253 and 2.281 s, but also a 0/12 minute and recurring SQLITE_BUSY. Do not use
-CONNECTED/HEALTHY alone, an overwritten final error field, or a single fast
-query as acceptance. Track the last eligible minute across ineligible cycles.
+Live acceptance is NOT complete. b2ea539 removed the measured retained-history
+research reads with covering partial indexes. Eligible closed count now takes
+4.9 ms, trader count 2.6 ms and time bounds 1.5 ms. Current open consensus uses
+eligible OPEN candidates plus indexed newer-observation probes, preserving
+suppression by later CLOSED or ineligible evidence; live read took 2.090 s.
+Learning is HEALTHY and repeatedly skips unchanged inputs. Full CI passed
+120 integration and 521 full-suite tests.
 
-Direct follow-up profiling found trade learning in
-external_trader_learning.run_review's eligible closed-trade count. In 15 s it
-read 13.47 MB while technical/realtime read 1.59/2.20 MB. Live EXPLAIN confirmed
-all three eligibility counts/time-bound queries scanned retained raw-payload
-tables. Current change adds small partial identity/time indexes for eligible
-snapshots and eligible closed observations; query semantics and existing
-indexes are preserved. Live eligible-index build took 58.668 s; closed count now 4.9 ms, trader
-count 2.6 ms and bounds 1.5 ms. All use covering partial indexes.
-Follow-up stacks at 20:44:17/37/57 then isolated full-history grouping in
-continuous_improvement._latest_eligible_open. Current change uses eligible
-OPEN candidates and indexed newer-observation probes, preserving suppression
-by later CLOSED or ineligible rows. Focused regression: 15 passed.
-f31b6e8 CI: 120 integration and 517 full-suite tests passed.
+Sep 25 02:45–02:53 UTC live window: all 7 cycles eligible, maximum eligible
+evidence age 124.557 s, 182 selection runs, maximum run gap 14.365 s,
+maximum sampled scan 9.577 s, no observed SQLITE_BUSY or technical-plan error.
+However the longer retained record since Sep 24 21:00 had 3/331 ineligible
+cycles, 2 NO_FRESH_ELIGIBLE_BEHAVIOR runs and maximum age 183.906 s.
+Each failed minute had exactly 3 samples in every row; only minimum_samples
+failed. Do NOT hide this intermittent failure behind the short passing window.
+
+Current code corrects the scheduling cause: select the target minute AFTER
+WebSocket hydration, when the real sampling start is known; if the complete
+four-sample cadence cannot fit, wait at the next boundary with streams open.
+The liquidation stream follows the same actual absolute close. Minimum samples,
+gap, provenance and 180 s freshness gates remain unchanged. The old
+preconnection blocking wait is removed; failure/cancellation closes both tasks.
+Focused observer/Binance/rolling regression: 30 passed, including late hydration,
+deadline propagation and cancellation. Final timing change awaits deploy/live check.
 
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
 5 complete states, quote ages 123/123/354 ms, canonical vision fallback,
@@ -56,7 +61,7 @@ still needs confirmation after the current bottleneck is removed.
 Temporary live profiling tool is currently installed at
 `/tmp/agca-profile-tools`; remove it after the investigation. No profiling
 script or alternate runtime data file was added to the repository.
-Next: deploy/bootstrap eligible OPEN consensus index/query, complete acceptance with all
+Next: deploy hydrated sample alignment, complete acceptance with all
 normal workers running, then finalize PR/merge and return VM to canonical main.
 Do not claim resolution before reliable eligible minutes below 180 s, regular
 selection runs and no observed SQLITE_BUSY/stalls have been demonstrated.

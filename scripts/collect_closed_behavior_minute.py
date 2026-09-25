@@ -52,19 +52,6 @@ def collection_alignment(now_ms, required_span_seconds):
     return next_end_ms + MINUTE_MS, next_end_ms
 
 
-def wait_for_collection_window(not_before_ms):
-    """Delay late-start recovery so snapshots belong to the target minute."""
-    if not_before_ms is None:
-        return 0.0
-    delay = max(
-        0.0,
-        (int(not_before_ms) - int(time.time() * 1000)) / 1000.0,
-    )
-    if delay > 0.0:
-        time.sleep(delay + 0.02)
-    return delay
-
-
 def refresh_market_route(timings=None):
     tickers = asyncio.run(fetch_market_tickers(timings=timings))
     snapshot_ms = int(time.time() * 1000)
@@ -86,9 +73,35 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-async def collect_minute(route, universe, contract_values, args, minute_end_ms, timings=None):
-    duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
-    liquidation_task = asyncio.create_task(probe(duration, contract_values, timings=timings))
+async def collect_minute(route, universe, contract_values, args, timings=None):
+    required_span = (args.samples - 1) * args.cadence_seconds + 1.0
+    if required_span >= MINUTE_MS / 1000:
+        raise ValueError("requested samples and cadence cannot fit in one minute")
+    minute_end_ms = None
+    alignment = {"alignment_wait_ms": 0, "late_start_recovery": False}
+
+    async def align_hydrated_sampling():
+        nonlocal minute_end_ms
+        started = time.monotonic()
+        while True:
+            now_ms = int(time.time() * 1000)
+            target, not_before = collection_alignment(now_ms, required_span)
+            if not_before is None:
+                minute_end_ms = target
+                break
+            alignment["late_start_recovery"] = True
+            await asyncio.sleep(max(0.0, (not_before - now_ms) / 1000.0) + 0.02)
+        alignment["alignment_wait_ms"] = round((time.monotonic() - started) * 1000)
+
+    def liquidation_close():
+        # Hydration and alignment may move the target. Keep the stream alive
+        # until sample 1 establishes the actual closed-minute boundary.
+        return minute_end_ms if minute_end_ms is not None else int(time.time() * 1000) + 2 * MINUTE_MS
+
+    liquidation_task = asyncio.create_task(probe(
+        contract_values=contract_values, timings=timings,
+        observe_until_ms=liquidation_close,
+    ))
     market_task = asyncio.create_task(collect_minute_snapshots(
         route,
         universe,
@@ -96,12 +109,20 @@ async def collect_minute(route, universe, contract_values, args, minute_end_ms, 
         cadence_seconds=args.cadence_seconds,
         closed_bar_sink=None,
         observe_until_ms=None,
+        before_sampling=align_hydrated_sampling,
         timings=timings,
     ))
-    market_snapshots, liquidations = await asyncio.gather(
-        market_task, liquidation_task
-    )
-    return [build_bundle(market, liquidations) for market in market_snapshots]
+    try:
+        market_snapshots = await market_task
+        if minute_end_ms is None:
+            raise RuntimeError("market collection did not establish a target minute")
+        liquidations = await liquidation_task
+        return ([build_bundle(market, liquidations) for market in market_snapshots],
+                minute_end_ms, alignment)
+    finally:
+        for task in (market_task, liquidation_task):
+            task.cancel()
+        await asyncio.gather(market_task, liquidation_task, return_exceptions=True)
 
 
 def run_cycle(args):
@@ -119,21 +140,13 @@ def run_cycle(args):
     contract_values = {row["instrument"]: row.get("contract_value", 1.0)
                        for row in universe.get("selected", [])}
 
-    required_span = (args.samples - 1) * args.cadence_seconds + 8
-    now_ms = int(time.time() * 1000)
-    minute_end_ms, collection_not_before_ms = collection_alignment(
-        now_ms, required_span
-    )
-    alignment_wait_seconds = wait_for_collection_window(
-        collection_not_before_ms
-    )
-
     collection_started = time.monotonic()
-    bundles = asyncio.run(
-        collect_minute(route, universe, contract_values, args, minute_end_ms, transport_timings))
-    collection_ms = round(
-        (time.monotonic() - collection_started) * 1000.0, 3
-    )
+    bundles, minute_end_ms, alignment = asyncio.run(
+        collect_minute(route, universe, contract_values, args, transport_timings))
+    collection_ms = round(max(
+        0.0, (time.monotonic() - collection_started) * 1000.0
+        - alignment["alignment_wait_ms"],
+    ), 3)
 
     close_wait_started = time.monotonic()
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
@@ -166,8 +179,7 @@ def run_cycle(args):
         "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
-        "alignment_wait_ms": int(round(alignment_wait_seconds * 1000.0)),
-        "late_start_recovery": bool(collection_not_before_ms is not None),
+        **alignment,
     }
     persistence_ms = None
     if args.database:
@@ -180,7 +192,7 @@ def run_cycle(args):
     result["transport_timings_ms"] = transport_timings
     result["runtime_timings_ms"] = {
         "route_refresh": route_refresh_ms,
-        "alignment_wait": int(round(alignment_wait_seconds * 1000.0)),
+        "alignment_wait": alignment["alignment_wait_ms"],
         "collection": collection_ms,
         "persistence": persistence_ms,
         "closed_minute_wait": close_wait_ms,
