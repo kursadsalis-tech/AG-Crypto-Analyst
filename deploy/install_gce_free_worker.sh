@@ -92,6 +92,7 @@ for unit in "${retired[@]}"; do
 done
 
 canonical_units=(
+  agca-maintenance.slice
   agca-paper-realtime-worker.service
   agca-technical-kline-worker.service
   agca-behavior-learning-worker.service
@@ -116,6 +117,13 @@ canonical_units=(
 )
 for unit in "${canonical_units[@]}"; do
   sudo install -m 644 "deploy/$unit" "/etc/systemd/system/$unit"
+done
+
+# The next normal apt activation inherits the shared resource budget. Never
+# restart a running package transaction or change its existing timer schedule.
+for unit in apt-daily.service apt-daily-upgrade.service; do
+  sudo install -d -m 755 "/etc/systemd/system/$unit.d"
+  sudo install -m 644 deploy/agca-apt-maintenance.conf "/etc/systemd/system/$unit.d/50-agca-resources.conf"
 done
 
 sudo systemctl disable --now agca-market-behavior-observer.timer 2>/dev/null || true

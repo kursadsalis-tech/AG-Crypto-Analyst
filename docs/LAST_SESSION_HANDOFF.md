@@ -1,8 +1,8 @@
-# 2026-09-24 — Observer/SQLite live acceptance remains open
+# 2026-09-27 — Observer/SQLite acceptance and host resource isolation
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-Canonical main is `ed39047`; VM candidate is `b2ea539`, pending live acceptance.
+Canonical main is `ed39047`; VM candidate is `8a24927`, pending live acceptance.
 PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
 User explicitly rejected paid cloud resources. No paid resource was created.
 
@@ -47,7 +47,21 @@ The liquidation stream follows the same actual absolute close. Minimum samples,
 gap, provenance and 180 s freshness gates remain unchanged. The old
 preconnection blocking wait is removed; failure/cancellation closes both tasks.
 Focused observer/Binance/rolling regression: 30 passed, including late hydration,
-deadline propagation and cancellation. Final timing change awaits deploy/live check.
+deadline propagation and cancellation. Deployed Sep 25 02:57 UTC; restart 1.237 s.
+CI passed 120 integration / 525 full offline tests.
+
+Long-run evidence still prevents acceptance:
+- Sep 25 02:59–07:58 UTC: 297 cycles, 296 eligible. The failed 07:02 minute
+  had a 48.520 s sample gap, while selection gaps reached 58.506 s.
+  apt-daily-upgrade ran 06:53:23–07:00:57 (243.380 CPU seconds) with repeated
+  system memory-pressure events through 07:02:27. Other services timed out too.
+- Sep 25 08:00–Sep 26 22:02 UTC: 2,278 cycles, 4 not fully eligible.
+  Three had no eligible row (Sep 26 16:34,16:35,20:40), each with 3 samples.
+  These require diagnosis before merge; a short passing window is insufficient.
+- Current proposal puts apt list refresh/upgrades in a shared maintenance slice:
+  20% of one CPU, MemoryHigh192M, boot-disk read/write40/20IOPS and2/1MB/s.
+  This preserves security timers, avoids hard memory kills, and needs effective
+  cgroup verification plus bounded live maintenance-load acceptance.
 
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
 5 complete states, quote ages 123/123/354 ms, canonical vision fallback,
@@ -58,11 +72,10 @@ A natural ACTIONABLE selection on efc0ea4 opened one PAPER position without
 TECHNICAL_PLAN_UNAVAILABLE. Technical-plan acceptance under sustained load
 still needs confirmation after the current bottleneck is removed.
 
-Temporary live profiling tool is currently installed at
-`/tmp/agca-profile-tools`; remove it after the investigation. No profiling
-script or alternate runtime data file was added to the repository.
-Next: deploy hydrated sample alignment, complete acceptance with all
-normal workers running, then finalize PR/merge and return VM to canonical main.
+Temporary `/tmp/agca-profile-tools` was removed. No profiling script or
+alternate runtime data file was added to the repository.
+Next: isolate maintenance resource contention and remaining missing-sample
+windows, complete acceptance, then finalize PR/merge and return VM to main.
 Do not claim resolution before reliable eligible minutes below 180 s, regular
 selection runs and no observed SQLITE_BUSY/stalls have been demonstrated.
 
