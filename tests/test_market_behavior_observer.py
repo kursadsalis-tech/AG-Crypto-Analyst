@@ -62,24 +62,30 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         self.assertEqual(target, 60_000)
         self.assertIsNone(skipped)
 
-    def test_late_hydration_keeps_all_four_samples_in_the_actual_target_minute(self):
-        clock = SimpleNamespace(now=20.0)
+    def collect_clocked_window(self, *, start, hydration_delay, fourth_sample_delay=0):
+        clock = SimpleNamespace(now=start)
         clock.time = clock.monotonic = lambda: clock.now
         real_sleep = asyncio.sleep
-        active = set()
-        stamps = []
-        deadlines = []
+        active, opened, stamps, deadlines, rollover_deadlines = set(), [], [], [], []
+        callbacks = []
         completed = asyncio.Event()
+        delayed = False
+        expected_captures = 7 if fourth_sample_delay else 4
 
         async def sleep(delay):
-            # The old eight-second setup estimate chose minute 60 here;
-            # actual hydration at second 34 would put sample 4 outside it.
-            clock.now += 14.0 if delay == 0.05 and clock.now == 20.0 else delay
+            nonlocal delayed
+            # Model actual wall/monotonic progress without waiting in real time.
+            clock.now += hydration_delay if delay == 0.05 and clock.now == start else delay
+            if fourth_sample_delay and len(stamps) == 3 and not delayed:
+                clock.now += fourth_sample_delay
+                delayed = True
+                rollover_deadlines.append(callbacks[0]())
             await real_sleep(0)
 
         @asynccontextmanager
         async def connection(_url, *, phase, **_kwargs):
             active.add(phase)
+            opened.append(phase)
             sent = False
             async def recv():
                 nonlocal sent
@@ -99,18 +105,27 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         def snapshot(_states, stamp, *_connected):
             self.assertEqual(active, {"public", "market"})
             stamps.append(stamp)
-            if len(stamps) == 4:
+            if len(stamps) == expected_captures:
                 completed.set()
             return {"collected_timestamp_ms": stamp}
 
         async def probe(*_args, observe_until_ms, **_kwargs):
+            callbacks.append(observe_until_ms)
             deadlines.append(observe_until_ms())
             await completed.wait()
+            while observe_until_ms() > 120_000:
+                await real_sleep(0)
             deadlines.append(observe_until_ms())
             return {}
 
         timings = {}
         args = SimpleNamespace(samples=4, cadence_seconds=10)
+        async def run():
+            return await asyncio.wait_for(observer.collect_minute(
+                {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
+                {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
+                {}, args, timings,
+            ), timeout=1)
         with patch.object(observer, "time", clock), patch.object(live, "time", clock), patch.object(
             asyncio, "sleep", new=sleep
         ), patch.object(live, "measured_connection", connection), patch.object(
@@ -118,22 +133,39 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         ), patch.object(observer, "probe", new=probe), patch.object(
             observer, "build_bundle", side_effect=lambda market, _liquidations: market
         ):
-            bundles, target, alignment = asyncio.run(observer.collect_minute(
-                {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
-                {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
-                {}, args, timings,
-            ))
+            bundles, target, alignment = asyncio.run(run())
+        final_stamps = [bundle["collected_timestamp_ms"] for bundle in bundles]
         self.assertEqual(target, 120_000)
         self.assertEqual(len(bundles), 4)
-        self.assertTrue(all(target - 60_000 <= stamp < target for stamp in stamps))
-        for earlier, later in zip(stamps, stamps[1:]):
+        self.assertTrue(all(target - 60_000 <= stamp < target for stamp in final_stamps))
+        for earlier, later in zip(final_stamps, final_stamps[1:]):
             self.assertAlmostEqual(later - earlier, 10_000, delta=1)
         self.assertGreater(deadlines[0], 120_000)
         self.assertEqual(deadlines[-1], target)
+        self.assertEqual(alignment["sample_first_timestamp_ms"], final_stamps[0])
+        self.assertEqual(alignment["sample_last_timestamp_ms"], final_stamps[-1])
+        self.assertCountEqual(opened, ["public", "market"])
+        self.assertEqual(active, set())
+        return alignment, timings, stamps, rollover_deadlines
+
+    def test_late_hydration_keeps_all_four_samples_in_the_actual_target_minute(self):
+        # The old eight-second setup estimate chose minute 60 here, but actual
+        # hydration at second 34 would put sample 4 outside that minute.
+        alignment, timings, _stamps, _deadlines = self.collect_clocked_window(
+            start=20.0, hydration_delay=14.0)
         self.assertTrue(alignment["late_start_recovery"])
         self.assertAlmostEqual(alignment["alignment_wait_ms"], 26_020, delta=1)
+        self.assertEqual(alignment["sampling_rollover_count"], 0)
         self.assertEqual(timings["deep_hydration"], 14_000)
-        self.assertEqual(active, set())
+
+    def test_delayed_fourth_sample_restarts_window_and_keeps_liquidation_open(self):
+        alignment, _timings, stamps, deadlines = self.collect_clocked_window(
+            start=28.5, hydration_delay=0.05, fourth_sample_delay=2.0)
+        self.assertEqual(alignment["sampling_rollover_count"], 1)
+        self.assertEqual(len(stamps), 7)
+        self.assertTrue(all(stamp < 60_000 for stamp in stamps[:3]))
+        self.assertTrue(all(stamp >= 60_000 for stamp in stamps[3:]))
+        self.assertGreater(deadlines[0], 120_000)
 
     def test_collection_without_target_cancels_liquidation_instead_of_waiting(self):
         cancelled = []

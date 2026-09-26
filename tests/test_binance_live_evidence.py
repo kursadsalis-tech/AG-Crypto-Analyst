@@ -1,4 +1,6 @@
 import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +25,24 @@ class BinanceLiveEvidenceTests(unittest.TestCase):
             "socket_connect": 1000, "socket_observe": 3000, "socket_close": 2000,
         })
         socket.__aexit__.assert_awaited_once()
+
+    def test_before_sampling_hook_can_still_return_no_deadline(self):
+        async def recv():
+            await asyncio.Future()
+        @asynccontextmanager
+        async def connection(*_args, **_kwargs):
+            yield SimpleNamespace(recv=recv)
+        hook = AsyncMock(return_value=None)
+        with patch.object(live, "measured_connection", connection):
+            snapshots = asyncio.run(live.collect_minute_snapshots(
+                {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
+                {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
+                samples=1, hydration_timeout_seconds=0, before_sampling=hook,
+            ))
+        hook.assert_awaited_once()
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]["collected_timestamp_ms"],
+                         snapshots[0]["instruments"][0]["collected_timestamp_ms"])
 
     def test_snapshot_normalizes_websocket_book_flow_and_funding(self):
         state = live._DeepState(

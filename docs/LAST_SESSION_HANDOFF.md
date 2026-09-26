@@ -63,6 +63,23 @@ Long-run evidence still prevents acceptance:
   This preserves security timers, avoids hard memory kills, and needs effective
   cgroup verification plus bounded live maintenance-load acceptance.
 
+Latest candidate changes (live acceptance pending):
+- Boundary recovery checks the actual sampling timestamp against its close after
+  each wake. A crossed partial window is discarded and resampled using the same
+  open streams. Liquidation remains open until the final sampling target is
+  confirmed. Actual first/last sample times and rollover count are reported.
+  The delayed-fourth regression verifies replacement samples and connection reuse.
+- Health polling ran every 15 s and consumed roughly 3.7–5.2 CPU seconds per
+  invocation. Its import alone measured 2.272 s wall / 2.242 s CPU on the VM.
+  The poll no longer imports the entire trading engine or bootstraps all mirror
+  tables/triggers. It uses plain SQLite, with alert-table setup only on a health
+  transition. Alert deduplication, fail-closed source checks and cadence remain.
+- Maintenance policy is installed and verified: cpu.max20000/100000,
+  memory.high201326592, boot disk8:0 io.max rbps2000000/wbps1000000/riops40/wiops20.
+  Existing apt timers are unchanged and neither package transaction was running.
+- Focused verification: 32 observer/transport tests and 13 health/attestation tests
+  passed. Final CI and live loaded acceptance remain required.
+
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
 5 complete states, quote ages 123/123/354 ms, canonical vision fallback,
 zero stale receives, no DB writes or orders. Do not repeat without cause.

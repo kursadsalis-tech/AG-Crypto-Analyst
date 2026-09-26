@@ -78,10 +78,14 @@ async def collect_minute(route, universe, contract_values, args, timings=None):
     if required_span >= MINUTE_MS / 1000:
         raise ValueError("requested samples and cadence cannot fit in one minute")
     minute_end_ms = None
-    alignment = {"alignment_wait_ms": 0, "late_start_recovery": False}
+    market_task = None
+    alignment = {"alignment_wait_ms": 0, "late_start_recovery": False,
+                 "sampling_rollover_count": 0}
 
     async def align_hydrated_sampling():
         nonlocal minute_end_ms
+        if minute_end_ms is not None:
+            alignment["sampling_rollover_count"] += 1
         started = time.monotonic()
         while True:
             now_ms = int(time.time() * 1000)
@@ -91,12 +95,15 @@ async def collect_minute(route, universe, contract_values, args, timings=None):
                 break
             alignment["late_start_recovery"] = True
             await asyncio.sleep(max(0.0, (not_before - now_ms) / 1000.0) + 0.02)
-        alignment["alignment_wait_ms"] = round((time.monotonic() - started) * 1000)
+        alignment["alignment_wait_ms"] += round((time.monotonic() - started) * 1000)
+        return minute_end_ms
 
     def liquidation_close():
-        # Hydration and alignment may move the target. Keep the stream alive
-        # until sample 1 establishes the actual closed-minute boundary.
-        return minute_end_ms if minute_end_ms is not None else int(time.time() * 1000) + 2 * MINUTE_MS
+        # Sampling can roll into another minute after a scheduling stall.
+        # Only a completed market task makes its target close definitive.
+        if minute_end_ms is not None and market_task is not None and market_task.done():
+            return minute_end_ms
+        return int(time.time() * 1000) + 2 * MINUTE_MS
 
     liquidation_task = asyncio.create_task(probe(
         contract_values=contract_values, timings=timings,
@@ -116,6 +123,12 @@ async def collect_minute(route, universe, contract_values, args, timings=None):
         market_snapshots = await market_task
         if minute_end_ms is None:
             raise RuntimeError("market collection did not establish a target minute")
+        alignment["sample_first_timestamp_ms"] = (
+            market_snapshots[0]["collected_timestamp_ms"] if market_snapshots else None
+        )
+        alignment["sample_last_timestamp_ms"] = (
+            market_snapshots[-1]["collected_timestamp_ms"] if market_snapshots else None
+        )
         liquidations = await liquidation_task
         return ([build_bundle(market, liquidations) for market in market_snapshots],
                 minute_end_ms, alignment)
@@ -218,6 +231,7 @@ def run_cycle(args):
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
             "runtime_timings_ms": result.get("runtime_timings_ms"),
+            "collection_contract": result["collection_contract"],
             "transport_timings_ms": transport_timings,
             "sql_timings_ms": result.get("sqlite_persistence", {}).get("sql_timings_ms"),
             "write_attempts": result.get("sqlite_persistence", {}).get("write_attempts"),

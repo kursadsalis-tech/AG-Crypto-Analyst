@@ -434,6 +434,7 @@ def _snapshot(states, collected_ms, public_connected, trade_connected):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "provider": "BINANCE",
         "transport": "USD_M_ROUTED_WEBSOCKET_STREAMS",
+        "collected_timestamp_ms": int(collected_ms),
         "instrument_count": len(rows),
         "complete_instrument_count": sum(
             bool(row["required_sources_available"]) for row in rows
@@ -592,20 +593,27 @@ async def collect_minute_snapshots(
 
         if timings is not None:
             timings["deep_hydration"] = round((time.monotonic() - hydration_started) * 1000, 3)
-        if before_sampling is not None:
-            await before_sampling()
-
-        snapshots = []
-        started = time.monotonic()
-        for index in range(int(samples)):
-            target = started + index * float(cadence_seconds)
-            await asyncio.sleep(max(0.0, target - time.monotonic()))
-            snapshots.append(_snapshot(
-                states,
-                int(time.time() * 1000),
-                connectivity["public"],
-                connectivity["market"],
-            ))
+        while True:
+            minute_end_ms = await before_sampling() if before_sampling is not None else None
+            snapshots = []
+            next_sample = time.monotonic()
+            for _index in range(int(samples)):
+                await asyncio.sleep(max(0.0, next_sample - time.monotonic()))
+                sampled_at = time.monotonic()
+                collected_ms = int(time.time() * 1000)
+                if minute_end_ms is not None and collected_ms >= int(minute_end_ms):
+                    # A scheduling stall invalidates the partial window. Keep
+                    # the streams open and collect a fresh, truly aligned one.
+                    break
+                snapshots.append(_snapshot(
+                    states, collected_ms,
+                    connectivity["public"], connectivity["market"],
+                ))
+                # Preserve cadence after a delayed wake; never manufacture a
+                # burst of catch-up observations from the same instant.
+                next_sample = sampled_at + float(cadence_seconds)
+            else:
+                break
         if observe_until_ms is not None:
             while int(time.time() * 1000) < int(observe_until_ms):
                 await asyncio.sleep(min(

@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.runtime_store import connect as runtime_connect
-from paper_trading.crypto_profit_agent import FORWARD_COHORT
 from paper_trading.governance import AUTHORIZED_POLICY_VERSION, validate_agent_authority
 
 
@@ -264,6 +263,9 @@ def build(
     con, worker_status, last_results, now=None, behavior_health_path=None,
     exact_macro_health_path=None, paper_realtime_health_path=None,
 ):
+    # The 15-second health reader must not load the full trading engine.
+    from paper_trading.crypto_profit_agent import FORWARD_COHORT
+
     now = now or datetime.now(timezone.utc)
     mode = os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY")
     integrity_evidence = None
