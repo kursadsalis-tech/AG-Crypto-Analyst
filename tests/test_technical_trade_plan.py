@@ -113,6 +113,9 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
         self.assertLess(
             result["risk"]["invalidation_price"], result["entry"]["high"]
         )
+        self.assertLess(
+            result["entry"]["high"], result["targets"]["tp1_price"]
+        )
         self.assertGreater(
             result["targets"]["tp2_price"], result["targets"]["tp1_price"]
         )
@@ -132,6 +135,36 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
         )
         self.assertGreater(
             result["freshness"]["replan_price_move_pct"], 0.0
+        )
+
+    def test_far_structural_tp1_cannot_leave_tp2_behind_it(self):
+        from unittest.mock import patch
+
+        original = plan._finite_levels
+        above_calls = 0
+
+        def controlled_levels(values, *, above=None, below=None):
+            nonlocal above_calls
+            if above is not None:
+                above_calls += 1
+                # First above-call builds the resistance universe. The second
+                # is the LONG target ladder. A single far structural level
+                # reproduces the V2 case where TP1 could outrun its fallback TP2.
+                if above_calls == 2:
+                    return [1000.0]
+            return original(values, above=above, below=below)
+
+        with patch.object(plan, "_finite_levels", side_effect=controlled_levels):
+            result = plan.build_for_candidate(
+                self.con, candidate(), now=NOW,
+                market_type="USD_M_PERPETUAL",
+            )
+
+        self.assertGreater(
+            result["targets"]["tp1_price"], result["entry"]["high"]
+        )
+        self.assertGreater(
+            result["targets"]["tp2_price"], result["targets"]["tp1_price"]
         )
 
     def test_lower_timeframes_join_only_when_contiguous_history_is_ready(self):
