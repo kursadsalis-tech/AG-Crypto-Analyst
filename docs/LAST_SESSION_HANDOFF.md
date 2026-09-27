@@ -1,100 +1,79 @@
-# 2026-09-27 — Observer/SQLite acceptance and host resource isolation
+# 2026-09-28 — Final transport recovery and technical context acceptance
 
 Canonical worktree `.worktrees/observer-phase-profile`, branch
 `fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-Canonical main is `ed39047`; VM candidate is `8a24927`, pending live acceptance.
-PAPER_ONLY, Binance canonical, canonical DB `/var/lib/agca/crypto_data.db`.
-User explicitly rejected paid cloud resources. No paid resource was created.
+Canonical main is `ed39047`; VM checkout/observer is `f65aeed`, realtime process
+is `8a24927`. Main merge and final deployment are NOT complete.
+PAPER_ONLY, Binance canonical, DB `/var/lib/agca/crypto_data.db`.
+The user rejected paid cloud resources; none was created.
 
-Measured fixes:
-- Observer retained-history counts consumed 46.466 s of 48.263 s persistence;
-  WS close took 5.5–9.8 s. Live writes omit those counts, causal reads avoid
-  mirror DDL, WS close is bounded, and health exposes SQL/transport subphases.
-- Observer now runs continuously under systemd; the obsolete minute timer is
-  retired. The process becomes active immediately and has a cycle deadline.
-- Technical writes use bounded transactions. Technical seed/tail reads use
-  indexed time order and reject insufficient contiguous history before the
-  full plan read. The technical history index now covers the entire bar
-  projection under its existing name. Its atomic live replacement took
-  147.278 s; a subsequent 1,440-bar read took 24 ms, using the covering index.
-- Realtime latest-evidence reads use the unchanged 180 s window. Policy review
-  writes follow evidence reads. Scan health records phase/error details.
-- Trade learning uses an indexed eligible cohort, cached immutable legacy audit,
-  and separate changed-input keys for own outcomes and external observations.
-  Unchanged inputs skip repeat history reviews; corrections still trigger them.
-  Historical aggregation is separated from write phases.
+Completed measured changes:
+- Observer persistence omitted retained-history counts (46.466 s of 48.263 s)
+  and repeated mirror/schema setup. SQL/transport/phase timings expose the work.
+  WebSocket close is bounded. Continuous service replaced the obsolete timer.
+- Technical writes use bounded transactions. Its covering time index returns
+  1,440 bars in 24 ms; seed reads reject insufficient contiguous tails first.
+- Realtime evidence reads respect the unchanged 180 s freshness window and
+  precede policy writes. Exact-market live Binance quotes value PAPER positions
+  with the existing 2 s validator; offline reports retain candle valuation.
+- Learning uses eligible research indexes, separate read/write phases and
+  changed-input keys. Eligible count/bounds reads take 1.5–4.9 ms; current-open
+  consensus took 2.090 s. Newer CLOSED/ineligible observations still suppress
+  older OPEN observations. Corrections still invalidate the learning cache.
+- Hydrated sampling chooses its real minute. A delayed sample crossing the
+  close discards the partial window and recollects on the same streams.
+  Liquidation follows the confirmed close; timestamps are never relabeled.
+- The 15 s health poll no longer loads the trading engine or bootstraps mirror
+  tables. Import CPU fell 2.242 s -> 0.961 s; service CPU measured 1.176 s
+  instead of roughly 3.7–5.2 s. Durable alert transitions remain deduplicated.
+- Automatic apt maintenance shares CPUQuota 20%, MemoryHigh 192M, root-disk
+  read/write caps 40/20 IOPS and 2/1 MB/s. Effective kernel values were verified.
+  Security timers remain enabled; no hard memory kill limit was introduced.
+  The natural Sep 27 update completed successfully 06:22:28–06:28:22 UTC
+  in the new slice, consuming 40.848 CPU seconds.
 
-Live acceptance is NOT complete. b2ea539 removed the measured retained-history
-research reads with covering partial indexes. Eligible closed count now takes
-4.9 ms, trader count 2.6 ms and time bounds 1.5 ms. Current open consensus uses
-eligible OPEN candidates plus indexed newer-observation probes, preserving
-suppression by later CLOSED or ineligible evidence; live read took 2.090 s.
-Learning is HEALTHY and repeatedly skips unchanged inputs. Full CI passed
-120 integration and 521 full-suite tests.
-
-Sep 25 02:45–02:53 UTC live window: all 7 cycles eligible, maximum eligible
-evidence age 124.557 s, 182 selection runs, maximum run gap 14.365 s,
-maximum sampled scan 9.577 s, no observed SQLITE_BUSY or technical-plan error.
-However the longer retained record since Sep 24 21:00 had 3/331 ineligible
-cycles, 2 NO_FRESH_ELIGIBLE_BEHAVIOR runs and maximum age 183.906 s.
-Each failed minute had exactly 3 samples in every row; only minimum_samples
-failed. Do NOT hide this intermittent failure behind the short passing window.
-
-Current code corrects the scheduling cause: select the target minute AFTER
-WebSocket hydration, when the real sampling start is known; if the complete
-four-sample cadence cannot fit, wait at the next boundary with streams open.
-The liquidation stream follows the same actual absolute close. Minimum samples,
-gap, provenance and 180 s freshness gates remain unchanged. The old
-preconnection blocking wait is removed; failure/cancellation closes both tasks.
-Focused observer/Binance/rolling regression: 30 passed, including late hydration,
-deadline propagation and cancellation. Deployed Sep 25 02:57 UTC; restart 1.237 s.
-CI passed 120 integration / 525 full offline tests.
-
-Long-run evidence still prevents acceptance:
-- Sep 25 02:59–07:58 UTC: 297 cycles, 296 eligible. The failed 07:02 minute
-  had a 48.520 s sample gap, while selection gaps reached 58.506 s.
-  apt-daily-upgrade ran 06:53:23–07:00:57 (243.380 CPU seconds) with repeated
-  system memory-pressure events through 07:02:27. Other services timed out too.
-- Sep 25 08:00–Sep 26 22:02 UTC: 2,278 cycles, 4 not fully eligible.
-  Three had no eligible row (Sep 26 16:34,16:35,20:40), each with 3 samples.
-  These require diagnosis before merge; a short passing window is insufficient.
-- Current proposal puts apt list refresh/upgrades in a shared maintenance slice:
-  20% of one CPU, MemoryHigh192M, boot-disk read/write40/20IOPS and2/1MB/s.
-  This preserves security timers, avoids hard memory kills, and needs effective
-  cgroup verification plus bounded live maintenance-load acceptance.
-
-Latest candidate changes (live acceptance pending):
-- Boundary recovery checks the actual sampling timestamp against its close after
-  each wake. A crossed partial window is discarded and resampled using the same
-  open streams. Liquidation remains open until the final sampling target is
-  confirmed. Actual first/last sample times and rollover count are reported.
-  The delayed-fourth regression verifies replacement samples and connection reuse.
-- Health polling ran every 15 s and consumed roughly 3.7–5.2 CPU seconds per
-  invocation. Its import alone measured 2.272 s wall / 2.242 s CPU on the VM.
-  The poll no longer imports the entire trading engine or bootstraps all mirror
-  tables/triggers. It uses plain SQLite, with alert-table setup only on a health
-  transition. Alert deduplication, fail-closed source checks and cadence remain.
-- Maintenance policy is installed and verified: cpu.max20000/100000,
-  memory.high201326592, boot disk8:0 io.max rbps2000000/wbps1000000/riops40/wiops20.
-  Existing apt timers are unchanged and neither package transaction was running.
-- Focused verification: 32 observer/transport tests and 13 health/attestation tests
-  passed. Final CI and live loaded acceptance remain required.
+Live evidence and current remaining work:
+- f65aeed CI: 120 integration + 529 full offline tests passed.
+- Sep 26 22:13:49–22:21:49 UTC acceptance with package-maintenance dry-run:
+  7/7 cycles produced 12/12 eligible rows; max eligible age 121.900 s.
+  Persistence 21.534–1,488.543 ms; 238 selection runs; max gap 9.500 s;
+  max sampled scan 8.490 s; no observed SQLite error. Observer restart 1.488 s.
+  Dry-run completed successfully (no packages installed); 1353 CPU throttle
+  periods, 121,262,080 byte peak memory, no memory-high/OOM event.
+  VM report: /var/lib/agca/reports/observer-maintenance-acceptance.json.
+- A longer 1,077-cycle record still had two invalid channel windows, each with
+  four properly spaced samples: Sep 26 23:09 required_sources=false, Sep 27
+  00:02 liquidation_channel=false. The latter followed a skipped minute and
+  produced max prior-eligible age 182.017 s. Do NOT hide this behind the short
+  passing window. Receiver failures were ignored until sampling completed;
+  an early failed liquidation task was awaited only after the market task.
+  Final code now interrupts dead receivers during hydration/alignment/sampling,
+  refuses sampling before required channels and some complete evidence are ready,
+  and retries failed transports up to three times within the unchanged 240 s
+  deadline. Early liquidation failure cancels its pending market collector.
+  Successful health reports include retry count/reasons; exhausted retries fail
+  visibly. Partial instrument eligibility is preserved. Focused transport tests:
+  36 passed, including unready hydration, cancellation and bounded recovery.
+- Natural ACTIONABLE occurred in 204/238 acceptance runs; technical-plan errors
+  appeared 11 times for MARSCOINUSDT. Last 20,000 runs had 17,526 ACTIONABLE and
+  804 TECHNICAL_PLAN_UNAVAILABLE, with capacity/valuation gates also active.
+- The actual MARS cause is NOT missing Spot or hourly history: direct canonical
+  fetch returned 169 valid closed hourly candles and built valid 1h/4h context.
+  Optional daily fetch failed for insufficient 30-day history, aborting the
+  whole context refresh and leaving Sep 23 context stale. The current change
+  preserves hourly context while reporting daily-regime failure separately.
+  Longer-horizon plans still reject missing required regimes. Focused risk/
+  planner/SQLite tests: 18 passed. No new hourly cache or worker was added.
+  Both final changes await combined CI and live acceptance.
 
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
-5 complete states, quote ages 123/123/354 ms, canonical vision fallback,
-zero stale receives, no DB writes or orders. Do not repeat without cause.
-Realtime portfolio valuation uses exact-market frozen Binance executable quotes
-(long bid/short ask, existing 2 s validator). Offline reports retain candles.
-A natural ACTIONABLE selection on efc0ea4 opened one PAPER position without
-TECHNICAL_PLAN_UNAVAILABLE. Technical-plan acceptance under sustained load
-still needs confirmation after the current bottleneck is removed.
+five complete states, quote ages 123/123/354 ms, vision fallback, no stale receive.
+Do not repeat without cause. No signals or real orders were forced.
 
-Temporary `/tmp/agca-profile-tools` was removed. No profiling script or
-alternate runtime data file was added to the repository.
-Next: isolate maintenance resource contention and remaining missing-sample
-windows, complete acceptance, then finalize PR/merge and return VM to main.
-Do not claim resolution before reliable eligible minutes below 180 s, regular
-selection runs and no observed SQLITE_BUSY/stalls have been demonstrated.
+Temporary profiling tools were removed; no diagnostic script or alternate DB
+was committed. Keep the PR draft until the final receiver-recovery code passes
+CI/live acceptance and natural technical planning is verified. Then merge,
+return the VM to canonical main and attest the running realtime process.
 
 ---
 

@@ -579,26 +579,55 @@ async def collect_minute_snapshots(
         asyncio.create_task(market_receiver()),
         asyncio.create_task(technical_receiver()),
     ]
+
+    async def while_receiving(awaitable):
+        waiting = asyncio.ensure_future(awaitable)
+        try:
+            await asyncio.wait(
+                (waiting, tasks[0], tasks[1]), return_when=asyncio.FIRST_COMPLETED
+            )
+            # The optional technical receiver may finish without subscribing.
+            # Public/market receivers must remain alive throughout sampling.
+            for name, receiver in zip(("public", "market"), tasks[:2]):
+                if receiver.done():
+                    error = None if receiver.cancelled() else receiver.exception()
+                    detail = f"{type(error).__name__}: {error}" if error else "closed"
+                    raise ConnectionError(f"Binance {name} receiver failed: {detail}") from error
+            return await waiting
+        finally:
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+
+    def has_required_evidence(state):
+        return bool(
+            state.bids and state.asks and state.book_timestamp_ms > 0
+            and 0 < float(state.bids[0][0]) < float(state.asks[0][0])
+            and state.funding_rate is not None and state.funding_timestamp_ms > 0
+        )
+
     try:
         hydration_started = time.monotonic()
         hydrate_deadline = hydration_started + float(hydration_timeout_seconds)
         while time.monotonic() < hydrate_deadline:
-            hydrated = all(
-                state.bids and state.asks and state.funding_rate is not None
-                for state in states.values()
-            )
-            if hydrated and connectivity["market"]:
+            hydrated = all(has_required_evidence(state) for state in states.values())
+            if hydrated and connectivity["public"] and connectivity["market"]:
                 break
-            await asyncio.sleep(0.05)
+            await while_receiving(asyncio.sleep(0.05))
 
         if timings is not None:
             timings["deep_hydration"] = round((time.monotonic() - hydration_started) * 1000, 3)
+        if not (connectivity["public"] and connectivity["market"]):
+            raise ConnectionError("Binance required channels not connected after hydration")
+        if not any(has_required_evidence(state) for state in states.values()):
+            raise ConnectionError("Binance no complete instrument evidence after hydration")
         while True:
-            minute_end_ms = await before_sampling() if before_sampling is not None else None
+            minute_end_ms = (
+                await while_receiving(before_sampling()) if before_sampling is not None else None
+            )
             snapshots = []
             next_sample = time.monotonic()
             for _index in range(int(samples)):
-                await asyncio.sleep(max(0.0, next_sample - time.monotonic()))
+                await while_receiving(asyncio.sleep(max(0.0, next_sample - time.monotonic())))
                 sampled_at = time.monotonic()
                 collected_ms = int(time.time() * 1000)
                 if minute_end_ms is not None and collected_ms >= int(minute_end_ms):
@@ -616,10 +645,10 @@ async def collect_minute_snapshots(
                 break
         if observe_until_ms is not None:
             while int(time.time() * 1000) < int(observe_until_ms):
-                await asyncio.sleep(min(
+                await while_receiving(asyncio.sleep(min(
                     0.10,
                     max(0.0, (int(observe_until_ms) - int(time.time() * 1000)) / 1000.0),
-                ))
+                )))
         return snapshots
     finally:
         stop.set()

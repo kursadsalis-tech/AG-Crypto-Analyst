@@ -694,6 +694,7 @@ def main():
     source_errors = {}
     technical_contexts = []
     technical_context_errors = {}
+    technical_regime_errors = {}
     technical_compute_ms = 0.0
     con = runtime_connection()
     try:
@@ -726,10 +727,17 @@ def main():
                     if symbol in dynamic_symbols and symbol not in SYMBOLS
                     else "REFERENCE_SPOT"
                 )
-                daily_candles = (
-                    fetch_closed_daily_klines(symbol)
-                    if symbol in dynamic_symbols else None
-                )
+                daily_candles = None
+                if symbol in dynamic_symbols:
+                    try:
+                        daily_candles = fetch_closed_daily_klines(symbol)
+                    except Exception as daily_exc:
+                        # Daily regimes are optional for short-horizon plans.
+                        # Preserve valid 1h/4h evidence; the planner still rejects
+                        # a longer horizon when its required regime is absent.
+                        technical_regime_errors[symbol] = (
+                            f"{type(daily_exc).__name__}:{daily_exc}"
+                        )
                 technical = realtime_technical_context.build(
                     candles, symbol=symbol, generated_at=utcnow(),
                     market_scope=market_scope, daily_candles=daily_candles,
@@ -759,6 +767,7 @@ def main():
         "technical_context_count": len(technical_contexts),
         "technical_context_compute_ms": round(technical_compute_ms, 3),
         "technical_context_errors": technical_context_errors,
+        "technical_regime_errors": technical_regime_errors,
         "technical_context_authority": "OBSERVATION_ONLY",
     })
     return result

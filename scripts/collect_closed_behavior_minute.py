@@ -73,7 +73,7 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-async def collect_minute(route, universe, contract_values, args, timings=None):
+async def _collect_minute_attempt(route, universe, contract_values, args, timings=None):
     required_span = (args.samples - 1) * args.cadence_seconds + 1.0
     if required_span >= MINUTE_MS / 1000:
         raise ValueError("requested samples and cadence cannot fit in one minute")
@@ -120,22 +120,54 @@ async def collect_minute(route, universe, contract_values, args, timings=None):
         timings=timings,
     ))
     try:
-        market_snapshots = await market_task
-        if minute_end_ms is None:
-            raise RuntimeError("market collection did not establish a target minute")
+        pending = {market_task, liquidation_task}
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if liquidation_task in done:
+                liquidations = liquidation_task.result()
+                if liquidations.get("state") not in {
+                    "AVAILABLE_EVENTS_OBSERVED", "AVAILABLE_NO_EVENT_IN_WINDOW"
+                }:
+                    raise ConnectionError("Binance liquidation channel failed")
+                if not market_task.done():
+                    raise ConnectionError("Binance liquidation channel ended before market collection")
+            if market_task in done:
+                market_snapshots = market_task.result()
+                if minute_end_ms is None:
+                    raise RuntimeError("market collection did not establish a target minute")
         alignment["sample_first_timestamp_ms"] = (
             market_snapshots[0]["collected_timestamp_ms"] if market_snapshots else None
         )
         alignment["sample_last_timestamp_ms"] = (
             market_snapshots[-1]["collected_timestamp_ms"] if market_snapshots else None
         )
-        liquidations = await liquidation_task
         return ([build_bundle(market, liquidations) for market in market_snapshots],
                 minute_end_ms, alignment)
     finally:
         for task in (market_task, liquidation_task):
             task.cancel()
         await asyncio.gather(market_task, liquidation_task, return_exceptions=True)
+
+
+async def collect_minute(route, universe, contract_values, args, timings=None):
+    """Retry failed transports with fresh streams inside the cycle deadline."""
+    errors = []
+    for attempt in range(3):
+        try:
+            bundles, minute_end_ms, alignment = await _collect_minute_attempt(
+                route, universe, contract_values, args, timings
+            )
+        except ConnectionError as exc:
+            errors.append(str(exc)[:500])
+            if attempt == 2:
+                raise ConnectionError(
+                    "observer transport failed after 3 attempts: " + "; ".join(errors)
+                ) from exc
+            await asyncio.sleep(0.25 * (attempt + 1))
+        else:
+            alignment["transport_retry_count"] = len(errors)
+            alignment["transport_retry_reasons"] = errors
+            return bundles, minute_end_ms, alignment
 
 
 def run_cycle(args):

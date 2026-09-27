@@ -116,7 +116,7 @@ class MarketBehaviorObserverTests(unittest.TestCase):
             while observe_until_ms() > 120_000:
                 await real_sleep(0)
             deadlines.append(observe_until_ms())
-            return {}
+            return {"state": "AVAILABLE_NO_EVENT_IN_WINDOW"}
 
         timings = {}
         args = SimpleNamespace(samples=4, cadence_seconds=10)
@@ -211,6 +211,63 @@ class MarketBehaviorObserverTests(unittest.TestCase):
             asyncio.run(run())
         self.assertCountEqual(cancelled, ["liquidation", "market"])
 
+    def test_early_liquidation_failure_cancels_pending_market_and_retries_fresh_samples(self):
+        market_started, market_finished = asyncio.Event(), asyncio.Event()
+        started, cancelled = [], []
+        real_sleep = asyncio.sleep
+        async def probe(**_kwargs):
+            if not started:
+                await market_started.wait()
+                return {"state": "CHANNEL_ERROR"}
+            await market_finished.wait()
+            await real_sleep(0)
+            return {"state": "AVAILABLE_NO_EVENT_IN_WINDOW"}
+        async def collect(*_args, before_sampling, **_kwargs):
+            started.append(len(started) + 1)
+            await before_sampling()
+            if len(started) == 1:
+                market_started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.append(1)
+            snapshots = [{"collected_timestamp_ms": 20_000 + index * 10_000,
+                          "attempt": len(started)} for index in range(4)]
+            market_finished.set()
+            return snapshots
+        with patch.object(observer.time, "time", return_value=20.0), patch.object(
+            observer, "probe", new=probe
+        ), patch.object(observer, "collect_minute_snapshots", new=collect), patch.object(
+            observer.asyncio, "sleep", new=AsyncMock()
+        ) as backoff, patch.object(observer, "build_bundle", side_effect=lambda market, _liq: market):
+            result, target, details = asyncio.run(asyncio.wait_for(observer.collect_minute(
+                {}, {}, {}, SimpleNamespace(samples=4, cadence_seconds=10)), timeout=1))
+        self.assertEqual(cancelled, [1])
+        self.assertEqual(started, [1, 2])
+        self.assertEqual(target, 60_000)
+        self.assertEqual([row["attempt"] for row in result], [2] * 4)
+        self.assertEqual(details["transport_retry_count"], 1)
+        self.assertEqual(details["transport_retry_reasons"], ["Binance liquidation channel failed"])
+        backoff.assert_awaited_once_with(0.25)
+
+    def test_repeated_transport_failure_is_bounded_and_remains_visible(self):
+        cancelled = []
+        async def collect(*_args, **_kwargs):
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.append(True)
+        probe = AsyncMock(return_value={"state": "CHANNEL_ERROR"})
+        with patch.object(observer, "probe", new=probe), patch.object(
+            observer, "collect_minute_snapshots", new=collect
+        ), patch.object(observer.asyncio, "sleep", new=AsyncMock()) as backoff:
+            with self.assertRaisesRegex(ConnectionError, "failed after 3 attempts.*liquidation"):
+                asyncio.run(asyncio.wait_for(observer.collect_minute(
+                    {}, {}, {}, SimpleNamespace(samples=4, cadence_seconds=10)), timeout=1))
+        self.assertEqual(probe.await_count, 3)
+        self.assertEqual(len(cancelled), 3)
+        self.assertEqual([call.args[0] for call in backoff.await_args_list], [0.25, 0.5])
+
     def test_refresh_builds_market_wide_route(self):
         tickers = [{
             "s": "AAAUSDT", "c": "10", "o": "9", "q": "10000000",
@@ -236,8 +293,11 @@ class MarketBehaviorObserverTests(unittest.TestCase):
         async def collect_snapshots(*_args, before_sampling, **_kwargs):
             await before_sampling()
             return []
+        async def probe(**_kwargs):
+            await asyncio.sleep(0)
+            return {"state": "AVAILABLE_NO_EVENT_IN_WINDOW"}
         with patch.object(observer.time, "time", return_value=20.0), patch.object(
-            observer, "probe", new=AsyncMock(return_value=[]),
+            observer, "probe", new=probe,
         ), patch.object(
             observer, "collect_minute_snapshots",
             new=AsyncMock(side_effect=collect_snapshots),
