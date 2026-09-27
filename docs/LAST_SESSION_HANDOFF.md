@@ -1,11 +1,30 @@
-# 2026-09-28 — Final transport recovery and technical context acceptance
+# 2026-09-28 — Observer and technical-context live acceptance passed
 
-Canonical worktree `.worktrees/observer-phase-profile`, branch
-`fix/observer-phase-profile`, draft PR #94. Preserve the dirty primary checkout.
-Canonical main is `ed39047`; VM checkout/observer is `f65aeed`, realtime process
-is `8a24927`. Main merge and final deployment are NOT complete.
+Canonical repository is kursadsalis-tech/AG-Crypto-Analyst, branch main.
+PR #94 contains the accepted implementation (tested candidate `071c9ad`).
+Preserve the dirty primary checkout; implementation work used the isolated
+`.worktrees/observer-phase-profile` checkout. The final release is the main
+merge of this PR, not any earlier detached diagnostic candidate. The exact
+running realtime SHA is recorded in paper-realtime-health.json.
 PAPER_ONLY, Binance canonical, DB `/var/lib/agca/crypto_data.db`.
 The user rejected paid cloud resources; none was created.
+
+Final live acceptance, Sep 27 22:09:32–22:15:32 UTC:
+- 6/6 cycles HEALTHY, all 12/12 rows eligible. Max evidence age 63.042 s.
+- Cycle 58.023–61.033 s; persistence 17.754–2,029.587 ms.
+- 136 selection runs, 108 ACTIONABLE; max run gap 6.805 s.
+- Max sampled scan 5.496 s; no observed SQLite/technical-plan errors.
+- Observer restart 1.238 s. CI: 120 integration + 534 full offline tests passed.
+- No new position was forced. Capacity/valuation and technical risk-geometry
+  rejections remain active. Spot transport acceptance was already completed.
+- The formerly failing MARSCOIN context was refreshed from 169 real Binance
+  hourly candles at 22:12:50 UTC. A read-only 4 h planning check produced valid
+  1m/5m/15m/1h/4h context and risk-compatible geometry in 963.966 ms while
+  daily history correctly remained unavailable. No signal or order was written.
+  The normal producer now retains hourly context on that same daily failure.
+- Durable VM evidence: /var/lib/agca/reports/observer-final-acceptance.json.
+  The bounded live acceptance and injected failure regressions cover the
+  measured incident; genuine external data failures continue to fail closed.
 
 Completed measured changes:
 - Observer persistence omitted retained-history counts (46.466 s of 48.263 s)
@@ -32,7 +51,7 @@ Completed measured changes:
   The natural Sep 27 update completed successfully 06:22:28–06:28:22 UTC
   in the new slice, consuming 40.848 CPU seconds.
 
-Live evidence and current remaining work:
+Earlier evidence that drove the completed fixes:
 - f65aeed CI: 120 integration + 529 full offline tests passed.
 - Sep 26 22:13:49–22:21:49 UTC acceptance with package-maintenance dry-run:
   7/7 cycles produced 12/12 eligible rows; max eligible age 121.900 s.
@@ -64,16 +83,18 @@ Live evidence and current remaining work:
   preserves hourly context while reporting daily-regime failure separately.
   Longer-horizon plans still reject missing required regimes. Focused risk/
   planner/SQLite tests: 18 passed. No new hourly cache or worker was added.
-  Both final changes await combined CI and live acceptance.
+  Combined CI and live acceptance are recorded above.
 
 Spot transport acceptance already passed: production Binance BTCUSDT SPOT,
 five complete states, quote ages 123/123/354 ms, vision fallback, no stale receive.
 Do not repeat without cause. No signals or real orders were forced.
 
 Temporary profiling tools were removed; no diagnostic script or alternate DB
-was committed. Keep the PR draft until the final receiver-recovery code passes
-CI/live acceptance and natural technical planning is verified. Then merge,
-return the VM to canonical main and attest the running realtime process.
+was committed. The obsolete observer timer was removed. No further source
+change is pending for the measured observer/SQLite and daily-history incidents.
+Release procedure: merge PR #94, deploy its canonical main commit and confirm
+the running realtime source matches it. Keep the warmed technical collector
+running when its code is unchanged; do not discard its live bar continuity.
 
 ---
 
