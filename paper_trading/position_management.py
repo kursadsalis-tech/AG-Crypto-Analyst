@@ -171,18 +171,42 @@ def initialize_open_positions(con, now):
                 thesis = json.loads(thesis_row[0] or "{}")
             except (TypeError, ValueError, json.JSONDecodeError):
                 thesis = {}
+
+        # The final technical execution plan is itself frozen, causal execution
+        # evidence.  It must be resolved before the legacy risk-snapshot fallback:
+        # otherwise an already-valid technical position can be left OPEN but
+        # unmanaged merely because the separate snapshot row is unavailable at
+        # initialization time.
+        technical_plan = thesis.get("technical_trade_plan")
+        if technical_execution_plan_json:
+            try:
+                current_execution_plan = json.loads(
+                    technical_execution_plan_json
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                blocked.append((
+                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
+                ))
+                continue
+            if not isinstance(current_execution_plan, dict):
+                blocked.append((
+                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
+                ))
+                continue
+            technical_plan = current_execution_plan
+        has_frozen_technical_plan = isinstance(technical_plan, dict)
+
         stale_recovery = not risk and now >= parse(con.execute(
             "SELECT due_time FROM paper_agent_positions WHERE position_id=?",
             (position_id,),
         ).fetchone()[0])
-        if not risk and not stale_recovery:
+        if not risk and not stale_recovery and not has_frozen_technical_plan:
             blocked.append((int(position_id), "MISSING_ENTRY_RISK_SNAPSHOT"))
             continue
-        # A missing entry snapshot must block a new/active thesis, but it must
-        # not make an already expired PAPER position immortal.  The stop value
-        # is immaterial here because the first fresh tick is forced through the
-        # maximum-hold exit; MAX_STOP_PCT is used only to create the accounting
-        # state required for that audited close.
+        # Legacy positions still require their entry risk snapshot unless they
+        # have already expired and must be closed safely. Technical-plan
+        # positions initialize from the exact frozen stop/targets below and do
+        # not invent a replacement risk value.
         volatility_stop = float(risk[0]) if risk else 5.0
         # A setup-specific invalidation may tighten the volatility envelope when
         # the frozen thesis actually provides a price level.  Never invent one.
@@ -210,25 +234,8 @@ def initialize_open_positions(con, now):
             blocked.append((int(position_id), "INVALID_FROZEN_STOP_PLAN"))
             continue
         # The immutable thesis keeps the original selection plan. If PENDING
-        # entry was revalidated, the position must initialize from the final
-        # execution plan that actually authorized the fill.
-        technical_plan = thesis.get("technical_trade_plan")
-        if technical_execution_plan_json:
-            try:
-                current_execution_plan = json.loads(
-                    technical_execution_plan_json
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                blocked.append((
-                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
-                ))
-                continue
-            if not isinstance(current_execution_plan, dict):
-                blocked.append((
-                    int(position_id), "MALFORMED_CURRENT_TECHNICAL_PLAN"
-                ))
-                continue
-            technical_plan = current_execution_plan
+        # entry was revalidated, technical_plan above already points to the
+        # final execution plan that actually authorized the fill.
         tp1_price = tp2_price = None
         if isinstance(technical_plan, dict):
             try:
@@ -295,8 +302,13 @@ def initialize_open_positions(con, now):
             entry_time, entry_time, tp1_price, tp2_price,
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
-               ("STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
-                if stale_recovery else "ENTRY_RISK_SNAPSHOT"),
+               (
+                   "FROZEN_TECHNICAL_PLAN_WITHOUT_ENTRY_RISK_SNAPSHOT"
+                   if has_frozen_technical_plan and not risk
+                   else "STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
+                   if stale_recovery
+                   else "ENTRY_RISK_SNAPSHOT"
+               ),
                float(entry_price), None, 0, 0, 0, 0,
                None, state.stop_price, {
                    "risk_stop_pct": state.stop_distance_pct,
