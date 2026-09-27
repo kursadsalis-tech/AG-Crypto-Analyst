@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 
 from data.causal_minute_evidence import events_for_closed_minute, parse_exact_utc
-from database.runtime_store import connect
 
 
 MACRO_TABLE = "exact_time_macro_events"
@@ -184,7 +185,9 @@ def evidence_for_closed_minute(database_path, minute_end_timestamp_ms, now=None)
     minute_start = datetime.fromtimestamp(
         (int(minute_end_timestamp_ms) - 60_000) / 1000, timezone.utc
     )
-    with connect(database_path) as con:
+    # Evidence projection is read-only; RuntimeConnection installs mirror DDL.
+    with closing(sqlite3.connect(database_path, timeout=2)) as con:
+        con.execute("PRAGMA query_only=ON")
         events = load_events(con, minute_start.isoformat(), minute_end.isoformat())
     return events_for_closed_minute(
         events, minute_end_timestamp_ms,

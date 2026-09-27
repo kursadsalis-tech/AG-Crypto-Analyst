@@ -1,11 +1,147 @@
 import asyncio
+import json
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from data import binance_live_evidence as live
 
 
+def initial_message(phase):
+    payload = {"s": "BTCUSDT", "E": int(live.time.time() * 1000)}
+    payload.update({"e": "depthUpdate", "b": [["100", "1"]], "a": [["101", "1"]]}
+                   if phase == "public" else {"e": "markPriceUpdate", "r": "0.001"})
+    return json.dumps(payload)
+
+
 class BinanceLiveEvidenceTests(unittest.TestCase):
+    def test_transport_timings_survive_receiver_cancellation(self):
+        timings = {}
+        socket = AsyncMock()
+
+        async def run():
+            with patch.object(live.websockets, "connect", return_value=socket) as connect:
+                with patch.object(live.time, "monotonic", side_effect=[1, 2, 5, 7]):
+                    with self.assertRaises(asyncio.CancelledError):
+                        async with live.measured_connection("wss://example", timings=timings):
+                            raise asyncio.CancelledError()
+                self.assertEqual(connect.call_args.kwargs["close_timeout"], 1.0)
+        socket.__aexit__.return_value = False
+        asyncio.run(run())
+        self.assertEqual(timings, {
+            "socket_connect": 1000, "socket_observe": 3000, "socket_close": 2000,
+        })
+        socket.__aexit__.assert_awaited_once()
+
+    def test_before_sampling_hook_can_still_return_no_deadline(self):
+        @asynccontextmanager
+        async def connection(*_args, phase, **_kwargs):
+            sent = False
+            async def recv():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return initial_message(phase)
+                await asyncio.Future()
+            yield SimpleNamespace(recv=recv)
+        hook = AsyncMock(return_value=None)
+        with patch.object(live, "measured_connection", connection):
+            snapshots = asyncio.run(live.collect_minute_snapshots(
+                {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
+                {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
+                samples=1, hydration_timeout_seconds=0.1, before_sampling=hook,
+            ))
+        hook.assert_awaited_once()
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]["collected_timestamp_ms"],
+                         snapshots[0]["instruments"][0]["collected_timestamp_ms"])
+
+    def test_dead_market_receiver_interrupts_hydration_alignment_and_sampling_waits(self):
+        for failure_phase in ("hydration", "alignment", "sampling"):
+            with self.subTest(phase=failure_phase):
+                failed, closed, stamps = asyncio.Event(), [], []
+                @asynccontextmanager
+                async def connection(_url, *, phase, **_kwargs):
+                    sent = False
+                    async def recv():
+                        nonlocal sent
+                        if not sent:
+                            sent = True
+                            return initial_message(phase)
+                        if phase == "market":
+                            await failed.wait()
+                            raise OSError("connection lost")
+                        await asyncio.Future()
+                    try:
+                        yield SimpleNamespace(recv=recv)
+                    finally:
+                        closed.append(phase)
+                async def before_sampling():
+                    if failure_phase == "alignment":
+                        failed.set()
+                        await asyncio.Future()
+                    return None
+                def snapshot(_states, stamp, *_connected):
+                    stamps.append(stamp)
+                    failed.set()
+                    return {"collected_timestamp_ms": stamp}
+                if failure_phase == "hydration":
+                    failed.set()
+                with patch.object(live, "measured_connection", connection), patch.object(
+                    live, "_snapshot", side_effect=snapshot
+                ):
+                    with self.assertRaisesRegex(ConnectionError, "market receiver failed.*connection lost"):
+                        asyncio.run(asyncio.wait_for(live.collect_minute_snapshots(
+                            {"deep_stream_instruments": ["BTC-USDT-SWAP"]},
+                            {"selected": [{"instrument": "BTC-USDT-SWAP", "symbol": "BTCUSDT"}]},
+                            samples=4, cadence_seconds=10,
+                            hydration_timeout_seconds=60,
+                            before_sampling=before_sampling,
+                        ), timeout=1))
+                self.assertEqual(len(stamps), 1 if failure_phase == "sampling" else 0)
+                self.assertCountEqual(closed, ["public", "market"])
+
+    def test_hydration_requires_connected_channels_and_some_complete_evidence(self):
+        for mode in ("opening", "empty", "partial"):
+            with self.subTest(mode=mode):
+                closed = []
+                @asynccontextmanager
+                async def connection(_url, *, phase, **_kwargs):
+                    sent = False
+                    async def recv():
+                        nonlocal sent
+                        if mode != "empty" and not sent:
+                            sent = True
+                            return initial_message(phase)
+                        await asyncio.Future()
+                    try:
+                        if mode == "opening" and phase == "public":
+                            await asyncio.Future()
+                        yield SimpleNamespace(recv=recv)
+                    finally:
+                        closed.append(phase)
+                hook = AsyncMock(return_value=None)
+                symbols = ("BTC", "ETH") if mode == "partial" else ("BTC",)
+                async def run():
+                    return await asyncio.wait_for(live.collect_minute_snapshots(
+                        {"deep_stream_instruments": [f"{symbol}-USDT-SWAP" for symbol in symbols]},
+                        {"selected": [{"instrument": f"{symbol}-USDT-SWAP", "symbol": f"{symbol}USDT"}
+                                      for symbol in symbols]},
+                        samples=1, hydration_timeout_seconds=0.001, before_sampling=hook,
+                    ), timeout=1)
+                with patch.object(live, "measured_connection", connection):
+                    if mode == "partial":
+                        snapshots = asyncio.run(run())
+                        self.assertEqual(snapshots[0]["complete_instrument_count"], 1)
+                        self.assertEqual(snapshots[0]["instrument_count"], 2)
+                        hook.assert_awaited_once()
+                    else:
+                        with self.assertRaisesRegex(ConnectionError, "after hydration"):
+                            asyncio.run(run())
+                        hook.assert_not_awaited()
+                self.assertCountEqual(closed, ["public", "market"])
+
     def test_snapshot_normalizes_websocket_book_flow_and_funding(self):
         state = live._DeepState(
             symbol="BTCUSDT", instrument="BTC-USDT-SWAP",

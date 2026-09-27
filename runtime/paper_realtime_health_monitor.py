@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from database.runtime_store import connect
 from runtime.cloud_attestation import paper_realtime_health
 
 
@@ -31,9 +31,10 @@ def ensure_table(con):
 
 
 def main():
-    con = connect(DB_PATH, timeout=30)
+    # Alerts are local-only; polling must not bootstrap the mirror schema.
+    con = sqlite3.connect(Path(DB_PATH).resolve().as_uri() + "?mode=rw",
+                          uri=True, timeout=2)
     try:
-        ensure_table(con)
         open_count = con.execute(
             "SELECT COUNT(*) FROM paper_agent_positions WHERE status='OPEN'"
         ).fetchone()[0]
@@ -46,6 +47,7 @@ def main():
             pass
         prior_healthy = previous.get("healthy")
         if prior_healthy is None or bool(prior_healthy) != healthy:
+            ensure_table(con)
             state = "RECOVERED" if healthy else "FAULT"
             reason = f"state={health['state']} status={health['status']} open={open_count}"
             con.execute("""INSERT INTO paper_operator_alerts(

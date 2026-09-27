@@ -22,6 +22,7 @@ from paper_trading.crypto_profit_agent import (
     fill_pending_from_live_state, select_new_positions,
 )
 from paper_trading.exchange_metadata import ExchangeMetadataError, load_cache, rules_for
+from paper_trading.execution_contract import MarketSnapshot
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import position_management, realtime_market
@@ -76,7 +77,7 @@ def worker_process_source_state(repo_path=None):
             check=False, capture_output=True, text=True, timeout=2,
         )
         dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            ["git", "--no-optional-locks", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
             check=False, capture_output=True, text=True, timeout=2,
         )
         if sha.returncode != 0 or dirty.returncode != 0:
@@ -299,6 +300,7 @@ async def run():
     last_scan_error_detail = None
     last_scan_sqlite_error_name = None
     last_scan_sqlite_error_code = None
+    last_scan_diagnostics = {}
 
     def live_state_payload(state, observed_ms):
         """Operator view of the exact normalized market state used by PAPER."""
@@ -426,6 +428,9 @@ async def run():
                 "error_detail": last_scan_error_detail,
                 "sqlite_error_name": last_scan_sqlite_error_name,
                 "sqlite_error_code": last_scan_sqlite_error_code,
+                "phase_timings_ms": dict(last_scan_diagnostics.get("phase_timings_ms", {})),
+                "active_phase": last_scan_diagnostics.get("active_phase"),
+                "technical_plan_errors": last_scan_diagnostics.get("technical_plan_errors", []),
             },
         })
         details["process_runtime_source"] = process_runtime_source
@@ -523,9 +528,24 @@ async def run():
         nonlocal last_scan_started_at, last_scan_completed_at
         nonlocal last_scan_duration_ms, last_scan_error
         nonlocal last_scan_error_detail, last_scan_sqlite_error_name
-        nonlocal last_scan_sqlite_error_code
+        nonlocal last_scan_sqlite_error_code, last_scan_diagnostics
         observed_at = now()
         started = loop.time()
+        # Freeze exact-market quotes at the scan's decision time. A later tick
+        # cannot be retroactively treated as known at this selection timestamp.
+        with latest_execution_lock:
+            market_snapshots = {
+                key: MarketSnapshot(
+                    reference_price=state.last_price or 0.0,
+                    available_quote_volume=state.visible_quote_volume,
+                    observed_at=observed_at.isoformat(),
+                    best_bid=state.best_bid, best_ask=state.best_ask,
+                    quote_timestamp_ms=state.quote_timestamp_ms,
+                    liquidity_timestamp_ms=state.liquidity_timestamp_ms,
+                    market_type=state.market_type, source=state.quote_source,
+                )
+                for key, (state, _) in latest_execution_states.items()
+            }
         last_scan_started_at = observed_at.isoformat()
         last_scan_error = None
         last_scan_error_detail = None
@@ -541,10 +561,12 @@ async def run():
             for attempt in range(1, attempts + 1):
                 work_con = scan_connection()
                 selection_result = {}
+                last_scan_diagnostics = selection_result
                 try:
                     selected = select_new_positions(
                         work_con, observed_at, metadata,
                         telemetry=selection_result,
+                        market_snapshots=market_snapshots,
                     )
                     break
                 except Exception as exc:

@@ -19,17 +19,16 @@ class ObserverServiceContractTests(unittest.TestCase):
     def test_behavior_observer_is_bound_to_canonical_binance_source(self):
         service=(ROOT/"deploy/agca-market-behavior-observer.service").read_text()
         self.assertIn("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10", service)
-        self.assertIn("TimeoutStartSec=240", service)
+        self.assertIn("Type=simple", service)
+        self.assertIn("--continuous", service)
+        self.assertIn("Restart=on-failure", service)
+        self.assertIn("TimeoutStopSec=15", service)
         self.assertNotIn("AGCA_BINANCE_REQUEST_TIMEOUT_SECONDS", service)
 
-    def test_observer_timers_are_not_installed_by_repository_files(self):
+    def test_macro_timer_is_not_installed_by_repository_files(self):
         macro = (ROOT / "deploy/agca-exact-macro-observer.timer").read_text()
-        behavior = (ROOT / "deploy/agca-market-behavior-observer.timer").read_text()
         self.assertIn("OnUnitInactiveSec=1min", macro)
-        self.assertIn("OnCalendar=*-*-* *:*:05", behavior)
-        self.assertNotIn("OnUnitInactiveSec=", behavior)
         self.assertIn("Persistent=false", macro)
-        self.assertIn("Persistent=false", behavior)
 
     def test_technical_kline_worker_is_long_lived_binance_paper_only(self):
         service = (ROOT / "deploy/agca-technical-kline-worker.service").read_text()

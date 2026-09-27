@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import asyncio
 import fcntl
 import hashlib
 import json
 import os
+import signal
 import sys
 import tempfile
 import time
@@ -50,21 +52,8 @@ def collection_alignment(now_ms, required_span_seconds):
     return next_end_ms + MINUTE_MS, next_end_ms
 
 
-def wait_for_collection_window(not_before_ms):
-    """Delay late-start recovery so snapshots belong to the target minute."""
-    if not_before_ms is None:
-        return 0.0
-    delay = max(
-        0.0,
-        (int(not_before_ms) - int(time.time() * 1000)) / 1000.0,
-    )
-    if delay > 0.0:
-        time.sleep(delay + 0.02)
-    return delay
-
-
-def refresh_market_route():
-    tickers = asyncio.run(fetch_market_tickers())
+def refresh_market_route(timings=None):
+    tickers = asyncio.run(fetch_market_tickers(timings=timings))
     snapshot_ms = int(time.time() * 1000)
     universe = build_universe(tickers, snapshot_ms=snapshot_ms)
     if not universe.get("selected"):
@@ -84,9 +73,42 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-async def collect_minute(route, universe, contract_values, args, minute_end_ms):
-    duration = max(1, int((minute_end_ms - int(time.time() * 1000)) / 1000))
-    liquidation_task = asyncio.create_task(probe(duration, contract_values))
+async def _collect_minute_attempt(route, universe, contract_values, args, timings=None):
+    required_span = (args.samples - 1) * args.cadence_seconds + 1.0
+    if required_span >= MINUTE_MS / 1000:
+        raise ValueError("requested samples and cadence cannot fit in one minute")
+    minute_end_ms = None
+    market_task = None
+    alignment = {"alignment_wait_ms": 0, "late_start_recovery": False,
+                 "sampling_rollover_count": 0}
+
+    async def align_hydrated_sampling():
+        nonlocal minute_end_ms
+        if minute_end_ms is not None:
+            alignment["sampling_rollover_count"] += 1
+        started = time.monotonic()
+        while True:
+            now_ms = int(time.time() * 1000)
+            target, not_before = collection_alignment(now_ms, required_span)
+            if not_before is None:
+                minute_end_ms = target
+                break
+            alignment["late_start_recovery"] = True
+            await asyncio.sleep(max(0.0, (not_before - now_ms) / 1000.0) + 0.02)
+        alignment["alignment_wait_ms"] += round((time.monotonic() - started) * 1000)
+        return minute_end_ms
+
+    def liquidation_close():
+        # Sampling can roll into another minute after a scheduling stall.
+        # Only a completed market task makes its target close definitive.
+        if minute_end_ms is not None and market_task is not None and market_task.done():
+            return minute_end_ms
+        return int(time.time() * 1000) + 2 * MINUTE_MS
+
+    liquidation_task = asyncio.create_task(probe(
+        contract_values=contract_values, timings=timings,
+        observe_until_ms=liquidation_close,
+    ))
     market_task = asyncio.create_task(collect_minute_snapshots(
         route,
         universe,
@@ -94,41 +116,66 @@ async def collect_minute(route, universe, contract_values, args, minute_end_ms):
         cadence_seconds=args.cadence_seconds,
         closed_bar_sink=None,
         observe_until_ms=None,
+        before_sampling=align_hydrated_sampling,
+        timings=timings,
     ))
-    market_snapshots, liquidations = await asyncio.gather(
-        market_task, liquidation_task
-    )
-    return [build_bundle(market, liquidations) for market in market_snapshots]
+    try:
+        pending = {market_task, liquidation_task}
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if liquidation_task in done:
+                liquidations = liquidation_task.result()
+                if liquidations.get("state") not in {
+                    "AVAILABLE_EVENTS_OBSERVED", "AVAILABLE_NO_EVENT_IN_WINDOW"
+                }:
+                    raise ConnectionError("Binance liquidation channel failed")
+                if not market_task.done():
+                    raise ConnectionError("Binance liquidation channel ended before market collection")
+            if market_task in done:
+                market_snapshots = market_task.result()
+                if minute_end_ms is None:
+                    raise RuntimeError("market collection did not establish a target minute")
+        alignment["sample_first_timestamp_ms"] = (
+            market_snapshots[0]["collected_timestamp_ms"] if market_snapshots else None
+        )
+        alignment["sample_last_timestamp_ms"] = (
+            market_snapshots[-1]["collected_timestamp_ms"] if market_snapshots else None
+        )
+        return ([build_bundle(market, liquidations) for market in market_snapshots],
+                minute_end_ms, alignment)
+    finally:
+        for task in (market_task, liquidation_task):
+            task.cancel()
+        await asyncio.gather(market_task, liquidation_task, return_exceptions=True)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--route")
-    parser.add_argument("--universe")
-    parser.add_argument("--refresh-live-universe", action="store_true")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--samples", type=int, default=5)
-    parser.add_argument("--cadence-seconds", type=float, default=10)
-    parser.add_argument("--database")
-    parser.add_argument("--retention-days", type=int, default=30)
-    parser.add_argument("--health-output")
-    parser.add_argument("--lock-file")
-    args = parser.parse_args()
-    if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
-        raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
-    cycle_started = time.monotonic()
-    lock_handle = None
-    if args.lock_file:
-        lock_path = Path(args.lock_file)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_handle = lock_path.open("w")
+async def collect_minute(route, universe, contract_values, args, timings=None):
+    """Retry failed transports with fresh streams inside the cycle deadline."""
+    errors = []
+    for attempt in range(3):
         try:
-            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise SystemExit("Another market behavior observer owns the lock") from exc
+            bundles, minute_end_ms, alignment = await _collect_minute_attempt(
+                route, universe, contract_values, args, timings
+            )
+        except ConnectionError as exc:
+            errors.append(str(exc)[:500])
+            if attempt == 2:
+                raise ConnectionError(
+                    "observer transport failed after 3 attempts: " + "; ".join(errors)
+                ) from exc
+            await asyncio.sleep(0.25 * (attempt + 1))
+        else:
+            alignment["transport_retry_count"] = len(errors)
+            alignment["transport_retry_reasons"] = errors
+            return bundles, minute_end_ms, alignment
+
+
+def run_cycle(args):
+    cycle_started = time.monotonic()
+    transport_timings = {}
     route_started = time.monotonic()
     if args.refresh_live_universe:
-        universe, route = refresh_market_route()
+        universe, route = refresh_market_route(transport_timings)
     else:
         if not args.route or not args.universe:
             parser.error("--route and --universe are required without --refresh-live-universe")
@@ -138,24 +185,21 @@ def main():
     contract_values = {row["instrument"]: row.get("contract_value", 1.0)
                        for row in universe.get("selected", [])}
 
-    required_span = (args.samples - 1) * args.cadence_seconds + 8
-    now_ms = int(time.time() * 1000)
-    minute_end_ms, collection_not_before_ms = collection_alignment(
-        now_ms, required_span
-    )
-    alignment_wait_seconds = wait_for_collection_window(
-        collection_not_before_ms
-    )
-
     collection_started = time.monotonic()
-    bundles = asyncio.run(
-        collect_minute(route, universe, contract_values, args, minute_end_ms))
-    collection_ms = round(
-        (time.monotonic() - collection_started) * 1000.0, 3
-    )
+    bundles, minute_end_ms, alignment = asyncio.run(
+        collect_minute(route, universe, contract_values, args, transport_timings))
+    collection_ms = round(max(
+        0.0, (time.monotonic() - collection_started) * 1000.0
+        - alignment["alignment_wait_ms"],
+    ), 3)
 
+    close_wait_started = time.monotonic()
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
+    close_wait_ms = round((time.monotonic() - close_wait_started) * 1000, 3)
+    aggregate_started = time.monotonic()
     result = aggregate_closed_minute(bundles, minute_end_ms)
+    aggregate_ms = round((time.monotonic() - aggregate_started) * 1000, 3)
+    causal_started = time.monotonic()
     result["market_data_provider"] = "BINANCE"
     result["causal_external_evidence"] = (
         evidence_for_closed_minute(args.database, minute_end_ms)
@@ -167,6 +211,7 @@ def main():
             "events": [],
         }
     )
+    causal_ms = round((time.monotonic() - causal_started) * 1000, 3)
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
@@ -179,22 +224,25 @@ def main():
         "open_interest_state": "UNAVAILABLE_CANONICAL_WS",
         "liquidation_connection": "ONE_CONTINUOUS_PUBLIC_WEBSOCKET_FOR_MINUTE",
         "raw_snapshots_lifetime": "MEMORY_ONLY_UNTIL_CLOSED_MINUTE_AGGREGATION",
-        "alignment_wait_ms": int(round(alignment_wait_seconds * 1000.0)),
-        "late_start_recovery": bool(collection_not_before_ms is not None),
+        **alignment,
     }
     persistence_ms = None
     if args.database:
         persistence_started = time.monotonic()
         result["sqlite_persistence"] = persist_closed_minute(
-            args.database, result, args.retention_days)
+            args.database, result, args.retention_days, include_counts=False)
         persistence_ms = round(
             (time.monotonic() - persistence_started) * 1000.0, 3
         )
+    result["transport_timings_ms"] = transport_timings
     result["runtime_timings_ms"] = {
         "route_refresh": route_refresh_ms,
-        "alignment_wait": int(round(alignment_wait_seconds * 1000.0)),
+        "alignment_wait": alignment["alignment_wait_ms"],
         "collection": collection_ms,
         "persistence": persistence_ms,
+        "closed_minute_wait": close_wait_ms,
+        "aggregation": aggregate_ms,
+        "causal_evidence": causal_ms,
         "total_cycle": round((time.monotonic() - cycle_started) * 1000.0, 3),
     }
     write_json_atomic(args.output, result)
@@ -215,6 +263,10 @@ def main():
             "raw_market_payloads_persisted": False,
             "may_send_real_orders": False,
             "runtime_timings_ms": result.get("runtime_timings_ms"),
+            "collection_contract": result["collection_contract"],
+            "transport_timings_ms": transport_timings,
+            "sql_timings_ms": result.get("sqlite_persistence", {}).get("sql_timings_ms"),
+            "write_attempts": result.get("sqlite_persistence", {}).get("write_attempts"),
             "forward_outcomes_settled": (
                 result.get("sqlite_persistence", {})
                 .get("forward_outcomes", {}).get("settled", 0)
@@ -246,6 +298,57 @@ def main():
         "eligible_row_count": result["eligible_row_count"],
         "minute_end_timestamp_ms": result["minute_end_timestamp_ms"],
     }, sort_keys=True))
+
+
+def _cycle_timeout(signum, frame):
+    # Exit the supervised process; channel-level `except Exception` handlers
+    # must not swallow the whole-cycle deadline as a recoverable feed error.
+    raise SystemExit("market behavior cycle exceeded its time budget")
+
+
+def run_bounded_cycle(args):
+    previous = signal.signal(signal.SIGALRM, _cycle_timeout)
+    signal.alarm(args.cycle_timeout_seconds)
+    try:
+        return run_cycle(args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--route")
+    parser.add_argument("--universe")
+    parser.add_argument("--refresh-live-universe", action="store_true")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--samples", type=int, default=5)
+    parser.add_argument("--cadence-seconds", type=float, default=10)
+    parser.add_argument("--database")
+    parser.add_argument("--retention-days", type=int, default=30)
+    parser.add_argument("--health-output")
+    parser.add_argument("--lock-file")
+    parser.add_argument("--continuous", action="store_true",
+                        help="Publish consecutive minutes in one observer process")
+    parser.add_argument("--cycle-timeout-seconds", type=int, default=240)
+    args = parser.parse_args()
+    if args.cycle_timeout_seconds <= 0:
+        parser.error("--cycle-timeout-seconds must be positive")
+    if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
+        raise SystemExit("Safety gate: market observer accepts PAPER_ONLY exclusively")
+    with ExitStack() as stack:
+        if args.lock_file:
+            lock_path = Path(args.lock_file)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_handle = stack.enter_context(lock_path.open("w"))
+            try:
+                fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise SystemExit("Another market behavior observer owns the lock") from exc
+        while True:
+            run_bounded_cycle(args)
+            if not args.continuous:
+                return
 
 
 if __name__ == "__main__":

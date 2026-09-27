@@ -1,8 +1,11 @@
 import sqlite3
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 from datetime import datetime, timezone
 
-from database.causal_evidence_store import load_events, save_exact_macro_event
+from database.causal_evidence_store import load_events, save_exact_macro_event, evidence_for_closed_minute
 
 
 class CausalEvidenceStoreTests(unittest.TestCase):
@@ -34,6 +37,25 @@ class CausalEvidenceStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.con.close()
+
+    def test_closed_minute_projection_never_installs_mirror_ddl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.db"
+            with sqlite3.connect(path) as target:
+                self.con.commit()
+                self.con.backup(target)
+            statements = []
+            original = sqlite3.connect
+            def traced(*args, **kwargs):
+                con = original(*args, **kwargs)
+                con.set_trace_callback(statements.append)
+                return con
+            end = int(datetime(2026, 8, 30, 10, 1, tzinfo=timezone.utc).timestamp()*1000)
+            with patch("database.causal_evidence_store.sqlite3.connect", side_effect=traced):
+                result = evidence_for_closed_minute(path, end)
+            self.assertEqual(result["event_count"], 3)
+            self.assertFalse(any(sql.lstrip().upper().startswith(("CREATE", "ALTER", "INSERT", "UPDATE", "DELETE")) for sql in statements))
+            self.assertIn("PRAGMA query_only=ON", statements)
 
     def test_existing_sources_use_actual_availability(self):
         macro = {

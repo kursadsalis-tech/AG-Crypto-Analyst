@@ -15,6 +15,7 @@ import math
 import os
 import ssl
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -35,6 +36,32 @@ MAX_EVENT_AGE_MS = 5_000
 OPEN_TIMEOUT_SECONDS = float(
     os.getenv("AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS", "10")
 )
+
+
+@asynccontextmanager
+async def measured_connection(url, *, timings=None, phase="socket", **kwargs):
+    """Separate handshake, observation and close latency without frame logging."""
+    # These bounded snapshots have already consumed their required evidence.
+    # A slow peer close must not delay publication of the closed minute.
+    kwargs.setdefault("close_timeout", 1.0)
+    started = time.monotonic()
+    entered = closing = None
+    try:
+        async with websockets.connect(url, **kwargs) as socket:
+            entered = time.monotonic()
+            try:
+                yield socket
+            finally:
+                closing = time.monotonic()
+    finally:
+        finished = time.monotonic()
+        if timings is not None:
+            timings[f"{phase}_connect"] = round(
+                ((entered or finished) - started) * 1000, 3
+            )
+            if entered is not None and closing is not None:
+                timings[f"{phase}_observe"] = round((closing - entered) * 1000, 3)
+                timings[f"{phase}_close"] = round((finished - closing) * 1000, 3)
 
 
 def _is_um(message):
@@ -125,11 +152,11 @@ def _book_notional(levels, depth):
     return total
 
 
-async def _collect_ticker_rows(duration_seconds):
+async def _collect_ticker_rows(duration_seconds, timings=None):
     context = ssl.create_default_context(cafile=certifi.where())
     rows = {}
-    async with websockets.connect(
-        ALL_MARKET_TICKER_URL,
+    async with measured_connection(
+        ALL_MARKET_TICKER_URL, timings=timings, phase="ticker",
         ssl=context,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
@@ -156,11 +183,11 @@ async def _collect_ticker_rows(duration_seconds):
     return rows
 
 
-async def _collect_book_rows(duration_seconds):
+async def _collect_book_rows(duration_seconds, timings=None):
     context = ssl.create_default_context(cafile=certifi.where())
     rows = {}
-    async with websockets.connect(
-        ALL_BOOK_TICKER_URL,
+    async with measured_connection(
+        ALL_BOOK_TICKER_URL, timings=timings, phase="book",
         ssl=context,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         ping_interval=20,
@@ -184,7 +211,7 @@ async def _collect_book_rows(duration_seconds):
     return rows
 
 
-async def fetch_market_tickers(timeout_seconds=8):
+async def fetch_market_tickers(timeout_seconds=8, *, timings=None):
     """Return broad USD-M ticker rows enriched with live best bid/ask.
 
     Binance's routed Market all-ticker stream no longer carries best bid/ask.
@@ -192,8 +219,8 @@ async def fetch_market_tickers(timeout_seconds=8):
     Both are canonical Binance streams and merged by exact symbol.
     """
     duration = max(2.0, float(timeout_seconds))
-    ticker_task = asyncio.create_task(_collect_ticker_rows(min(duration, 3.0)))
-    book_task = asyncio.create_task(_collect_book_rows(min(duration, 6.0)))
+    ticker_task = asyncio.create_task(_collect_ticker_rows(min(duration, 3.0), timings))
+    book_task = asyncio.create_task(_collect_book_rows(min(duration, 6.0), timings))
     tickers, books = await asyncio.gather(ticker_task, book_task)
 
     merged = []
@@ -407,6 +434,7 @@ def _snapshot(states, collected_ms, public_connected, trade_connected):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "provider": "BINANCE",
         "transport": "USD_M_ROUTED_WEBSOCKET_STREAMS",
+        "collected_timestamp_ms": int(collected_ms),
         "instrument_count": len(rows),
         "complete_instrument_count": sum(
             bool(row["required_sources_available"]) for row in rows
@@ -429,6 +457,8 @@ async def collect_minute_snapshots(
     hydration_timeout_seconds=6.0,
     closed_bar_sink=None,
     observe_until_ms=None,
+    before_sampling=None,
+    timings=None,
 ):
     """Collect deep evidence and exact closed 1m bars over one observer minute."""
     universe_rows = {
@@ -479,8 +509,8 @@ async def collect_minute_snapshots(
     connectivity = {"public": False, "market": False, "technical": False}
 
     async def public_receiver():
-        async with websockets.connect(
-            public_url,
+        async with measured_connection(
+            public_url, timings=timings, phase="public",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
@@ -498,8 +528,8 @@ async def collect_minute_snapshots(
                 _apply_public(states, message, int(time.time() * 1000))
 
     async def market_receiver():
-        async with websockets.connect(
-            market_url,
+        async with measured_connection(
+            market_url, timings=timings, phase="market",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
@@ -523,8 +553,8 @@ async def collect_minute_snapshots(
     async def technical_receiver():
         if not technical_params:
             return
-        async with websockets.connect(
-            technical_url,
+        async with measured_connection(
+            technical_url, timings=timings, phase="technical",
             ssl=context,
             open_timeout=OPEN_TIMEOUT_SECONDS,
             ping_interval=20,
@@ -549,34 +579,76 @@ async def collect_minute_snapshots(
         asyncio.create_task(market_receiver()),
         asyncio.create_task(technical_receiver()),
     ]
-    try:
-        hydrate_deadline = time.monotonic() + float(hydration_timeout_seconds)
-        while time.monotonic() < hydrate_deadline:
-            hydrated = all(
-                state.bids and state.asks and state.funding_rate is not None
-                for state in states.values()
-            )
-            if hydrated and connectivity["market"]:
-                break
-            await asyncio.sleep(0.05)
 
-        snapshots = []
-        started = time.monotonic()
-        for index in range(int(samples)):
-            target = started + index * float(cadence_seconds)
-            await asyncio.sleep(max(0.0, target - time.monotonic()))
-            snapshots.append(_snapshot(
-                states,
-                int(time.time() * 1000),
-                connectivity["public"],
-                connectivity["market"],
-            ))
+    async def while_receiving(awaitable):
+        waiting = asyncio.ensure_future(awaitable)
+        try:
+            await asyncio.wait(
+                (waiting, tasks[0], tasks[1]), return_when=asyncio.FIRST_COMPLETED
+            )
+            # The optional technical receiver may finish without subscribing.
+            # Public/market receivers must remain alive throughout sampling.
+            for name, receiver in zip(("public", "market"), tasks[:2]):
+                if receiver.done():
+                    error = None if receiver.cancelled() else receiver.exception()
+                    detail = f"{type(error).__name__}: {error}" if error else "closed"
+                    raise ConnectionError(f"Binance {name} receiver failed: {detail}") from error
+            return await waiting
+        finally:
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+
+    def has_required_evidence(state):
+        return bool(
+            state.bids and state.asks and state.book_timestamp_ms > 0
+            and 0 < float(state.bids[0][0]) < float(state.asks[0][0])
+            and state.funding_rate is not None and state.funding_timestamp_ms > 0
+        )
+
+    try:
+        hydration_started = time.monotonic()
+        hydrate_deadline = hydration_started + float(hydration_timeout_seconds)
+        while time.monotonic() < hydrate_deadline:
+            hydrated = all(has_required_evidence(state) for state in states.values())
+            if hydrated and connectivity["public"] and connectivity["market"]:
+                break
+            await while_receiving(asyncio.sleep(0.05))
+
+        if timings is not None:
+            timings["deep_hydration"] = round((time.monotonic() - hydration_started) * 1000, 3)
+        if not (connectivity["public"] and connectivity["market"]):
+            raise ConnectionError("Binance required channels not connected after hydration")
+        if not any(has_required_evidence(state) for state in states.values()):
+            raise ConnectionError("Binance no complete instrument evidence after hydration")
+        while True:
+            minute_end_ms = (
+                await while_receiving(before_sampling()) if before_sampling is not None else None
+            )
+            snapshots = []
+            next_sample = time.monotonic()
+            for _index in range(int(samples)):
+                await while_receiving(asyncio.sleep(max(0.0, next_sample - time.monotonic())))
+                sampled_at = time.monotonic()
+                collected_ms = int(time.time() * 1000)
+                if minute_end_ms is not None and collected_ms >= int(minute_end_ms):
+                    # A scheduling stall invalidates the partial window. Keep
+                    # the streams open and collect a fresh, truly aligned one.
+                    break
+                snapshots.append(_snapshot(
+                    states, collected_ms,
+                    connectivity["public"], connectivity["market"],
+                ))
+                # Preserve cadence after a delayed wake; never manufacture a
+                # burst of catch-up observations from the same instant.
+                next_sample = sampled_at + float(cadence_seconds)
+            else:
+                break
         if observe_until_ms is not None:
             while int(time.time() * 1000) < int(observe_until_ms):
-                await asyncio.sleep(min(
+                await while_receiving(asyncio.sleep(min(
                     0.10,
                     max(0.0, (int(observe_until_ms) - int(time.time() * 1000)) / 1000.0),
-                ))
+                )))
         return snapshots
     finally:
         stop.set()

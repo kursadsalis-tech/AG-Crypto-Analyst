@@ -151,6 +151,7 @@ def main(force=False):
             f"technical_contexts={result.get('technical_context_count', 0)} | "
             f"technical_ms={result.get('technical_context_compute_ms', 0.0):.3f} | "
             f"technical_errors={len(result.get('technical_context_errors') or {})} | "
+            f"regime_errors={len(result.get('technical_regime_errors') or {})} | "
             f"bar_bootstrap={technical_bootstrap.get('ready', 0)}/"
             f"{technical_bootstrap.get('needed', 0)} | "
             f"bar_rows={technical_bootstrap.get('bars', 0)}"

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 TABLE = "technical_minute_bars"
 DEFAULT_RETENTION_DAYS = 3
+WRITE_BATCH_SIZE = 16
 MARKET_TYPE = "USD_M_PERPETUAL"
 PROVIDER = "BINANCE"
 
@@ -32,9 +33,23 @@ def ensure_table(connection):
             PRIMARY KEY(symbol,market_type,open_time_ms)
         )
     """)
+    # A non-covering timestamp index still needs up to 1,440 random table
+    # reads for each plan. Keep the complete bounded bar projection together
+    # so low-IOPS runtime disks can read a short contiguous index range.
+    columns = ("symbol", "market_type", "provider", "close_time_ms", "open_time_ms",
+               "open", "high", "low", "close", "volume", "quote_volume",
+               "trade_count", "taker_buy_quote_volume", "source")
+    existing = tuple(row[2] for row in connection.execute(
+        f"PRAGMA index_info(ix_{TABLE}_symbol_close)"))
+    if existing and existing != columns:
+        # Publish the replacement atomically under the existing name. Running
+        # collectors retain a valid schema and can keep buffering WS bars.
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        connection.execute(f"DROP INDEX ix_{TABLE}_symbol_close")
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_{TABLE}_symbol_close
-        ON {TABLE}(symbol,market_type,close_time_ms)
+        ON {TABLE}({','.join(columns)})
     """)
     connection.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_{TABLE}_close
@@ -160,28 +175,67 @@ def _database_locked(exc):
     )
 
 
-def _persist_bars_once(database_path, bars, *, now_ms, retention_days):
+def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_counts=True):
     cutoff = int(now_ms) - int(retention_days) * 86_400_000
     prepared = [_validated(bar) for bar in bars]
     connection = _writer_connection(database_path)
     try:
         if not _schema_ready(connection):
             raise RuntimeError("technical bar schema unavailable")
-        inserted = _upsert_prepared(connection, prepared)
+        timings = {"writer_wait": 0.0, "upsert": 0.0, "prune": 0.0,
+                   "commit": 0.0, "count": 0.0, "max_write_transaction": 0.0}
+        inserted = 0
+        # Each closed symbol/minute bar is independently immutable evidence.
+        # Bound writer ownership to a small group; retrying a partial flush is
+        # idempotent and never requires one market-wide write transaction.
+        for offset in range(0, len(prepared), WRITE_BATCH_SIZE):
+            started = time.monotonic()
+            connection.execute("BEGIN IMMEDIATE")
+            acquired = time.monotonic()
+            timings["writer_wait"] += (acquired - started) * 1000
+            inserted += _upsert_prepared(
+                connection, prepared[offset:offset + WRITE_BATCH_SIZE]
+            )
+            committing = time.monotonic()
+            timings["upsert"] += (committing - acquired) * 1000
+            connection.commit()
+            finished = time.monotonic()
+            timings["commit"] += (finished - committing) * 1000
+            timings["max_write_transaction"] = max(
+                timings["max_write_transaction"], (finished - acquired) * 1000
+            )
+            if offset + WRITE_BATCH_SIZE < len(prepared):
+                # Give waiting realtime writers an opportunity between batches.
+                time.sleep(0.01)
+        started = time.monotonic()
+        connection.execute("BEGIN IMMEDIATE")
+        acquired = time.monotonic()
+        timings["writer_wait"] += (acquired - started) * 1000
         pruned = connection.execute(
             f"DELETE FROM {TABLE} WHERE close_time_ms < ?", (cutoff,)
         ).rowcount
-        # Release the single SQLite writer slot before telemetry COUNT work.
+        committing = time.monotonic()
+        timings["prune"] = (committing - acquired) * 1000
         connection.commit()
-        count = connection.execute(
+        finished = time.monotonic()
+        timings["commit"] += (finished - committing) * 1000
+        timings["max_write_transaction"] = max(
+            timings["max_write_transaction"], (finished - acquired) * 1000
+        )
+        started = time.monotonic()
+        count = (connection.execute(
             f"SELECT COUNT(*) FROM {TABLE}"
-        ).fetchone()[0]
+        ).fetchone()[0] if include_counts else None)
+        timings["count"] = (time.monotonic() - started) * 1000
+
     finally:
         connection.close()
     return {
         "upserted": inserted,
         "pruned": pruned,
-        "row_count": int(count),
+        "row_count": int(count) if count is not None else None,
+        "historical_counts_computed": bool(include_counts),
+        "timings_ms": {key: round(value, 3) for key, value in timings.items()},
         "retention_days": int(retention_days),
         "remote_mirror_enabled_for_table": False,
     }
@@ -189,7 +243,7 @@ def _persist_bars_once(database_path, bars, *, now_ms, retention_days):
 
 def persist_bars(
     database_path, bars, *, now_ms=None,
-    retention_days=DEFAULT_RETENTION_DAYS, attempts=4,
+    retention_days=DEFAULT_RETENTION_DAYS, attempts=4, include_counts=True,
 ):
     """Persist prepared closed bars with bounded fresh-connection retries."""
     now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
@@ -205,7 +259,7 @@ def persist_bars(
         try:
             return _persist_bars_once(
                 database_path, bars, now_ms=now_ms,
-                retention_days=retention_days,
+                retention_days=retention_days, include_counts=include_counts,
             )
         except sqlite3.OperationalError as exc:
             if not _database_locked(exc) or attempt >= attempts:
@@ -260,7 +314,7 @@ def load_recent(connection, symbol, *, limit=720, before_ms=None):
                volume,quote_volume,trade_count,taker_buy_quote_volume,source
         FROM {TABLE}
         WHERE {where}
-        ORDER BY open_time_ms DESC
+        ORDER BY close_time_ms DESC
         LIMIT ?
     """, tuple(params)).fetchall()
     return [{

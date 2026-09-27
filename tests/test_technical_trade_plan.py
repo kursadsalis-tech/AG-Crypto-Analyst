@@ -87,6 +87,17 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
         self.con.close()
         plan._PLAN_CACHE.clear()
 
+    def test_incomplete_warmup_does_not_read_structural_history(self):
+        from unittest.mock import patch
+        cutoff = int((NOW - timedelta(minutes=8)).timestamp() * 1000)
+        self.con.execute("DELETE FROM technical_minute_bars WHERE open_time_ms=?", (cutoff,))
+        self.con.commit()
+        with patch.object(plan, "load_recent", wraps=plan.load_recent) as reader:
+            with self.assertRaisesRegex(ValueError, "7/24"):
+                plan.build_for_candidate(self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL")
+        self.assertEqual(reader.call_count, 1)
+        self.assertEqual(reader.call_args.kwargs["limit"], plan.MIN_ONE_MINUTE_BARS)
+
     def test_plan_is_network_free_adaptive_and_structural(self):
         result = plan.build_for_candidate(
             self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL"

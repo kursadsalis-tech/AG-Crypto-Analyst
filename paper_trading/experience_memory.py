@@ -195,6 +195,8 @@ def review_closed_positions(con, now=None):
         "LEFT JOIN paper_position_management m ON m.position_id=p.position_id"
         if manager_exists else ""
     )
+    # Drive this join from frozen theses: legacy positions without a thesis
+    # cannot receive a review and must not force a historical payload scan.
     rows = con.execute(f"""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
@@ -203,8 +205,8 @@ def review_closed_positions(con, now=None):
                COALESCE({leverage_sql},1),COALESCE({tier_sql},'PAPER_RISK_TIER_1'),
                COALESCE({funding_sql},''),{liquidation_sql},
                {manager_select}
-        FROM paper_agent_positions p
-        JOIN paper_agent_decision_theses t ON t.position_id=p.position_id
+        FROM paper_agent_decision_theses t
+        CROSS JOIN paper_agent_positions p ON p.position_id=t.position_id
         {manager_join}
         LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL
@@ -361,6 +363,14 @@ def review_closed_positions(con, now=None):
 
 def record_legacy_summary(con, now=None):
     """Retain old experience without inventing outcome-blind historical theses."""
+    existing = con.execute(
+        "SELECT summary_json FROM paper_agent_experience_summaries WHERE summary_version=?",
+        (LEGACY_SUMMARY_VERSION,),
+    ).fetchone()
+    if existing:
+        # This versioned retrospective audit is immutable (INSERT OR IGNORE).
+        # Re-reading all old positions cannot change it and competes with live I/O.
+        return json.loads(existing[0])
     now = now or datetime.now(timezone.utc)
     position_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_positions)"

@@ -43,6 +43,12 @@ a regression test, and an explanation of why sizing cannot contain the risk.
 | Venue-specific PAPER fee contract | Execution economics | Selection, risk sizing, cash reservation, preselection and simulated fills use one shared taker-fee function keyed by the selected market route. Defaults are independently configurable for SPOT and USD-M; venue-specific configuration overrides legacy generic fee settings | The same PAPER trade may not be evaluated with one fee assumption and booked with another. Funding remains a separate perpetual-only cost |
 | Leveraged liquidation | Loss containment and learning | Each leveraged OPEN has an immutable maintenance-margin liquidation threshold; a fresh price crossing it closes at the threshold, charges the exchange liquidation fee and records the loss | Protective stops normally precede liquidation, but a gap may liquidate and must remain visible learning evidence rather than being hidden |
 
+Realtime portfolio valuation uses the same fresh, exact-market Binance bid/ask
+contract as PAPER fills: long holdings are marked at bid and shorts at ask.
+Missing, stale, future or crossed quotes fail closed. Dynamic Spot holdings do
+not require a research-universe hourly candle. Legacy offline reports retain
+the existing closed-candle valuation path; this adds no order authority.
+
 Every selection cycle records its core status, candidate count, selected count,
 capacity, available exposure, and rejection reason counts locally in
 `paper_behavior_selection_runs`. A zero-trade cycle without an explicit recorded

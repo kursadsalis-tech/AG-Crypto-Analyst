@@ -92,6 +92,7 @@ for unit in "${retired[@]}"; do
 done
 
 canonical_units=(
+  agca-maintenance.slice
   agca-paper-realtime-worker.service
   agca-technical-kline-worker.service
   agca-behavior-learning-worker.service
@@ -105,7 +106,6 @@ canonical_units=(
   agca-exact-macro-observer.service
   agca-exact-macro-observer.timer
   agca-market-behavior-observer.service
-  agca-market-behavior-observer.timer
   agca-remote-mirror-drain.service
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.service
@@ -119,6 +119,15 @@ for unit in "${canonical_units[@]}"; do
   sudo install -m 644 "deploy/$unit" "/etc/systemd/system/$unit"
 done
 
+# The next normal apt activation inherits the shared resource budget. Never
+# restart a running package transaction or change its existing timer schedule.
+for unit in apt-daily.service apt-daily-upgrade.service; do
+  sudo install -d -m 755 "/etc/systemd/system/$unit.d"
+  sudo install -m 644 deploy/agca-apt-maintenance.conf "/etc/systemd/system/$unit.d/50-agca-resources.conf"
+done
+
+sudo systemctl disable --now agca-market-behavior-observer.timer 2>/dev/null || true
+sudo rm -f /etc/systemd/system/agca-market-behavior-observer.timer
 sudo systemctl daemon-reload
 
 # These are intentionally not scheduled. Observer health is local-only and
@@ -131,13 +140,16 @@ active_timers=(
   agca-exchange-metadata-refresh.timer
   agca-risk-refresh.timer
   agca-exact-macro-observer.timer
-  agca-market-behavior-observer.timer
   agca-remote-mirror-drain.timer
   agca-cloud-attestation.timer
 )
 for timer in "${active_timers[@]}"; do
   sudo systemctl enable --now "$timer"
 done
+
+# Keep the existing observer process alive across minute publications.
+sudo systemctl enable agca-market-behavior-observer.service
+sudo systemctl restart agca-market-behavior-observer.service
 
 # Historical behavior learning is intentionally outside the realtime decision
 # hot path. Start its low-priority cache worker before restarting the consumer.

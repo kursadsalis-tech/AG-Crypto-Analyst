@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 from risk_manager import risk_manager
@@ -40,6 +41,40 @@ class RiskMarketDataTests(unittest.TestCase):
             ):
                 risk_manager.fetch_dynamic_closed_1h_klines("NEWUSDT")
 
+
+    def test_missing_daily_history_preserves_valid_hourly_context(self):
+        from analysis import technical_trade_plan
+        from tests import test_realtime_technical_context as fixtures
+
+        generated = datetime(2026, 9, 8, 1, 5, tzinfo=timezone.utc)
+        candles = fixtures.RealtimeTechnicalContextTests.candles()
+        with (
+            mock.patch.object(risk_manager, "SYMBOLS", ()),
+            mock.patch.object(risk_manager, "utcnow", return_value=generated),
+            mock.patch.object(risk_manager, "runtime_connection"),
+            mock.patch.object(risk_manager, "behavior_risk_symbols",
+                              return_value=("MARSCOINUSDT",)),
+            mock.patch.object(risk_manager, "audited_validation"),
+            mock.patch.object(risk_manager, "fetch_dynamic_closed_1h_klines",
+                              return_value=candles),
+            mock.patch.object(risk_manager, "fetch_closed_daily_klines",
+                              side_effect=RuntimeError("insufficient daily history")),
+            mock.patch.object(risk_manager, "build_global_policy", return_value={}),
+            mock.patch.object(risk_manager, "persist_snapshot_with_retry",
+                              return_value=1) as persist,
+            mock.patch.object(risk_manager, "render_result"),
+        ):
+            result = risk_manager.main()
+        self.assertEqual(result["technical_context_count"], 1)
+        self.assertEqual(result["technical_context_errors"], {})
+        self.assertEqual(result["source_errors"], {})
+        self.assertIn("MARSCOINUSDT", result["technical_regime_errors"])
+        context, _elapsed = persist.call_args.args[3][0]
+        self.assertEqual(context["timeframes"], ["1h", "4h"])
+        self.assertEqual(technical_trade_plan.choose_timeframes(
+            {"horizon": 4}, {}, context), ["1h", "4h"])
+        with self.assertRaisesRegex(ValueError, "long-regime"):
+            technical_trade_plan.choose_timeframes({"horizon": 24}, {}, context)
 
     def test_save_snapshot_keeps_technical_context_local_latest_only(self):
         con = sqlite3.connect(":memory:")

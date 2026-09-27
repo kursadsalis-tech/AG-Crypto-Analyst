@@ -75,7 +75,16 @@ def _atomic_json_write(path: Path, payload: dict) -> None:
                 pass
 
 
+_LAST_PERSISTENCE = {}
+
+
 def write_health(status: str, **details) -> None:
+    if "last_persist_duration_ms" in details:
+        _LAST_PERSISTENCE.update({
+            key: value for key, value in details.items()
+            if key.startswith("last_") or key == "cache_row_count"
+        })
+        _LAST_PERSISTENCE["last_persist_at"] = datetime.now(timezone.utc).isoformat()
     _atomic_json_write(HEALTH_PATH, {
         "health_contract_version": HEALTH_CONTRACT_VERSION,
         "status": status,
@@ -84,6 +93,7 @@ def write_health(status: str, **details) -> None:
         "market_data_provider": "BINANCE",
         "transport": "USD_M_WEBSOCKET_KLINE_1M",
         "may_send_real_orders": False,
+        **_LAST_PERSISTENCE,
         **details,
     })
 
@@ -116,7 +126,7 @@ def recent_cached_symbols(
         with sqlite3.connect(database_path, timeout=5) as con:
             rows = con.execute(
                 """SELECT DISTINCT symbol
-                   FROM technical_minute_bars
+                   FROM technical_minute_bars INDEXED BY ix_technical_minute_bars_close
                    WHERE provider='BINANCE'
                      AND market_type='USD_M_PERPETUAL'
                      AND close_time_ms>=?
@@ -242,6 +252,7 @@ async def persist_pending(
                 DB_PATH,
                 ready,
                 now_ms=now_ms,
+                include_counts=False,
             )
         except Exception as exc:
             write_health(
@@ -271,7 +282,8 @@ async def persist_pending(
             last_persist_duration_ms=round(
                 (time.monotonic() - persist_started) * 1000.0, 3
             ),
-            cache_row_count=int(result["row_count"]),
+            cache_row_count=result["row_count"],
+            last_persist_timings_ms=result.get("timings_ms", {}),
         )
 
 

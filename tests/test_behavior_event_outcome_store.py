@@ -155,6 +155,19 @@ class BehaviorEventOutcomeStoreTests(unittest.TestCase):
             self.assertEqual(queued, [(120_000, None)])
             self.assertEqual(outcomes, 0)
 
+    def test_settlement_does_not_count_retained_outcomes_inside_writer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.db"
+            persist_closed_minute(path, report(60_000, {"BTC-USDT-SWAP": 100}))
+            persist_closed_minute(path, report(120_000, {"BTC-USDT-SWAP": 101}, event()))
+            with sqlite3.connect(path) as con:
+                statements = []
+                con.set_trace_callback(statements.append)
+                result = settle_queued_outcomes(con)
+            self.assertEqual(result["settled_outcomes"], 1)
+            self.assertFalse(any("COUNT(" in sql.upper() and OUTCOME_TABLE in sql
+                                 for sql in statements))
+
     def test_closed_minute_settlement_hot_path_never_runs_schema_ddl(self):
         source = (
             Path(__file__).resolve().parents[1]

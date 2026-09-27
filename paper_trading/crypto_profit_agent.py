@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 import requests
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,7 @@ from zoneinfo import ZoneInfo
 from decision_engine import forecast_engine
 from paper_trading.execution_model import (
     PAPER_MARKET, execute_paper, estimate_order_rules, simulated_fill,
-    taker_fee_rate,
+    taker_fee_rate, validate_quote,
 )
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
@@ -251,6 +252,10 @@ def ensure_tables(con):
     ):
         if name not in position_columns:
             con.execute(f"ALTER TABLE paper_agent_positions ADD COLUMN {name} {definition}")
+    # Historical quarantined positions carry large payloads. Learning must seek
+    # the eligible cohort rather than read every closed legacy position.
+    con.execute("""CREATE INDEX IF NOT EXISTS idx_paper_positions_eligible_status
+        ON paper_agent_positions(evidence_eligible,status,position_id)""")
     # Legacy rows may predate explicit margin accounting.  Backfill only
     # missing values and respect the leverage recorded on that exact position;
     # never rewrite already-accounted historical rows.
@@ -448,7 +453,7 @@ def latest_mark(con, symbol, now=None):
     return (mark, mark_time) if mark > 0.0 else None
 
 
-def portfolio_snapshot(con, now=None):
+def portfolio_snapshot(con, now=None, *, market_snapshots=None):
     portfolio = con.execute("""
         SELECT initial_capital,cash,realized_pnl,total_fees,
                validation_cohort,evidence_start_at
@@ -457,7 +462,7 @@ def portfolio_snapshot(con, now=None):
     open_rows = con.execute("""
         SELECT p.symbol,p.direction,p.entry_price,
                COALESCE(m.remaining_quantity,p.quantity),
-               COALESCE(m.remaining_cost_basis,p.margin_allocated)
+               COALESCE(m.remaining_cost_basis,p.margin_allocated),p.market_type
         FROM paper_agent_positions p
         LEFT JOIN paper_position_management m USING(position_id)
         WHERE p.status='OPEN'
@@ -467,18 +472,27 @@ def portfolio_snapshot(con, now=None):
     gross_exposure = 0.0
     valuation_complete = True
     missing_marks = []
-    for symbol, direction, entry, quantity, margin_basis in open_rows:
+    for symbol, direction, entry, quantity, margin_basis, market_type in open_rows:
         # Cash is debited by allocated margin at entry, not gross leveraged
         # notional. Equity therefore adds back only the remaining margin basis.
         # Treating margin as gross exposure would manufacture equity under
         # leverage and distort all downstream sizing.
         reserved += float(margin_basis)
-        mark_state = latest_mark(con, symbol, now)
-        if mark_state is None:
+        if market_snapshots is None:
+            mark_state = latest_mark(con, symbol, now)
+            mark = mark_state[0] if mark_state else None
+        else:
+            # Realtime risk valuation uses the same exact-market executable
+            # quote contract as fills. Dynamic Spot holdings need no unrelated
+            # research candle, and missing/stale quotes cannot borrow a mark.
+            quote = market_snapshots.get((symbol, market_type))
+            mark = None
+            if quote is not None and quote.market_type == market_type:
+                mark, _ = validate_quote(quote, "SELL" if direction == "LONG" else "BUY")
+        if mark is None:
             valuation_complete = False
             missing_marks.append(symbol)
             continue
-        mark, _ = mark_state
         qty = float(quantity)
         unrealized += directional_pnl(direction, float(entry), mark, qty)
         gross_exposure += abs(qty * mark)
@@ -887,9 +901,21 @@ def _adverse_same_setup_reentry_blocked(con, row):
     return reset_move_pct < effective_stop_pct
 
 
-def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
-    behavior_result = behavior_decision_core.evaluate(con, now)
-    snapshot = portfolio_snapshot(con, now)
+def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, market_snapshots=None):
+    diagnostics = telemetry if telemetry is not None else {}
+    phase_timings = diagnostics.setdefault("phase_timings_ms", {})
+    def measured(name, function, *args, **kwargs):
+        diagnostics["active_phase"] = name
+        started = time.monotonic()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            phase_timings[name] = round(phase_timings.get(name, 0.0) +
+                (time.monotonic() - started) * 1000, 3)
+            diagnostics["active_phase"] = None
+    behavior_result = measured("behavior_evaluation", behavior_decision_core.evaluate, con, now)
+    snapshot = measured("portfolio_valuation", portfolio_snapshot, con, now,
+                        market_snapshots=market_snapshots)
     active = con.execute("""
         SELECT symbol FROM paper_agent_positions
         WHERE status IN ('PENDING_ENTRY','OPEN')
@@ -959,10 +985,14 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None):
     for row in behavior_result["candidates"]:
         tier = risk_tiering.tier_for(row)
         try:
-            plan = technical_trade_plan.build_for_candidate(
+            plan = measured("technical_planning", technical_trade_plan.build_for_candidate,
                 con, row, now=now, market_type=tier.market_type
             )
-        except Exception:
+        except Exception as exc:
+            diagnostics.setdefault("technical_plan_errors", []).append({
+                "symbol": row["symbol"], "error_type": type(exc).__name__,
+                "detail": str(exc)[:160],
+            })
             reject("TECHNICAL_PLAN_UNAVAILABLE")
             continue
         if not bool(plan["risk"]["risk_compatible"]):

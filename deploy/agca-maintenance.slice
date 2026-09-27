@@ -1,0 +1,16 @@
+[Unit]
+Description=AGCA host maintenance resource budget
+
+[Slice]
+# Shared by package-list refresh and unattended upgrades on the free VM.
+# The boot disk also serves SQLite and swap; ionice alone cannot isolate it
+# with the VM's "none" scheduler. Absolute limits preserve runtime headroom.
+CPUAccounting=yes
+CPUQuota=20%
+MemoryAccounting=yes
+MemoryHigh=192M
+IOAccounting=yes
+IOReadIOPSMax=/ 40
+IOWriteIOPSMax=/ 20
+IOReadBandwidthMax=/ 2M
+IOWriteBandwidthMax=/ 1M

@@ -1,4 +1,6 @@
 import sqlite3
+import tempfile
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -35,6 +37,54 @@ class TradeLearningWorkerTests(unittest.TestCase):
         self.assertIs(result, fake)
         connect_mock.assert_called_once_with(worker.DB_NAME, timeout=5)
         fake.execute.assert_called_once_with("PRAGMA busy_timeout=5000")
+
+    def test_input_key_ignores_runtime_churn_but_tracks_final_costs_and_observations(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            worker, "DB_NAME", str(Path(tmp) / "runtime.db")
+        ):
+            con = sqlite3.connect(worker.DB_NAME)
+            con.executescript("""
+                CREATE TABLE paper_agent_positions(position_id INTEGER PRIMARY KEY,
+                    status TEXT,evidence_eligible INTEGER,net_pnl REAL,funding_cost REAL);
+                INSERT INTO paper_agent_positions VALUES(1,'CLOSED',1,3,0);
+                CREATE TABLE external_trader_trade_observations(observation_id INTEGER PRIMARY KEY);
+                CREATE TABLE heartbeat(at TEXT);
+            """)
+            before = worker.learning_input_key()
+            con.execute("INSERT INTO heartbeat VALUES('next')")
+            con.commit()
+            self.assertEqual(worker.learning_input_key(), before)
+            con.execute("UPDATE paper_agent_positions SET net_pnl=2,funding_cost=1")
+            con.commit()
+            corrected = worker.learning_input_key()
+            self.assertNotEqual(corrected, before)
+            con.execute("INSERT INTO external_trader_trade_observations VALUES(1)")
+            con.commit()
+            self.assertNotEqual(worker.learning_input_key(), corrected)
+            con.close()
+
+    def test_unchanged_inputs_do_not_repeat_full_learning(self):
+        with (mock.patch.object(worker, "learning_input_key", return_value={"external": "same", "positions": "same"}),
+              mock.patch.object(worker, "run_cycle", return_value={"learning_status": "OK"}) as cycle,
+              mock.patch.object(worker, "write_health") as health,
+              mock.patch.object(worker.time, "sleep", side_effect=[None, SystemExit])):
+            with self.assertRaises(SystemExit):
+                worker.main()
+        cycle.assert_called_once_with(initialize=True, refresh_external=True)
+        self.assertTrue(health.call_args.args[0]["skipped_unchanged_inputs"])
+
+    def test_new_own_trade_does_not_repeat_unchanged_external_research(self):
+        with (mock.patch.object(worker, "learning_input_key", side_effect=[
+                {"external": "same", "positions": "before"},
+                {"external": "same", "positions": "after"}]),
+              mock.patch.object(worker, "run_cycle", return_value={}) as cycle,
+              mock.patch.object(worker, "write_health"),
+              mock.patch.object(worker.time, "sleep", side_effect=[None, SystemExit])):
+            with self.assertRaises(SystemExit):
+                worker.main()
+        self.assertEqual(cycle.call_args_list, [
+            mock.call(initialize=True, refresh_external=True),
+            mock.call(initialize=False, refresh_external=False)])
 
     def test_cycle_does_not_hide_non_lock_error(self):
         with (

@@ -27,6 +27,50 @@ class ExternalTraderLearningTests(unittest.TestCase):
         }
         self.assertIn("ix_external_trader_status_identity", indexes)
 
+    def test_review_uses_eligible_indexes_without_changing_evidence_counts(self):
+        entry = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        external.ingest_snapshot(self.con, self.base, observed_at=entry)
+        external.ingest_snapshot(self.con, self.base, observed_at=entry + timedelta(days=1))
+        second = dict(self.base, source_trader_id="trader-2")
+        external.ingest_snapshot(self.con, second, observed_at=entry + timedelta(days=3))
+        excluded = dict(self.base, source_trader_id="excluded", sampling_frame="ANECDOTAL_ONLY")
+        external.ingest_snapshot(self.con, excluded, observed_at=entry + timedelta(days=20))
+        trade = dict(self.base, source_trade_id="t1", symbol="BTCUSDT",
+                     direction="LONG", status="CLOSED", entry_time=entry.isoformat(),
+                     exit_time=(entry + timedelta(hours=4)).isoformat(),
+                     entry_price=100.0, exit_price=102.0, notional=100.0,
+                     reported_pnl=2.0, fees=0.2, funding=0.1, leverage=1.0)
+        for payload in (
+            trade,
+            dict(trade, reported_pnl=3.0),  # A second observation is the same trade.
+            dict(trade, source_trader_id="trader-2", source_trade_id="t2"),
+            dict(trade, source_trade_id="excluded", sampling_frame="ANECDOTAL_ONLY"),
+            dict(trade, source_trade_id="open-only", status="OPEN", exit_time=None),
+        ):
+            external.ingest_trade(self.con, payload, first_observed_at=entry + timedelta(hours=5))
+
+        queries = (
+            ("SELECT count(DISTINCT exchange || ':' || source_trader_id) "
+             "FROM external_trader_source_snapshots WHERE research_eligible=1",
+             "ix_external_trader_eligible_snapshot_identity_time"),
+            ("SELECT min(observed_at),max(observed_at) "
+             "FROM external_trader_source_snapshots WHERE research_eligible=1",
+             "ix_external_trader_eligible_snapshot_identity_time"),
+            ("SELECT count(DISTINCT exchange || ':' || source_trader_id || ':' || source_trade_id) "
+             "FROM external_trader_trade_observations WHERE research_eligible=1 AND status='CLOSED'",
+             "ix_external_trader_eligible_closed_identity"),
+        )
+        for query, index in queries:
+            with self.subTest(index=index, query=query):
+                plan = self.con.execute("EXPLAIN QUERY PLAN " + query).fetchall()
+                self.assertIn(index, " ".join(str(row[3]) for row in plan))
+
+        result = external.run_review(self.con, entry + timedelta(days=30))
+        self.assertEqual(result["traders"], 2)
+        self.assertEqual(result["closed_trades"], 2)
+        self.assertEqual(result["observation_days"], 3)
+        self.assertFalse(result["promotion_allowed"])
+
     def test_winner_only_social_example_is_quarantined(self):
         payload = dict(self.base, sampling_frame="ANECDOTAL_ONLY")
         result = external.ingest_snapshot(self.con, payload)

@@ -379,6 +379,25 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             normalized,
         )
 
+    def test_fresh_evidence_reads_do_not_hold_the_writer_lock(self):
+        self.add_history(days=1)
+        self.add_current()
+        core.refresh_pattern_cache(self.con, NOW)
+        reads = []
+        def trace(sql):
+            if "SELECT MAX(e.minute_end_timestamp_ms)" in sql:
+                reads.append((sql, self.con.in_transaction))
+        self.con.set_trace_callback(trace)
+        with patch.dict("os.environ", {"AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED": "1"}):
+            result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        self.assertEqual(len(reads), 1)
+        self.assertFalse(reads[0][1])
+        oldest = int(NOW.timestamp() * 1000 - core.MAX_EVIDENCE_AGE_SECONDS * 1000)
+        self.assertIn(f"BETWEEN {oldest} AND", reads[0][0])
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM paper_behavior_policy_reviews").fetchone()[0], 1)
+
     def test_newer_eventless_minute_does_not_hide_fresh_event_minute(self):
         self.add_history(days=1)
         self.add_current()

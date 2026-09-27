@@ -49,6 +49,28 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             self.assertEqual(provider, "BINANCE")
             self.assertNotIn(TABLE, REMOTE_RUNTIME_TABLES)
 
+    def test_live_persistence_skips_history_counts_but_keeps_evidence_and_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.db"
+            result = persist_closed_minute(path, report(120_000), include_counts=False)
+            self.assertIsNone(result["row_count"])
+            self.assertIsNone(result["external_evidence_row_count"])
+            self.assertFalse(result["historical_counts_computed"])
+            self.assertNotIn("select_market_behavior_minute_features", result["sql_timings_ms"])
+            with sqlite3.connect(path) as con:
+                self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0], 1)
+                self.assertEqual(con.execute("SELECT minute_end_timestamp_ms FROM behavior_outcome_settlement_queue").fetchone()[0], 120_000)
+
+    def test_sql_timings_expose_operations_and_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = persist_closed_minute(Path(tmp) / "test.db", report(120_000))
+        timings = result["sql_timings_ms"]
+        self.assertIn("insert_market_behavior_minute_features", timings)
+        self.assertIn("select_market_behavior_minute_features", timings)
+        self.assertIn("transaction_exit", timings)
+        self.assertEqual(result["write_attempts"], 1)
+        self.assertTrue(all(value >= 0 for value in timings.values()))
+
     def test_retention_prunes_old_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.db"

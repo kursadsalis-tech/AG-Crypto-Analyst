@@ -347,17 +347,11 @@ def settle_outcomes_for_closed_minute(connection, closed_minute_end_timestamp_ms
         if horizon_inserted:
             by_horizon[str(horizon)] = horizon_inserted
             inserted += horizon_inserted
-    total = connection.execute(
-        f"SELECT COUNT(*) FROM {OUTCOME_TABLE}"
-    ).fetchone()[0]
-    independent_units = connection.execute(
-        f"SELECT COUNT(DISTINCT independence_unit) FROM {OUTCOME_TABLE}"
-    ).fetchone()[0]
+    # The queue consumes only newly settled rows. Historical reporting counts
+    # belong to the read-only measurement path, never inside this writer phase.
     return {
         "contract_version": OUTCOME_CONTRACT_VERSION,
         "settled": inserted,
         "settled_by_horizon": by_horizon,
-        "outcome_row_count": total,
-        "independent_event_count": independent_units,
         "remote_mirror_enabled_for_table": False,
     }
