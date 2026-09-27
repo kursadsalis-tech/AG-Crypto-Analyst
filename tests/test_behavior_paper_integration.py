@@ -828,6 +828,191 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             2.0,
         )
 
+    def test_replanned_entry_runs_full_position_management_lifecycle(self):
+        from risk_manager import risk_manager
+
+        candidate = self.candidate()
+        candidate.update({
+            "decision_id": 1901,
+            "symbol": "LIFECYCLEUSDT",
+            "evidence_sha256": "1" * 64,
+        })
+        with patch.object(agent.behavior_decision_core, "evaluate", return_value={
+            "status": "ACTIONABLE", "candidates": [candidate], "review": {},
+        }):
+            self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
+
+        frozen_thesis = json.loads(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0])
+        at = NOW + timedelta(seconds=30)
+        replanned = self.technical_plan(candidate, "SPOT")
+        replanned["generated_at"] = at.isoformat()
+        replanned["as_of"] = (at - timedelta(seconds=1)).isoformat()
+        replanned["data_cutoff_ms"] = int(
+            (at - timedelta(seconds=1)).timestamp() * 1000
+        )
+        replanned["risk"]["stop_distance_pct"] = 4.0
+        replanned["risk"]["invalidation_price"] = 96.0
+        replanned["risk"]["invalidation_offset_pct"] = -4.0
+        replanned["risk"]["risk_compatible"] = True
+
+        with patch.object(
+            agent.technical_trade_plan, "replan_reason",
+            return_value="STRUCTURE_REFRESH_DUE",
+        ), patch.object(
+            agent.technical_trade_plan, "rebuild_for_pending",
+            return_value=replanned,
+        ):
+            self.assertEqual(
+                agent.fill_pending_from_live_state(
+                    self.con, at,
+                    self.live_state(
+                        "LIFECYCLEUSDT", at, market_type="SPOT", price=100.0
+                    ),
+                    self.metadata,
+                ),
+                (1, 0),
+            )
+
+        position = self.con.execute("""
+            SELECT position_id,entry_time,entry_price,quantity,technical_basis_ratio,
+                   technical_execution_plan_json,status
+            FROM paper_agent_positions
+        """).fetchone()
+        self.assertEqual(position[6], "OPEN")
+        position_id, entry_time, entry_price, original_qty, basis, plan_json, _ = position
+        current_plan = json.loads(plan_json)
+        self.assertAlmostEqual(
+            current_plan["risk"]["stop_distance_pct"], 4.0
+        )
+
+        # Position management requires the same pre-entry risk evidence that is
+        # present in production. Keep this lifecycle test on the real schema
+        # rather than bypassing that fail-closed prerequisite.
+        risk_manager.ensure_tables(self.con)
+        risk_at = at - timedelta(seconds=1)
+        policy_id = self.con.execute("""
+            INSERT INTO risk_policy_snapshots(
+                created_at,policy_version,market_state,coverage_count,coverage_total,
+                max_total_exposure_pct,max_alt_exposure_pct,max_single_position_pct,
+                risk_per_trade_pct,daily_loss_limit_pct,max_new_positions,
+                new_positions_allowed,reason_json,detail_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            risk_at.isoformat(), "TEST", "NORMAL", 1, 1,
+            60.0, 60.0, 10.0, 0.75, 5.0, 3, 1, "[]", "{}",
+        )).lastrowid
+        self.con.execute("""
+            INSERT INTO asset_risk_snapshots(
+                policy_snapshot_id,symbol,as_of,price,return_24h_pct,range_24h_pct,
+                hourly_volatility_pct,drawdown_7d_pct,quote_volume_24h,risk_score,
+                risk_tier,max_position_pct,volatility_stop_reference_pct,
+                new_position_allowed,reason_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            policy_id, "LIFECYCLEUSDT", risk_at.isoformat(), float(entry_price),
+            0.0, 2.0, 1.0, 0.0, 1_000_000.0, 0, "LOW", 10.0, 2.0, 1,
+            "[]", risk_at.isoformat(),
+        ))
+        self.con.commit()
+
+        initialized = agent.position_management.initialize_open_positions(
+            self.con, at + timedelta(milliseconds=100)
+        )
+        self.assertEqual(initialized, {"initialized": 1, "blocked": []})
+
+        managed = self.con.execute("""
+            SELECT current_stop_price,tp1_price,tp2_price,remaining_quantity
+            FROM paper_position_management WHERE position_id=?
+        """, (position_id,)).fetchone()
+        expected = agent.technical_trade_plan.execution_levels(
+            current_plan, float(entry_price), basis_ratio=basis
+        )
+        self.assertAlmostEqual(managed[0], expected["invalidation_price"])
+        self.assertAlmostEqual(managed[1], expected["tp1_price"])
+        self.assertAlmostEqual(managed[2], expected["tp2_price"])
+        self.assertAlmostEqual(managed[3], float(original_qty))
+
+        rules = ExecutionRules(.000001, .000001, 5)
+        tp_at = at + timedelta(seconds=1)
+        reduced = agent.position_management.process_market_state(
+            self.con,
+            self.live_state(
+                "LIFECYCLEUSDT", tp_at, market_type="SPOT", price=float(managed[1])
+            ),
+            tp_at,
+            rules,
+        )
+        self.assertEqual(
+            (reduced["status"], reduced["reason"]),
+            ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
+        )
+        remaining_qty, tightened_stop = self.con.execute("""
+            SELECT remaining_quantity,current_stop_price
+            FROM paper_position_management WHERE position_id=?
+        """, (position_id,)).fetchone()
+        self.assertLess(float(remaining_qty), float(original_qty))
+        self.assertGreater(float(tightened_stop), float(entry_price))
+
+        close_at = tp_at + timedelta(seconds=1)
+        closed = agent.position_management.process_market_state(
+            self.con,
+            self.live_state(
+                "LIFECYCLEUSDT", close_at, market_type="SPOT",
+                price=float(tightened_stop) * 0.999,
+            ),
+            close_at,
+            rules,
+        )
+        self.assertEqual(
+            (closed["status"], closed["reason"]),
+            ("POSITION_CLOSED", "PROTECTIVE_STOP"),
+        )
+        self.assertEqual(
+            self.con.execute("""
+                SELECT status,close_reason FROM paper_agent_positions
+                WHERE position_id=?
+            """, (position_id,)).fetchone(),
+            ("CLOSED", "PROTECTIVE_STOP"),
+        )
+        self.assertAlmostEqual(
+            self.con.execute("""
+                SELECT remaining_quantity FROM paper_position_management
+                WHERE position_id=?
+            """, (position_id,)).fetchone()[0],
+            0.0,
+        )
+
+        events = self.con.execute("""
+            SELECT event_type,reason,real_order_allowed
+            FROM paper_position_events WHERE position_id=?
+            ORDER BY event_id
+        """, (position_id,)).fetchall()
+        event_types = [row[0] for row in events]
+        self.assertIn("STOP_INITIALIZED", event_types)
+        self.assertIn("POSITION_REDUCED", event_types)
+        self.assertIn("RISK_EXIT_DECIDED", event_types)
+        self.assertIn("POSITION_CLOSED", event_types)
+        self.assertTrue(all(row[2] == 0 for row in events))
+
+        # Replanning may update the mutable execution plan, but the original
+        # selection thesis must stay immutable through the complete lifecycle.
+        self.assertEqual(
+            json.loads(self.con.execute(
+                "SELECT thesis_json FROM paper_agent_decision_theses"
+            ).fetchone()[0]),
+            frozen_thesis,
+        )
+        position_net = self.con.execute("""
+            SELECT net_pnl FROM paper_agent_positions WHERE position_id=?
+        """, (position_id,)).fetchone()[0]
+        portfolio_net = self.con.execute("""
+            SELECT realized_pnl FROM paper_agent_portfolio WHERE portfolio_id=1
+        """).fetchone()[0]
+        self.assertAlmostEqual(float(portfolio_net), float(position_net))
+
+
     def test_realtime_housekeeping_cancels_expired_pending_without_live_quote(self):
         candidate = self.candidate()
         candidate.update({"decision_id": 1001, "symbol": "ZOMBIEUSDT",
