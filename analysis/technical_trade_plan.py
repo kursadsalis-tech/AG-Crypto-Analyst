@@ -9,7 +9,7 @@ from analysis import realtime_technical_context
 from database.technical_bar_store import load_recent
 
 
-VERSION = "TECHNICAL_TRADE_PLAN_V2_ADAPTIVE_LOCAL"
+VERSION = "TECHNICAL_TRADE_PLAN_V3_ORDERED_TARGETS"
 MIN_ONE_MINUTE_BARS = 24
 MAX_BAR_AGE_SECONDS = 180
 MIN_STOP_PCT = 0.50
@@ -365,15 +365,53 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
 
     if direction == "LONG":
         targets = _finite_levels(resistances, above=entry_high)
-        tp1 = next((x for x in targets if x >= anchor + 0.60 * atr_setup), anchor + atr_setup)
-        tp2 = next((x for x in targets if x >= max(tp1 + 0.50 * atr_setup, anchor + 1.40 * atr_setup)), anchor + 2.0 * atr_setup)
+        tp1_floor = max(
+            entry_high + 0.50 * atr_setup,
+            anchor + 0.60 * atr_setup,
+        )
+        tp1 = next(
+            (x for x in targets if x >= tp1_floor),
+            max(anchor + atr_setup, tp1_floor),
+        )
+        tp2_floor = max(
+            tp1 + 0.50 * atr_setup,
+            anchor + 1.40 * atr_setup,
+        )
+        tp2 = next(
+            (x for x in targets if x >= tp2_floor),
+            max(anchor + 2.0 * atr_setup, tp2_floor),
+        )
     else:
         targets = sorted(_finite_levels(supports, below=entry_low), reverse=True)
-        tp1 = next((x for x in targets if x <= anchor - 0.60 * atr_setup), anchor - atr_setup)
-        tp2 = next((x for x in targets if x <= min(tp1 - 0.50 * atr_setup, anchor - 1.40 * atr_setup)), anchor - 2.0 * atr_setup)
+        tp1_ceiling = min(
+            entry_low - 0.50 * atr_setup,
+            anchor - 0.60 * atr_setup,
+        )
+        tp1 = next(
+            (x for x in targets if x <= tp1_ceiling),
+            min(anchor - atr_setup, tp1_ceiling),
+        )
+        tp2_ceiling = min(
+            tp1 - 0.50 * atr_setup,
+            anchor - 1.40 * atr_setup,
+        )
+        tp2 = next(
+            (x for x in targets if x <= tp2_ceiling),
+            min(anchor - 2.0 * atr_setup, tp2_ceiling),
+        )
 
-    if not all(math.isfinite(x) and x > 0 for x in (anchor, entry_low, entry_high, stop_price, tp1, tp2)):
+    if not all(
+        math.isfinite(x) and x > 0
+        for x in (anchor, entry_low, entry_high, stop_price, tp1, tp2)
+    ):
         raise ValueError("invalid technical plan geometry")
+    ordered_geometry = (
+        stop_price < entry_low <= entry_high < tp1 < tp2
+        if direction == "LONG"
+        else tp2 < tp1 < entry_low <= entry_high < stop_price
+    )
+    if not ordered_geometry:
+        raise ValueError("unordered technical plan geometry")
 
     def pct(level):
         return 100.0 * (float(level) / float(anchor) - 1.0)
