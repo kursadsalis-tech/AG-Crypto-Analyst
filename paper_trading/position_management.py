@@ -237,6 +237,8 @@ def initialize_open_positions(con, now):
         # entry was revalidated, technical_plan above already points to the
         # final execution plan that actually authorized the fill.
         tp1_price = tp2_price = None
+        frozen_tp1_price = frozen_tp2_price = None
+        technical_target_recovery = None
         if isinstance(technical_plan, dict):
             try:
                 levels = technical_trade_plan.execution_levels(
@@ -244,36 +246,50 @@ def initialize_open_positions(con, now):
                     basis_ratio=technical_basis_ratio,
                 )
                 technical_stop = float(levels["invalidation_price"])
-                tp1_price = float(levels["tp1_price"])
-                tp2_price = float(levels["tp2_price"])
+                frozen_tp1_price = float(levels["tp1_price"])
+                frozen_tp2_price = float(levels["tp2_price"])
             except (TypeError, ValueError, KeyError):
                 blocked.append((int(position_id), "INVALID_TECHNICAL_EXECUTION_PLAN"))
                 continue
             if direction == "LONG":
-                valid_geometry = (
+                valid_stop_geometry = (
                     0 < technical_stop < float(entry_price)
-                    < tp1_price < tp2_price
+                )
+                valid_target_geometry = (
+                    float(entry_price) < frozen_tp1_price < frozen_tp2_price
                 )
                 actual_stop_pct = (
                     100.0 * (float(entry_price) - technical_stop)
                     / float(entry_price)
                 )
             else:
-                valid_geometry = (
-                    0 < tp2_price < tp1_price < float(entry_price)
-                    < technical_stop
+                valid_stop_geometry = (
+                    float(entry_price) < technical_stop
+                )
+                valid_target_geometry = (
+                    0 < frozen_tp2_price < frozen_tp1_price < float(entry_price)
                 )
                 actual_stop_pct = (
                     100.0 * (technical_stop - float(entry_price))
                     / float(entry_price)
                 )
             if (
-                not valid_geometry
+                not valid_stop_geometry
                 or not math.isfinite(actual_stop_pct)
                 or not 0.5 <= actual_stop_pct <= 5.0
             ):
-                blocked.append((int(position_id), "TECHNICAL_GEOMETRY_INVALID_AT_FILL"))
+                blocked.append((int(position_id), "TECHNICAL_STOP_GEOMETRY_INVALID_AT_FILL"))
                 continue
+            if valid_target_geometry:
+                tp1_price = frozen_tp1_price
+                tp2_price = frozen_tp2_price
+            else:
+                # Historical V2 plans could freeze an ordered stop but targets
+                # behind the actual fill or TP2 behind TP1. Do not rewrite that
+                # frozen evidence and do not execute invalid technical targets.
+                # Recover management with the exact frozen technical stop while
+                # the existing outcome-blind R policy supplies profit-taking.
+                technical_target_recovery = "INVALID_FROZEN_TARGET_GEOMETRY_R_FALLBACK"
             state = PositionState(
                 direction=direction,
                 entry_price=float(entry_price),
@@ -303,7 +319,9 @@ def initialize_open_positions(con, now):
         ))
         _event(con, position_id, parse(entry_time), now, "STOP_INITIALIZED",
                (
-                   "FROZEN_TECHNICAL_PLAN_WITHOUT_ENTRY_RISK_SNAPSHOT"
+                   "FROZEN_TECHNICAL_STOP_WITH_R_TARGET_FALLBACK"
+                   if technical_target_recovery
+                   else "FROZEN_TECHNICAL_PLAN_WITHOUT_ENTRY_RISK_SNAPSHOT"
                    if has_frozen_technical_plan and not risk
                    else "STALE_POSITION_RECOVERY_WITHOUT_ENTRY_RISK_SNAPSHOT"
                    if stale_recovery
@@ -325,6 +343,9 @@ def initialize_open_positions(con, now):
                    ),
                    "technical_tp1_price": tp1_price,
                    "technical_tp2_price": tp2_price,
+                   "frozen_technical_tp1_price": frozen_tp1_price,
+                   "frozen_technical_tp2_price": frozen_tp2_price,
+                   "technical_target_recovery": technical_target_recovery,
                    "planned_stop_and_fee_risk_usdt": frozen_risk.get(
                        "planned_stop_and_fee_risk_usdt"
                    ),
