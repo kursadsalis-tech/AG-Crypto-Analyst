@@ -108,7 +108,7 @@ class PositionManagementTests(unittest.TestCase):
         self.assertAlmostEqual(row[2], 103.0)
         self.assertAlmostEqual(row[3], 1.5)
         reduced = process_market_state(
-            self.con, self.live(101.5, 2),
+            self.con, self.live(101.6, 2),
             ENTRY + timedelta(seconds=2), self.rules,
         )
         self.assertEqual(
