@@ -116,6 +116,60 @@ class PositionManagementTests(unittest.TestCase):
             ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
         )
 
+    def test_frozen_technical_plan_initializes_without_entry_risk_snapshot(self):
+        self.con.execute("""
+            CREATE TABLE paper_agent_decision_theses(
+                position_id INTEGER PRIMARY KEY, thesis_json TEXT
+            )
+        """)
+        plan = {
+            "version": "TEST_PLAN", "symbol": "BTCUSDT", "direction": "LONG",
+            "execution_market_type": "USD_M_PERPETUAL",
+            "source_reference_price": 100.0,
+            "entry": {"anchor": 100.0, "low": 99.8, "high": 100.2},
+            "risk": {"invalidation_price": 98.5, "stop_distance_pct": 1.5},
+            "targets": {"tp1_price": 101.5, "tp2_price": 103.0},
+        }
+        thesis = {
+            "technical_trade_plan": plan,
+            "execution_risk": {"planned_stop_distance_pct": 1.5},
+        }
+        self.con.execute(
+            "INSERT INTO paper_agent_decision_theses VALUES(1,?)",
+            (json.dumps(thesis),),
+        )
+        self.con.execute(
+            "UPDATE paper_agent_positions SET technical_basis_ratio=1,"
+            " technical_execution_plan_json=?,market_type='USD_M_PERPETUAL' "
+            "WHERE position_id=1",
+            (json.dumps(plan),),
+        )
+        self.con.execute("DELETE FROM asset_risk_snapshots")
+
+        result = initialize_open_positions(
+            self.con, ENTRY + timedelta(seconds=1)
+        )
+
+        self.assertEqual(result, {"initialized": 1, "blocked": []})
+        row = self.con.execute("""
+            SELECT current_stop_price,tp1_price,tp2_price
+            FROM paper_position_management WHERE position_id=1
+        """).fetchone()
+        self.assertEqual(row, (98.5, 101.5, 103.0))
+        event = self.con.execute("""
+            SELECT reason,evidence_json
+            FROM paper_position_events
+            WHERE position_id=1 AND event_type='STOP_INITIALIZED'
+        """).fetchone()
+        self.assertEqual(
+            event[0], "FROZEN_TECHNICAL_PLAN_WITHOUT_ENTRY_RISK_SNAPSHOT"
+        )
+        evidence = json.loads(event[1])
+        self.assertFalse(evidence["risk_snapshot_available"])
+        self.assertEqual(
+            evidence["stop_reference_basis"], "FROZEN_TECHNICAL_STRUCTURE"
+        )
+
     def test_revalidated_execution_plan_overrides_selection_plan_at_open(self):
         self.con.execute("""
             CREATE TABLE paper_agent_decision_theses(
