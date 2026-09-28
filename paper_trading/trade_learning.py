@@ -15,7 +15,7 @@ from paper_trading import external_trader_learning, external_trader_rationale
 from paper_trading import continuous_improvement, controlled_challenger
 
 
-LEARNING_VERSION = "PAPER_TRADE_LEARNING_REVIEW_V2_TECHNICAL_SHADOW"
+LEARNING_VERSION = "PAPER_TRADE_LEARNING_REVIEW_V3_CONTROLLED_CHALLENGER"
 MIN_TOTAL_CLOSED = 100
 MIN_PATTERN_TRADES = 30
 MIN_PATTERN_WEEKS = 3
