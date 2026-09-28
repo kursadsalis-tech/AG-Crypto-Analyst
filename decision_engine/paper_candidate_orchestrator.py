@@ -50,7 +50,9 @@ def _call(measure: Callable | None, name: str, function: Callable, *args, **kwar
     return measure(name, function, *args, **kwargs)
 
 
-def orchestrate(\n    con, now, *, behavior_result=None, measure: Callable | None = None\n):
+def orchestrate(
+    con, now, *, behavior_result=None, measure: Callable | None = None
+):
     """Combine behavior, technical, risk-tier and cost evidence for selection.
 
     Returned candidates are execution-ready inputs only. Portfolio capacity,
