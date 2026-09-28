@@ -493,7 +493,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         )
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [tight, wide], "review": {},
-        }), patch.object(agent.risk_tiering, "tier_for", return_value=fake_tier), \
+        }), patch.object(agent.paper_candidate_orchestrator.risk_tiering, "tier_for", return_value=fake_tier), \
                 patch.object(agent, "MAX_NEW_PER_CYCLE", 2):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 2)
         notionals = dict(self.con.execute(
@@ -518,7 +518,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         }, clear=False), patch.object(
             agent.behavior_decision_core, "evaluate",
             return_value={"status": "ACTIONABLE", "candidates": [candidate], "review": {}},
-        ), patch.object(agent.risk_tiering, "tier_for", return_value=fake_tier):
+        ), patch.object(agent.paper_candidate_orchestrator.risk_tiering, "tier_for", return_value=fake_tier):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
         row = self.con.execute(
             "SELECT notional,selection_reason FROM paper_agent_positions"
@@ -1090,7 +1090,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         )
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
-        }), patch.object(agent.risk_tiering, "tier_for", return_value=tier):
+        }), patch.object(agent.paper_candidate_orchestrator.risk_tiering, "tier_for", return_value=tier):
             self.assertEqual(agent.select_new_positions(self.con, NOW), 1)
         at = NOW + timedelta(seconds=30)
         live = self.live_state(

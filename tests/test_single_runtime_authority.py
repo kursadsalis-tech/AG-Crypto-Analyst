@@ -17,6 +17,20 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
                 lifecycle.append(path.name)
         self.assertEqual(lifecycle,["agca-paper-realtime-worker.service"])
 
+    def test_shared_candidate_orchestrator_has_no_trade_execution_authority(self):
+        text=(ROOT/"decision_engine/paper_candidate_orchestrator.py").read_text(
+            encoding="utf-8"
+        )
+        for forbidden in (
+            "INSERT INTO paper_agent_positions",
+            "UPDATE paper_agent_positions",
+            "execute_paper(",
+            "simulated_fill(",
+            "process_market_state(",
+        ):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("real-order authority", text)
+
     def test_retired_parallel_runtime_entrypoints_do_not_exist(self):
         retired=["runtime/cloud_worker.py","runtime/paper_selection_cycle.py","deploy/agca-cloud-worker.service","deploy/agca-paper-selection.service","deploy/agca-paper-selection.timer","deploy/run_cloud_worker.sh"]
         self.assertEqual([p for p in retired if (ROOT/p).exists()],[])

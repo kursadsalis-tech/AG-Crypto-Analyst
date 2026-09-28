@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from decision_engine import forecast_engine
+from decision_engine import forecast_engine, paper_candidate_orchestrator
 from paper_trading.execution_model import (
     PAPER_MARKET, execute_paper, estimate_order_rules, simulated_fill,
     taker_fee_rate, validate_quote,
@@ -40,8 +40,6 @@ from paper_trading import experience_memory
 from paper_trading import behavior_decision_core
 from paper_trading import execution_market_data
 from paper_trading import position_management
-from paper_trading import risk_tiering
-from analysis import realtime_technical_context
 from analysis import technical_trade_plan
 
 
@@ -814,14 +812,8 @@ def latest_candidates(con, now=None):
 
 
 def _validated_stop_geometry(row):
-    """Return risk-snapshot stop geometry or fail closed on missing/invalid evidence."""
-    try:
-        raw_stop_pct = float(row["stop_reference_pct"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if not math.isfinite(raw_stop_pct) or raw_stop_pct <= 0:
-        return None
-    return raw_stop_pct, min(5.0, max(0.5, raw_stop_pct))
+    """Compatibility wrapper around the shared orchestration stop contract."""
+    return paper_candidate_orchestrator.validated_stop_geometry(row)
 
 
 def _setup_fingerprint(symbol, direction, evidence):
@@ -978,77 +970,33 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
     planned_entry = immediate_paper_entry_time(now)
 
     # Rank by expected portfolio contribution, not percentage edge alone.
-    # The executable size estimate uses the same risk/leverage/cash constraints
-    # as selection, so a tiny high-% setup cannot crowd out a larger opportunity
-    # expected to earn more net USDT.  Percentage edge remains a tie-breaker.
+    # Shared orchestration combines the eligible behavior, technical, risk-tier
+    # and cost evidence without gaining position/execution authority.
+    orchestration = paper_candidate_orchestrator.orchestrate(
+        con, now, behavior_result=behavior_result, measure=measured
+    )
+    for reason, count in orchestration["rejections"].items():
+        reasons[reason] = reasons.get(reason, 0) + int(count)
+    diagnostics.setdefault("technical_plan_errors", []).extend(
+        orchestration["technical_plan_errors"]
+    )
+    orchestrated_by_decision_id = {}
     ranked_candidates = []
-    for row in behavior_result["candidates"]:
-        tier = risk_tiering.tier_for(row)
-        try:
-            plan = measured("technical_planning", technical_trade_plan.build_for_candidate,
-                con, row, now=now, market_type=tier.market_type
-            )
-        except Exception as exc:
-            diagnostics.setdefault("technical_plan_errors", []).append({
-                "symbol": row["symbol"], "error_type": type(exc).__name__,
-                "detail": str(exc)[:160],
-            })
-            reject("TECHNICAL_PLAN_UNAVAILABLE")
-            continue
-        if not bool(plan["risk"]["risk_compatible"]):
-            reject("TECHNICAL_RISK_GEOMETRY_INFEASIBLE")
-            continue
-        row["technical_plan"] = plan
-        row["technical_context"] = realtime_technical_context.load_latest(
-            con, row["symbol"], now=now
-        )
-        row["stop_reference_pct"] = float(plan["risk"]["stop_distance_pct"])
-        technical_multiplier = float(plan["quality_multiplier"])
-        tier = risk_tiering.tier_for(row)
-        fee_rate = taker_fee_rate(tier.market_type)
-        base_margin = (
-            snapshot["equity"] * tier.margin_fraction
-            * float(row.get("execution_size_multiplier", 1.0))
-            * technical_multiplier
-        )
-        position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        stop_geometry = _validated_stop_geometry(row)
-        if stop_geometry is None:
-            reject("TECHNICAL_STOP_GEOMETRY_INVALID")
-            continue
-        raw_stop_pct, effective_stop_pct = stop_geometry
-        trade_risk_budget = (
-            snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
-        )
-        risk_sized_notional = (
-            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * fee_rate)
-            if trade_risk_budget > 0.0 else 0.0
-        )
-        sizing_cap = min(
-            base_margin * tier.leverage,
-            max_exposure,
-            position_cap,
-            risk_sized_notional,
-            available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage),
-        )
-        expected_profit_usdt = (
-            max(0.0, sizing_cap)
-            * max(0.0, float(row["expected_net_edge_pct"])) / 100.0
-        )
-        # Rank against this trade's own stop geometry, not a fixed risk
-        # percentage.  The stop reference is produced from the fresh asset-risk
-        # snapshot and Position Manager clamps the same value to 0.5%-5.0%.
-        stop_loss_usdt = max(0.0, sizing_cap) * effective_stop_pct / 100.0
-        estimated_round_trip_cost_usdt = max(0.0, sizing_cap) * (
-            2.0 * fee_rate
-        )
-        expected_loss_budget_usdt = stop_loss_usdt + estimated_round_trip_cost_usdt
-        expected_profit_per_risk = (
-            expected_profit_usdt / expected_loss_budget_usdt
-            if expected_loss_budget_usdt > 0.0 else 0.0
+    for orchestrated in orchestration["ready"]:
+        row = orchestrated.candidate
+        orchestrated_by_decision_id[int(row["decision_id"])] = orchestrated
+        sizing = paper_candidate_orchestrator.size_candidate(
+            orchestrated,
+            equity=snapshot["equity"],
+            exposure_cap=max_exposure,
+            available_cash=available_cash,
         )
         ranked_candidates.append(
-            (expected_profit_per_risk, expected_profit_usdt, row)
+            (
+                sizing.expected_profit_per_risk,
+                sizing.expected_profit_usdt,
+                row,
+            )
         )
     ranked_candidates.sort(
         key=lambda item: (
@@ -1157,7 +1105,17 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                 "status": "REDDEDİLDİ", "reason": reason_code,
             }
             continue
-        tier = risk_tiering.tier_for(row)
+        orchestrated = orchestrated_by_decision_id.get(
+            int(row["decision_id"])
+        )
+        if orchestrated is None:
+            reason_code = "ORCHESTRATION_STATE_MISSING"
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {
+                "status": "REDDEDİLDİ", "reason": reason_code,
+            }
+            continue
+        tier = orchestrated.risk_tier
         plan = row.get("technical_plan")
         if not isinstance(plan, dict):
             reason_code = "TECHNICAL_PLAN_UNAVAILABLE"
@@ -1166,39 +1124,17 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                 "status": "REDDEDİLDİ", "reason": reason_code,
             }
             continue
-        fee_rate = taker_fee_rate(tier.market_type)
-        base_margin = (
-            snapshot["equity"] * tier.margin_fraction
-            * float(row.get("execution_size_multiplier", 1.0))
-            * float(plan["quality_multiplier"])
-        )
+        fee_rate = orchestrated.fee_rate
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
-        position_cap = snapshot["equity"] * row["risk_cap_pct"] / 100.0
-        stop_geometry = _validated_stop_geometry(row)
-        if stop_geometry is None:
-            reject("STOP_REFERENCE_MISSING_OR_INVALID")
-            candidate_outcomes[outcome_key] = {
-                "status": "REDDEDİLDİ",
-                "reason": "STOP_REFERENCE_MISSING_OR_INVALID",
-            }
-            continue
-        raw_stop_pct, effective_stop_pct = stop_geometry
-        trade_risk_budget = (
-            snapshot["equity"] * float(row.get("risk_per_trade_pct") or 0.0) / 100.0
+        sizing = paper_candidate_orchestrator.size_candidate(
+            orchestrated,
+            equity=snapshot["equity"],
+            exposure_cap=available_exposure,
+            available_cash=available_cash,
         )
-        risk_sized_notional = (
-            trade_risk_budget / (effective_stop_pct / 100.0 + 2.0 * fee_rate)
-            if trade_risk_budget > 0.0 else 0.0
-        )
-        notional = min(
-            base_margin * tier.leverage,
-            available_exposure,
-            position_cap,
-            risk_sized_notional,
-            available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage),
-        )
+        notional = sizing.notional
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
             candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"}
@@ -1271,24 +1207,11 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                 WHERE position_id=? AND status='PENDING_ENTRY'""", (
                 json.dumps(plan, sort_keys=True), cursor.lastrowid,
             ))
-            row["execution_risk"] = {
-                "risk_tier": tier.tier, "leverage": tier.leverage,
-                "margin_allocated": notional / tier.leverage,
-                "gross_exposure": notional,
-                "planned_stop_distance_pct": effective_stop_pct,
-                "planned_stop_reference_pct": raw_stop_pct,
-                "risk_per_trade_pct": float(row.get("risk_per_trade_pct") or 0.0),
-                "planned_stop_and_fee_risk_usdt": notional * (
-                    effective_stop_pct / 100.0 + 2.0 * fee_rate
-                ),
-                "market_type": tier.market_type,
-                "taker_fee_rate": fee_rate,
-                "stop_basis": "TECHNICAL_STRUCTURE_PLUS_ATR_FROZEN_PLAN",
-                "technical_score": float(plan["technical_score"]),
-                "technical_timeframes": list(plan["timeframes_used"]),
-                "independent_signal_count": tier.independent_signal_count,
-                "signal_sources": list(tier.signal_sources),
-            }
+            row["execution_risk"] = (
+                paper_candidate_orchestrator.execution_risk(
+                    orchestrated, notional
+                )
+            )
             experience_memory.capture_decision_thesis(
                 con, position_id=cursor.lastrowid, row=row,
                 agent_version=AGENT_VERSION,
