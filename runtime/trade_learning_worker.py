@@ -136,7 +136,23 @@ def run_cycle_once(*, initialize=True, refresh_external=True):
         "closed_trade_count": int(learning.get("closed") or 0),
         "independent_weeks": int(learning.get("weeks") or 0),
         "allocation_count": len(allocations),
+        "challenger_count": int(
+            (learning.get("controlled_challenger") or {}).get(
+                "challenger_count", 0
+            )
+        ),
+        "reviewable_challenger_count": int(
+            (learning.get("controlled_challenger") or {}).get(
+                "reviewable_count", 0
+            )
+        ),
+        "challenger_statuses": dict(
+            (learning.get("controlled_challenger") or {}).get(
+                "statuses", {}
+            )
+        ),
         "promotion_allowed": bool(learning.get("promotion_allowed")),
+        "policy_mutation_allowed": False,
     }
 
 
