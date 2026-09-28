@@ -1,3 +1,20 @@
+# 2026-09-28 — PR #101 mismatch quote-evidence correction
+
+Branch `codex/panel-observability-audit`, parent `1503f4e182a3cfb71582b4089ab2513d7be4fd11`.
+The market mismatch button now carries escaped raw bid/ask values, avoiding
+both missing attributes and display-price thousands separators. The synthetic
+DOM test executes production JavaScript, parses the rendered button, captures
+the POST, and sends it through the real HTTP handler into a temporary diagnostic
+file. Price, bid, ask, source and freshness survive; trading and learning
+mutation permissions remain false. CI explicitly installs Node 22 for this test.
+
+Verification: 10 focused tests and 562 full offline regression tests pass.
+PR #101 remains open; no merge, deployment or live runtime changes. CI for this
+checkpoint must complete successfully before review. Earlier operational access
+findings below remain unchanged; this task does not perform live acceptance.
+
+---
+
 # 2026-09-28 — Read-only live panel audit and repair
 
 Canonical base `a2616017844bfb7699634feebda969b8c9510202`.

@@ -70,6 +70,8 @@ class ControlCenterServerTests(unittest.TestCase):
             payload = {
                 "symbol": "ETHUSDT", "market_type": "USD_M_PERPETUAL",
                 "operator_price": 2301.5, "agent_price": 2300.0,
+                "agent_bid": 2299.5, "agent_ask": 2300.5,
+                "agent_quote_source": "binance", "agent_freshness": "1 s",
             }
             with tempfile.TemporaryDirectory() as tmp, patch(
                 "control_center.operator_feedback.FEEDBACK_PATH",
@@ -90,11 +92,104 @@ class ControlCenterServerTests(unittest.TestCase):
                 self.assertEqual(response.status, 201)
                 self.assertEqual(result["authority"], "DIAGNOSTIC_ONLY")
                 self.assertFalse(result["trading_mutation_allowed"])
-                record.assert_called_once()
+                record.assert_called_once_with(payload)
         finally:
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=2)
+
+    def test_rendered_market_mismatch_preserves_quote_evidence(self):
+        import re
+        import subprocess
+        from functools import partial
+        from html.parser import HTMLParser
+
+        source = 'binance & "quote" <source>'
+        view = server.operator_view({
+            "system": {"open_positions": 0, "market_data_status": "CANLI"},
+            "portfolio": {"cash": 10000, "realized_pnl": 0, "unrealized_pnl": 0},
+            "positions": [], "closed_positions": [],
+            "market": [{"symbol": "ETHUSDT", "market_type": "USD_M_PERPETUAL",
+                        "last_price": 2300.12345678, "best_bid": 2299.12345678,
+                        "best_ask": 2301.12345678, "quote_source": source,
+                        "freshness_seconds": 2, "market_status": "CANLI"}],
+        })
+        expected = {
+            "agent_price": 2300.12345678, "agent_bid": 2299.12345678,
+            "agent_ask": 2301.12345678, "agent_quote_source": source,
+            "agent_freshness": view["piyasa"][0]["güncellik"],
+        }
+        script = re.search(r"<script>(.*?)</script>",
+                           server.INDEX_PATH.read_text(), re.S).group(1)
+        # Execute production render/reportMismatch with a minimal synthetic DOM;
+        # parse the rendered HTML attributes rather than inventing button data.
+        harness = """
+        const nodes = new Map();
+        global.document = {
+          getElementById(id) {
+            if (!nodes.has(id)) nodes.set(id, {classList: {toggle() {}}});
+            return nodes.get(id);
+          },
+          addEventListener() {}, querySelectorAll() { return []; }
+        };
+        global.setTimeout = () => {};
+        global.fetch = () => new Promise(() => {});
+        global.prompt = () => "2302.5";
+        global.alert = () => {};
+        """
+
+        def run_js(tail):
+            result = subprocess.run(["node", "-e", harness + script + tail],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+        markup = run_js("render(" + json.dumps(view) + ");" +
+                        'console.log(JSON.stringify(nodes.get("marketRows").innerHTML));')
+
+        class ButtonParser(HTMLParser):
+            dataset = None
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "button":
+                    self.dataset = {k[5:]: v for k, v in attrs if k.startswith("data-")}
+
+        parser = ButtonParser()
+        parser.feed(markup)
+        self.assertIsNotNone(parser.dataset)
+        request = run_js("global.fetch = async (url, options) => {" +
+                         "console.log(JSON.stringify({url, ...options})); return {ok:true};};" +
+                         "reportMismatch({dataset:" + json.dumps(parser.dataset) + "});")
+        payload = json.loads(request["body"])
+        self.assertEqual(request["method"], "POST")
+        self.assertEqual(request["url"], "/api/v1/feedback/market-data-mismatch")
+        for key, value in expected.items():
+            self.assertEqual(payload[key], value, key)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            server, "record_data_mismatch", wraps=partial(
+                server.record_data_mismatch, path=Path(tmp) / "feedback.jsonl")
+        ) as record:
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                conn = HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=2)
+                conn.request(request["method"], request["url"], body=request["body"].encode("utf-8"),
+                             headers=request["headers"])
+                response = conn.getresponse()
+                response.read()
+                self.assertEqual(response.status, 201)
+                record.assert_called_once_with(payload)
+                saved = json.loads((Path(tmp) / "feedback.jsonl").read_text())
+                for key, value in expected.items():
+                    self.assertEqual(saved[key], value, key)
+                self.assertEqual(saved["authority"], "DIAGNOSTIC_ONLY")
+                self.assertFalse(saved["trading_mutation_allowed"])
+                self.assertFalse(saved["learning_mutation_allowed"])
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=2)
 
     def test_every_referenced_dom_element_exists(self):
         import re

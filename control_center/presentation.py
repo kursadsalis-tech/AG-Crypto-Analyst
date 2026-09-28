@@ -264,6 +264,7 @@ def operator_view(snapshot):
         "piyasa": [{
             "symbol": row.get("symbol"), "market_type": row.get("market_type"),
             "raw_price": row.get("last_price"),
+            "raw_bid": row.get("best_bid"), "raw_ask": row.get("best_ask"),
             "başlık": f'{row.get("symbol") or "—"} — {row.get("market_type") or "—"}',
             "son_fiyat": _price(row.get("last_price")),
             "bid": _price(row.get("best_bid")),
