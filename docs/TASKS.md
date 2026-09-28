@@ -66,8 +66,10 @@ schedulers and research-for-research's-sake are not product objectives.
   `technical_context_observed` and compare realized net-after-cost outcomes by
   alignment/structure/regime. Keep direction/ranking/confidence/sizing/stop
   authority disabled until adequate forward evidence exists.
-- [ ] P2 research gate: separate broad lightweight opportunity radar from scarce
+- [x] P2 implementation: separate broad lightweight opportunity radar from scarce
   deep-analysis slots so the shortlist cannot silently become the trade universe.
+- [ ] P2 live acceptance: deploy the reviewed main release and follow
+  `docs/BROAD_RADAR_DEEP_ANALYSIS.md`; verify independent breadth, freshness and latency.
 - [ ] P3 research gate: define bounded autonomous challenger generation and
   forward economic comparison without a second live execution authority.
 - [ ] Audit remaining runtime entry points for duplicate decision/execution

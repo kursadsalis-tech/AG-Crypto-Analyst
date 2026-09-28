@@ -702,70 +702,66 @@ def evaluate(con, now=None):
         }
     cutoff_ms = int(now.timestamp() * 1000)
     oldest_ms = cutoff_ms - int(MAX_EVIDENCE_AGE_SECONDS * 1000)
-    latest_behavior = con.execute("""SELECT MAX(minute_end_timestamp_ms)
-        FROM market_behavior_minute_features
-        WHERE market_data_provider='BINANCE'
-          AND eligible_for_learning=1 AND minute_end_timestamp_ms BETWEEN ? AND ?""",
-        (oldest_ms, cutoff_ms)).fetchone()[0]
     has_market_structure_hypothesis = any(
         kind == "MARKET_STRUCTURE" for kind, _ in exploration_patterns
     )
-    # Do not scan the retained behavior table for external evidence when the
-    # active hypothesis is endogenous MARKET_STRUCTURE: that result is unused.
-    # On external-only paths, anchor the search on the sparse evidence table
-    # (indexed by minute) and merely verify a canonical eligible behavior row
-    # exists for the same closed minute.  The previous behavior-table-first
-    # correlated MAX/EXISTS query could walk millions of retained minute rows
-    # when external events were sparse, stalling the realtime opportunity scan.
-    # Even an evidence-first MAX can scan retained history when no recent event
-    # matches canonical behavior. Only the unchanged freshness window can act.
-    latest_external = None
-    if not has_market_structure_hypothesis:
-        latest_external = con.execute("""
-            SELECT MAX(e.minute_end_timestamp_ms)
-            FROM causal_minute_external_evidence e
-            WHERE e.minute_end_timestamp_ms BETWEEN ? AND ?
-              AND EXISTS (
-                  SELECT 1 FROM market_behavior_minute_features m
-                  WHERE m.minute_end_timestamp_ms=e.minute_end_timestamp_ms
-                    AND m.market_data_provider='BINANCE'
-                    AND m.eligible_for_learning=1
-              )
-        """, (oldest_ms, cutoff_ms)).fetchone()[0]
-    latest = (
-        latest_behavior if has_market_structure_hypothesis or latest_external is None
-        else latest_external
-    )
-    if latest is None or (now.timestamp() * 1000 - int(latest)) / 1000 > MAX_EVIDENCE_AGE_SECONDS:
-        record_review()
-        con.commit()
-        return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
-    risks = _latest_risk(con, now)
-    events = con.execute("""SELECT kind,symbols_json,event_id,available_at,direction
-        FROM causal_minute_external_evidence WHERE minute_end_timestamp_ms=?
-        ORDER BY kind,event_id""", (latest,)).fetchall()
-    evidence_end = datetime.fromtimestamp(int(latest) / 1000, timezone.utc)
-    events.append((
-        "MARKET_STRUCTURE", "[]", f"market_structure:{latest}",
-        iso(evidence_end), "OBSERVED",
-    ))
+    # Read only the existing freshness window, never the retained history.
+    # Each instrument keeps its own latest usable minute when attention rotates.
+    # External-only hypotheses retain the newest event-bearing minute for that
+    # instrument, preserving point-in-time joins without a global shortlist gate.
+    events_by_minute = {}
+    for minute, *event in con.execute("""SELECT minute_end_timestamp_ms,
+        kind,symbols_json,event_id,available_at,direction
+        FROM causal_minute_external_evidence
+        WHERE minute_end_timestamp_ms BETWEEN ? AND ?
+        ORDER BY minute_end_timestamp_ms,kind,event_id""", (oldest_ms, cutoff_ms)):
+        events_by_minute.setdefault(minute, []).append(tuple(event))
     mid_first_expr = "mid_price_first" if "mid_price_first" in feature_columns else "NULL"
-    rows = con.execute(f"""SELECT instrument,book_imbalance_20_mean,
+    fresh_rows = con.execute(f"""SELECT instrument,book_imbalance_20_mean,
         taker_imbalance_snapshot_mean,spread_bps_mean,mid_price_last,
         open_interest_usd_first,open_interest_usd_change,funding_rate_last,
         long_liquidation_notional_usd_estimate,
         short_liquidation_notional_usd_estimate,liquidation_event_count,
-        quality_gates_json,{mid_first_expr} FROM market_behavior_minute_features
-        WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
-          AND eligible_for_learning=1 ORDER BY instrument
-    """, (latest,)).fetchall()
+        quality_gates_json,{mid_first_expr},minute_end_timestamp_ms
+        FROM market_behavior_minute_features
+        WHERE minute_end_timestamp_ms BETWEEN ? AND ? AND market_data_provider='BINANCE'
+          AND eligible_for_learning=1 ORDER BY instrument,minute_end_timestamp_ms DESC
+    """, (oldest_ms, cutoff_ms)).fetchall()
+    def has_external(instrument, minute):
+        return any(_applies(event[1], instrument)
+                   for event in events_by_minute.get(minute, []))
+
+    rows_by_instrument = {}
+    for raw in fresh_rows:
+        instrument, minute = raw[0], raw[-1]
+        previous = rows_by_instrument.get(instrument)
+        if previous is None or (
+            not has_market_structure_hypothesis
+            and not has_external(instrument, previous[-1]) and has_external(instrument, minute)
+        ):
+            rows_by_instrument[instrument] = raw
+    if not rows_by_instrument:
+        record_review()
+        con.commit()
+        return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
+    risks = _latest_risk(con, now)
+    rows = list(rows_by_instrument.values())
+    review["fresh_behavior_instrument_count"] = len(rows)
+    review["deep_shortlist_is_trade_universe"] = False
+    review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     # Keep the writer lock out of all evidence/risk reads. The remaining
-    # decision inserts are bounded by this one fresh minute's instruments.
+    # decision inserts are bounded by the unchanged 180-second evidence window.
     record_review()
     candidates = []
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
-         long_liq, short_liq, liq_count, quality_json, mid_first) = raw
+         long_liq, short_liq, liq_count, quality_json, mid_first, latest) = raw
+        evidence_end = datetime.fromtimestamp(int(latest) / 1000, timezone.utc)
+        events = list(events_by_minute.get(latest, []))
+        events.append((
+            "MARKET_STRUCTURE", "[]", f"market_structure:{latest}",
+            iso(evidence_end), "OBSERVED",
+        ))
         quality_gates = json.loads(quality_json)
         pattern = _flow_pattern(float(book), float(taker))
         symbol = _symbol(instrument)

@@ -1,3 +1,51 @@
+# 2026-09-28 — Broad radar / deep analysis implementation
+
+Canonical main base: `3fc9c4b5fa65498b4419c99d2acc6c11dedfca21`.
+Implementation branch: `codex/broad-radar-deep-analysis`, isolated checkout
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+The dirty primary checkout and its user-owned changes were preserved.
+This entry supersedes older next-step/deployment instructions below.
+
+Completed:
+- Existing technical-kline worker now publishes its broad Binance snapshot
+  into one local-only SQLite radar row independently from deep attention.
+- Deployed observer consumes this snapshot without another all-market fetch;
+  bounded depth attention rotates beyond its ranked top symbols.
+- Decisions, execution subscriptions and risk coverage retain eligible symbols
+  across recent deep slices within their unchanged freshness windows.
+- Shared orchestration caps technical planning at 12 candidates, exposes
+  deferred capacity and rotates the tail without deleting candidate eligibility.
+- PAPER_ONLY, Binance canonical, single realtime execution authority, exact
+  technical/quote/risk/economic guards remain enforced.
+
+Verification: 558/558 full local regression tests passed in 19.068 s. Independent
+breadth fixture: 102 radar/kline symbols with 2/3/6/12 deep subscriptions;
+102/102 receive attention over 50 simulated stable cycles. Planning fixture:
+40 candidates, <=12 plan calls per scan, 28 explicit deferrals, 40/40 reached
+within 10 simulated scans. Authority, fresh/stale/future/noncanonical data,
+producer independence, single-row storage and previous-slice regressions pass.
+The suite's existing injected remote-mirror errors and unrelated Binance spot
+fallback warning are expected test output; no production DB was used.
+
+Release: checkpoint/PR is for review and CI. Main protection and branch-rules
+APIs return HTTP 403 (GitHub private-repository plan restriction), so enforced
+merge requirements could not be independently read. No merge or live deployment
+is claimed in this checkpoint. Do not bypass review or use admin merge.
+
+Remaining acceptance: `docs/BROAD_RADAR_DEEP_ANALYSIS.md` contains exact ownership,
+metrics, file map and minimal three-process restart/rollback plan. Deploy only a
+reviewed canonical main release, verify a fresh radar before the observer,
+verify exact realtime process SHA and naturally observe breadth/latency. The
+technical worker restart may require natural exact-bar continuity recovery;
+never loosen the 24-bar or freshness guard to declare acceptance.
+
+External state: no VM changes, restarts, positions, policy changes or resource
+purchases were performed. The referenced user-provided #99 acceptance reports
+PAPER realtime CONNECTED and learning HEALTHY at base SHA 3fc9c4b; that historical
+state was not re-queried during this implementation.
+
+---
+
 # 2026-09-28 — Observer and technical-context live acceptance passed
 
 Canonical repository is kursadsalis-tech/AG-Crypto-Analyst, branch main.

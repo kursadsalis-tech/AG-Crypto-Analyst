@@ -975,6 +975,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
     orchestration = paper_candidate_orchestrator.orchestrate(
         con, now, behavior_result=behavior_result, measure=measured
     )
+    diagnostics["deep_analysis"] = orchestration["capacity"]
     for reason, count in orchestration["rejections"].items():
         reasons[reason] = reasons.get(reason, 0) + int(count)
     diagnostics.setdefault("technical_plan_errors", []).extend(

@@ -25,6 +25,7 @@ from data.binance_live_evidence import MARKET_RAW_BASE, fetch_market_tickers
 from data.binance_market_universe import build_universe
 from data.binance_technical_bars import normalize_closed_1m_kline
 from database.technical_bar_store import bootstrap_schema, persist_bars
+from database import broad_market_store
 
 
 DB_PATH = os.getenv("AGCA_DATABASE_PATH", "/var/lib/agca/crypto_data.db")
@@ -85,6 +86,12 @@ def write_health(status: str, **details) -> None:
             if key.startswith("last_") or key == "cache_row_count"
         })
         _LAST_PERSISTENCE["last_persist_at"] = datetime.now(timezone.utc).isoformat()
+    radar_stamp = _LAST_PERSISTENCE.get("broad_radar_snapshot_timestamp_ms")
+    radar_age = int(time.time() * 1000) - radar_stamp if radar_stamp is not None else None
+    radar_fresh = radar_age is not None and 0 <= radar_age <= broad_market_store.MAX_RADAR_AGE_MS
+    if status == "CONNECTED" and not radar_fresh:
+        status = "DEGRADED"
+        details.setdefault("error", "BROAD_RADAR_STALE_OR_MISSING")
     _atomic_json_write(HEALTH_PATH, {
         "health_contract_version": HEALTH_CONTRACT_VERSION,
         "status": status,
@@ -93,6 +100,8 @@ def write_health(status: str, **details) -> None:
         "market_data_provider": "BINANCE",
         "transport": "USD_M_WEBSOCKET_KLINE_1M",
         "may_send_real_orders": False,
+        "broad_radar_age_ms": radar_age,
+        "broad_radar_fresh": radar_fresh,
         **_LAST_PERSISTENCE,
         **details,
     })
@@ -110,8 +119,7 @@ def subscription_params(symbols) -> list[str]:
     ]
 
 
-def selected_symbols(tickers, *, snapshot_ms: int) -> tuple[str, ...]:
-    universe = build_universe(tickers, snapshot_ms=int(snapshot_ms))
+def selected_symbols(universe) -> tuple[str, ...]:
     return tuple(sorted({
         str(row["symbol"]).upper()
         for row in universe.get("selected", [])
@@ -203,8 +211,17 @@ async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
         try:
             tickers = await fetch_market_tickers()
             snapshot_ms = int(time.time() * 1000)
-            symbols = selected_symbols(tickers, snapshot_ms=snapshot_ms)
+            universe = build_universe(tickers, snapshot_ms=snapshot_ms)
+            symbols = selected_symbols(universe)
             state.refresh(symbols, snapshot_ms)
+            await asyncio.to_thread(broad_market_store.persist_universe, DB_PATH, universe)
+            radar_metrics = {
+                "broad_radar_instrument_count": len(symbols),
+                "broad_radar_snapshot_timestamp_ms": snapshot_ms,
+                "broad_radar_owner": "TECHNICAL_KLINE_WORKER",
+                "deep_analysis_dependency": False,
+            }
+            _LAST_PERSISTENCE.update(radar_metrics)
             write_health(
                 "CONNECTED",
                 subscribed_symbol_count=len(state.symbols),
@@ -412,6 +429,7 @@ async def run():
     # Closed-minute flushes must stay DDL-free while other AGCA writers share
     # the canonical WAL database.
     await asyncio.to_thread(bootstrap_schema, DB_PATH)
+    await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
 
     now_ms = int(time.time() * 1000)
     seed = recent_cached_symbols(DB_PATH, now_ms=now_ms)

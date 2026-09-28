@@ -30,6 +30,7 @@ from data.binance_live_evidence import (
 from data.binance_market_universe import build_universe
 from data.rolling_behavior_window import MINUTE_MS, aggregate_closed_minute
 from database.market_behavior_store import persist_closed_minute
+from database.broad_market_store import load_universe
 from database.causal_evidence_store import evidence_for_closed_minute
 
 
@@ -52,13 +53,19 @@ def collection_alignment(now_ms, required_span_seconds):
     return next_end_ms + MINUTE_MS, next_end_ms
 
 
-def refresh_market_route(timings=None):
-    tickers = asyncio.run(fetch_market_tickers(timings=timings))
+def refresh_market_route(timings=None, *, database=None, opportunity_slots=10):
     snapshot_ms = int(time.time() * 1000)
-    universe = build_universe(tickers, snapshot_ms=snapshot_ms)
+    if database:
+        universe = load_universe(database, now_ms=snapshot_ms)
+    else:
+        # Standalone offline/diagnostic CLI keeps its explicit direct source.
+        tickers = asyncio.run(fetch_market_tickers(timings=timings))
+        universe = build_universe(tickers, snapshot_ms=int(time.time() * 1000))
     if not universe.get("selected"):
         raise RuntimeError("Binance WebSocket market universe is empty")
-    return universe, build_attention_route(universe, opportunity_slots=10)
+    return universe, build_attention_route(
+        universe, opportunity_slots=opportunity_slots, rotation_epoch=snapshot_ms // MINUTE_MS
+    )
 
 
 def write_json_atomic(path, payload):
@@ -175,7 +182,10 @@ def run_cycle(args):
     transport_timings = {}
     route_started = time.monotonic()
     if args.refresh_live_universe:
-        universe, route = refresh_market_route(transport_timings)
+        universe, route = refresh_market_route(
+            transport_timings, database=args.database,
+            opportunity_slots=args.opportunity_slots,
+        )
     else:
         if not args.route or not args.universe:
             parser.error("--route and --universe are required without --refresh-live-universe")
@@ -218,6 +228,12 @@ def run_cycle(args):
         "market_data_provider": "BINANCE",
         "market_transport": "WEBSOCKET_ONLY",
         "broad_market_stream": "ALL_MARKET_24H_TICKER",
+        "broad_radar_owner": "TECHNICAL_KLINE_WORKER" if args.database else "STANDALONE",
+        "broad_radar_snapshot_timestamp_ms": universe.get("snapshot_timestamp_ms"),
+        "broad_radar_instrument_count": len(universe.get("selected", [])),
+        "outside_deep_analysis_count": len(universe.get("selected", [])) - route["deep_stream_instrument_count"],
+        "deep_shortlist_is_trade_universe": False,
+        "routing_contract": route.get("routing_contract"),
         "deep_streams": [
             "DEPTH20", "AGG_TRADE", "MARK_PRICE_FUNDING"
         ],
@@ -323,6 +339,7 @@ def main():
     parser.add_argument("--refresh-live-universe", action="store_true")
     parser.add_argument("--output", required=True)
     parser.add_argument("--samples", type=int, default=5)
+    parser.add_argument("--opportunity-slots", type=int, default=10)
     parser.add_argument("--cadence-seconds", type=float, default=10)
     parser.add_argument("--database")
     parser.add_argument("--retention-days", type=int, default=30)
@@ -332,6 +349,8 @@ def main():
                         help="Publish consecutive minutes in one observer process")
     parser.add_argument("--cycle-timeout-seconds", type=int, default=240)
     args = parser.parse_args()
+    if not 1 <= args.opportunity_slots <= 10:
+        parser.error("--opportunity-slots must be between 1 and 10")
     if args.cycle_timeout_seconds <= 0:
         parser.error("--cycle-timeout-seconds must be positive")
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
