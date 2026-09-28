@@ -1,6 +1,7 @@
 """Repository contract: exactly one component owns the PAPER trading lifecycle."""
 from pathlib import Path
 import sqlite3
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import Mock, patch
 
@@ -115,7 +116,8 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
                     'ETH-USDT-SWAP','BINANCE',1000,1
                 );
             """)
-            symbols = set(paper_realtime_worker.subscription_symbols(con))
+            symbols = set(paper_realtime_worker.subscription_symbols(
+                con, datetime.fromtimestamp(2, timezone.utc)))
         finally:
             con.close()
         self.assertIn(("ETHUSDT", "SPOT"), symbols)

@@ -6,6 +6,7 @@ The all-market 24h ticker stream provides the broad discovery snapshot.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 
 
 VERSION = "BINANCE_WS_MARKET_UNIVERSE_V3_ROUTED"
@@ -13,7 +14,8 @@ VERSION = "BINANCE_WS_MARKET_UNIVERSE_V3_ROUTED"
 
 def _float(value, default=0.0):
     try:
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else float(default)
     except (TypeError, ValueError):
         return float(default)
 

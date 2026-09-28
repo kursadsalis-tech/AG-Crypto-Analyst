@@ -118,7 +118,7 @@ def iso(dt):
 
 
 def behavior_risk_symbols(con, now=None):
-    """Return the latest eligible dynamic behavior universe, fail-closed on age."""
+    """Return all fresh eligible behavior symbols across deep-slot rotations."""
     now = now or utcnow()
     if not con.execute("""SELECT 1 FROM sqlite_master
         WHERE type='table' AND name='market_behavior_minute_features'""").fetchone():
@@ -128,19 +128,13 @@ def behavior_risk_symbols(con, now=None):
     )}
     if "market_data_provider" not in columns:
         return ()
-    latest = con.execute("""SELECT MAX(minute_end_timestamp_ms)
-        FROM market_behavior_minute_features
-        WHERE market_data_provider='BINANCE'
-          AND eligible_for_learning=1""").fetchone()[0]
-    if latest is None or now.timestamp() * 1000 - int(latest) > (
-        BEHAVIOR_UNIVERSE_MAX_AGE_SECONDS * 1000
-    ):
-        return ()
+    cutoff_ms = int(now.timestamp() * 1000)
+    oldest_ms = cutoff_ms - int(BEHAVIOR_UNIVERSE_MAX_AGE_SECONDS * 1000)
     instruments = con.execute("""SELECT DISTINCT instrument
         FROM market_behavior_minute_features
-        WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
+        WHERE minute_end_timestamp_ms BETWEEN ? AND ? AND market_data_provider='BINANCE'
           AND eligible_for_learning=1
-        ORDER BY instrument""", (latest,)).fetchall()
+        ORDER BY instrument""", (oldest_ms, cutoff_ms)).fetchall()
     symbols = []
     for (instrument,) in instruments:
         value = str(instrument).upper()

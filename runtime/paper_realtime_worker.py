@@ -25,7 +25,7 @@ from paper_trading.exchange_metadata import ExchangeMetadataError, load_cache, r
 from paper_trading.execution_contract import MarketSnapshot
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
-from paper_trading import position_management, realtime_market
+from paper_trading import behavior_decision_core, position_management, realtime_market
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -190,7 +190,7 @@ def write_market_state(states):
         pass
 
 
-def subscription_symbols(con):
+def subscription_symbols(con, observed_at=None):
     """Return every market route the canonical realtime worker must currently observe.
 
     Pending entries are execution obligations, not optional telemetry.  In
@@ -206,22 +206,21 @@ def subscription_symbols(con):
     feature_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(market_behavior_minute_features)"
     )}
-    latest = (
-        con.execute(
-            """SELECT MAX(minute_end_timestamp_ms)
-               FROM market_behavior_minute_features
-               WHERE market_data_provider='BINANCE'
-                 AND eligible_for_learning=1"""
-        ).fetchone()[0]
-        if "market_data_provider" in feature_columns else None
+    observed_at = observed_at or now()
+    cutoff_ms = int(observed_at.timestamp() * 1000)
+    # Execution subscriptions are not the broad monitored market. Keep every
+    # still-fresh evidence route, plus mandatory OPEN/PENDING routes, even after
+    # the observer assigns its next deep slots to different instruments.
+    oldest_ms = cutoff_ms - int(
+        behavior_decision_core.MAX_EVIDENCE_AGE_SECONDS * 1000
     )
     monitored = set()
-    if latest is not None:
+    if "market_data_provider" in feature_columns:
         for (instrument,) in con.execute(
             """SELECT DISTINCT instrument FROM market_behavior_minute_features
-            WHERE minute_end_timestamp_ms=? AND market_data_provider='BINANCE'
+            WHERE minute_end_timestamp_ms BETWEEN ? AND ? AND market_data_provider='BINANCE'
               AND eligible_for_learning=1""",
-            (latest,),
+            (oldest_ms, cutoff_ms),
         ).fetchall():
             symbol = str(instrument).replace(
                 "-USDT-SWAP", "USDT"

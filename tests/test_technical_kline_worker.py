@@ -25,7 +25,7 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
             },
         ]
         self.assertEqual(
-            worker.selected_symbols(tickers, snapshot_ms=1234),
+            worker.selected_symbols(worker.build_universe(tickers, snapshot_ms=1234)),
             ("BTCUSDT",),
         )
 

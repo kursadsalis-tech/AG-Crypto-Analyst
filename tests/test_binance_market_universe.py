@@ -35,6 +35,13 @@ class BinanceMarketUniverseTests(unittest.TestCase):
             result["selection_contract"]["minimum_listing_age_days"]
         )
 
+    def test_nonfinite_market_values_cannot_enter_broad_radar(self):
+        for field in ("c", "q", "b", "a"):
+            for value in ("nan", "inf", "-inf"):
+                ticker = {"s": "BADUSDT", "c": "10", "o": "9", "q": "10000000",
+                          "b": "10", "a": "10.001", field: value}
+                self.assertEqual(build_universe([ticker], snapshot_ms=1)["selected"], [])
+
     def test_wide_or_illiquid_contract_is_excluded(self):
         tickers = [{
             "s": "THINUSDT", "c": "10", "o": "10", "q": "1000",

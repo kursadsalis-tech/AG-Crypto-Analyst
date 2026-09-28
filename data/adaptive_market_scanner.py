@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "ADAPTIVE_MARKET_SCANNER_V1"
+VERSION = "ADAPTIVE_MARKET_SCANNER_V2_BROAD_RADAR"
 CONTEXT_INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP")
 
 
@@ -21,7 +21,9 @@ def _percentile_ranks(rows, key, reverse=False):
     return {row["instrument"]: index / denominator for index, row in enumerate(ordered)}
 
 
-def build_attention_route(universe, opportunity_slots=10):
+def build_attention_route(universe, opportunity_slots=10, *, rotation_epoch=0):
+    if not 0 <= opportunity_slots <= 10:
+        raise ValueError("opportunity slots must be between 0 and 10")
     rows = list(universe.get("selected", []))
     if not rows:
         raise ValueError("dynamic universe is empty")
@@ -49,7 +51,17 @@ def build_attention_route(universe, opportunity_slots=10):
         })
     scored.sort(key=lambda row: (-row["attention_score"], row["instrument"]))
     opportunity = [row for row in scored if row["instrument"] not in CONTEXT_INSTRUMENTS]
-    opportunity = opportunity[:opportunity_slots]
+    # Reserve bounded exploration so an unchanged ranking cannot permanently
+    # turn the shortlist into the market universe. Alphabetic rotation is
+    # independent of attention scores; the score is never trade evidence.
+    exploration_slots = min(opportunity_slots, max(1, opportunity_slots // 5))
+    ranked_slots = max(0, opportunity_slots - exploration_slots)
+    ranked = opportunity[:ranked_slots]
+    pool = sorted(opportunity[ranked_slots:], key=lambda row: row["instrument"])
+    start = (int(rotation_epoch) * exploration_slots) % max(1, len(pool))
+    rotating = [pool[(start + offset) % len(pool)]
+                for offset in range(min(exploration_slots, len(pool)))]
+    opportunity = ranked + rotating
     context = [instrument for instrument in CONTEXT_INSTRUMENTS
                if any(row["instrument"] == instrument for row in rows)]
     deep = context + [row["instrument"] for row in opportunity]
@@ -58,12 +70,19 @@ def build_attention_route(universe, opportunity_slots=10):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_universe_snapshot_timestamp_ms": universe.get("snapshot_timestamp_ms"),
         "broad_scan_instrument_count": len(rows),
+        "broad_scan_instruments": sorted(row["instrument"] for row in rows),
+        "outside_deep_analysis_count": len(rows) - len(deep),
         "context_instruments": context,
         "opportunity_candidates": opportunity,
         "deep_stream_instruments": deep,
         "deep_stream_instrument_count": len(deep),
         "routing_contract": {
             "purpose": "ATTENTION_ROUTING_NOT_TRADE_SIGNAL",
+            "deep_shortlist_is_trade_universe": False,
+            "ranked_opportunity_slots": ranked_slots,
+            "exploration_slots": exploration_slots,
+            "rotation_epoch": int(rotation_epoch),
+            "rotation_instruments": [row["instrument"] for row in rotating],
             "movement_weight": 0.50,
             "liquidity_weight": 0.30,
             "tight_spread_weight": 0.20,

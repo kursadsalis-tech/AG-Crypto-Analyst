@@ -1,5 +1,8 @@
+from copy import deepcopy
+import json
+import sqlite3
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from analysis import realtime_technical_context, technical_trade_plan
@@ -105,6 +108,69 @@ class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
         self.assertEqual(frozen["planned_stop_distance_pct"], 2.0)
         self.assertEqual(frozen["market_type"], "SPOT")
         self.assertFalse(behavior["review"]["real_orders"])
+
+    def test_bounded_planning_defers_without_shrinking_candidate_universe(self):
+        candidates = [{**candidate(), "decision_id": i, "symbol": f"COIN{i}USDT"}
+                      for i in range(40)]
+        behavior = {"status": "ACTIONABLE", "candidates": candidates}
+        original_candidates = deepcopy(candidates)
+        seen = set()
+        con = sqlite3.connect(":memory:")
+        self.addCleanup(con.close)
+        from paper_trading.crypto_profit_agent import ensure_tables
+        ensure_tables(con)
+        # Eight completed scans cover all 32 tail members at four per scan.
+        # These times hit only even five-second buckets: the old scheduler
+        # repeatedly visits half the tail, including with irregular durations.
+        elapsed_seconds = (0, 10, 20, 31, 42, 51, 62, 80)
+        with patch.object(technical_trade_plan, "build_for_candidate", return_value=plan()) as build, patch.object(
+            realtime_technical_context, "load_latest", return_value=None
+        ):
+            for scan_index, seconds in enumerate(elapsed_seconds):
+                build.reset_mock()
+                result = orchestrator.orchestrate(con, NOW + timedelta(seconds=seconds),
+                                                   behavior_result=behavior)
+                self.assertEqual(build.call_count, 12)
+                self.assertEqual(result["capacity"]["opportunity_candidate_count"], 40)
+                self.assertEqual(result["rejections"]["DEEP_ANALYSIS_CAPACITY_DEFERRED"], 28)
+                self.assertEqual(len(behavior["candidates"]), 40)
+                planned = [row.candidate["decision_id"] for row in result["ready"]]
+                seen.update(planned)
+                # An aborted scan must not mutate the input or consume a turn.
+                with patch.object(realtime_technical_context, "load_latest",
+                                  side_effect=RuntimeError("scan aborted")):
+                    with self.assertRaisesRegex(RuntimeError, "scan aborted"):
+                        orchestrator.orchestrate(con, NOW + timedelta(seconds=seconds + 1),
+                                                 behavior_result=behavior)
+                retry = orchestrator.orchestrate(
+                    con, NOW + timedelta(seconds=seconds + 2), behavior_result=behavior)
+                self.assertEqual([row.candidate["decision_id"] for row in retry["ready"]], planned)
+                self.assertEqual(behavior["candidates"], original_candidates)
+                # Persist the same completion record as the canonical caller.
+                con.execute("""INSERT INTO paper_behavior_selection_runs(
+                    created_at, core_status, candidate_count, selected_count,
+                    active_position_count, capacity, available_exposure,
+                    reason_counts_json) VALUES(?, 'ACTIONABLE', 40, 0, 0, 12, 0, ?)""",
+                    ((NOW + timedelta(seconds=seconds + 2)).isoformat(),
+                     json.dumps(result["rejections"])))
+                # One or three pre-orchestrator completions between real scans
+                # make MAX(run_id) advance by even strides and starve the tail.
+                for extra in range(1 if scan_index % 2 == 0 else 3):
+                    reasons = ({"PORTFOLIO_VALUATION_STALE_OR_MISSING": 1} if extra == 0 else
+                               {"DEEP_ANALYSIS_CAPACITY_DEFERRED": 0})
+                    con.execute("""INSERT INTO paper_behavior_selection_runs(
+                        created_at, core_status, candidate_count, selected_count,
+                        active_position_count, capacity, available_exposure,
+                        reason_counts_json) VALUES(?, 'BLOCKED', 0, 0, 0, 12, 0, ?)""",
+                        ((NOW + timedelta(seconds=seconds + 3 + extra)).isoformat(),
+                         json.dumps(reasons)))
+                con.commit()
+            self.assertEqual(seen, set(range(40)))
+            build.reset_mock()
+            zero = orchestrator.orchestrate(object(), NOW, behavior_result=behavior, deep_analysis_slots=0)
+            build.assert_not_called()
+            self.assertEqual(zero["capacity"]["opportunity_candidate_count"], 40)
+            self.assertEqual(zero["capacity"]["deep_analysis_deferred_count"], 40)
 
     def test_technical_plan_failure_is_visible_and_candidate_fails_closed(self):
         behavior = {

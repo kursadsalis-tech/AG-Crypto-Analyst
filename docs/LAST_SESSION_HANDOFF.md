@@ -1,3 +1,104 @@
+# 2026-09-28 — PR #100 orchestrated-completion fairness correction
+
+Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:
+`8fa3e7cdbcce46173bd734d966b43c6626170aee`. Existing checkout:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+This correction supersedes the MAX(run_id) scheduling description below.
+
+The cycle index now counts only existing selection-run audit rows whose
+`reason_counts_json` has `DEEP_ANALYSIS_CAPACITY_DEFERRED > 0`, using SQLite
+JSON1. No new table or state. Pre-orchestrator valuation-stale completions,
+missing/zero deferral markers and unrecorded failed attempts consume no turn.
+Python 3.12 local tests exercise JSON1; CI uses Python 3.11 and the production
+image is Python 3.12. PAPER_ONLY, single authority and eligibility are unchanged.
+
+Verification: 558/558 full regression and 124/124 integration tests pass locally.
+The 40-candidate/12-slot fixture inserts alternating one/three non-orchestrated
+completions between real scans and uses irregular timestamps. All 40 candidates
+are planned within eight overloaded orchestrator completions. Failed-attempt
+retry stability and input immutability remain asserted. An in-memory mutation
+back to MAX(run_id) fails this test with 16 missing tail candidates.
+
+PR #100 remains open. Push this checkpoint and require its integration/full
+regression CI to pass before review. No merge, deployment or VM changes;
+previous live acceptance remains pending.
+
+---
+
+# 2026-09-28 — PR #100 scan-cadence fairness correction
+
+Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:
+`34f121945b4c7b93d6ecfff75c59b4e4e7a8235f`. Existing isolated checkout:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+
+Deep-analysis tail scheduling now reads the completed selection-run `MAX(run_id)`
+from the existing canonical SQLite table, instead of five-second wall-clock
+buckets. No new state file, table, service or authority. Candidate freshness,
+evidence eligibility, PAPER_ONLY and execution guards are unchanged. A scan
+aborted before completion does not advance the persisted scheduling index.
+
+Verification: 558/558 broad regression and 124/124 integration tests passed
+locally. The strengthened 40-candidate/12-slot test reaches all candidates in
+8 completed scans at elapsed seconds 0, 10, 20, 31, 42, 51, 62, 80. It also
+checks failed-scan retry stability and unchanged candidate evidence. Restoring
+the old rotation expression in memory makes this test fail with 16 missing
+tail candidates. Initial sandbox runs had only three local HTTP bind permission
+errors; rerunning with local server permission passed. No production DB used.
+
+PR #100 is to remain open; no merge, deployment or VM changes. CI for the new
+checkpoint must pass before review; prior broad-radar live acceptance below
+remains pending.
+
+---
+
+# 2026-09-28 — Broad radar / deep analysis implementation
+
+Canonical main base: `3fc9c4b5fa65498b4419c99d2acc6c11dedfca21`.
+Implementation branch: `codex/broad-radar-deep-analysis`, isolated checkout
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+The dirty primary checkout and its user-owned changes were preserved.
+This entry supersedes older next-step/deployment instructions below.
+
+Completed:
+- Existing technical-kline worker now publishes its broad Binance snapshot
+  into one local-only SQLite radar row independently from deep attention.
+- Deployed observer consumes this snapshot without another all-market fetch;
+  bounded depth attention rotates beyond its ranked top symbols.
+- Decisions, execution subscriptions and risk coverage retain eligible symbols
+  across recent deep slices within their unchanged freshness windows.
+- Shared orchestration caps technical planning at 12 candidates, exposes
+  deferred capacity and rotates the tail without deleting candidate eligibility.
+- PAPER_ONLY, Binance canonical, single realtime execution authority, exact
+  technical/quote/risk/economic guards remain enforced.
+
+Verification: 558/558 full local regression tests passed in 19.068 s. Independent
+breadth fixture: 102 radar/kline symbols with 2/3/6/12 deep subscriptions;
+102/102 receive attention over 50 simulated stable cycles. Planning fixture:
+40 candidates, <=12 plan calls per scan, 28 explicit deferrals, 40/40 reached
+within 10 simulated scans. Authority, fresh/stale/future/noncanonical data,
+producer independence, single-row storage and previous-slice regressions pass.
+The suite's existing injected remote-mirror errors and unrelated Binance spot
+fallback warning are expected test output; no production DB was used.
+
+Release: checkpoint/PR is for review and CI. Main protection and branch-rules
+APIs return HTTP 403 (GitHub private-repository plan restriction), so enforced
+merge requirements could not be independently read. No merge or live deployment
+is claimed in this checkpoint. Do not bypass review or use admin merge.
+
+Remaining acceptance: `docs/BROAD_RADAR_DEEP_ANALYSIS.md` contains exact ownership,
+metrics, file map and minimal three-process restart/rollback plan. Deploy only a
+reviewed canonical main release, verify a fresh radar before the observer,
+verify exact realtime process SHA and naturally observe breadth/latency. The
+technical worker restart may require natural exact-bar continuity recovery;
+never loosen the 24-bar or freshness guard to declare acceptance.
+
+External state: no VM changes, restarts, positions, policy changes or resource
+purchases were performed. The referenced user-provided #99 acceptance reports
+PAPER realtime CONNECTED and learning HEALTHY at base SHA 3fc9c4b; that historical
+state was not re-queried during this implementation.
+
+---
+
 # 2026-09-28 — Observer and technical-context live acceptance passed
 
 Canonical repository is kursadsalis-tech/AG-Crypto-Analyst, branch main.

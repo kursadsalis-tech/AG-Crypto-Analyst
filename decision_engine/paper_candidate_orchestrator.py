@@ -16,6 +16,9 @@ from paper_trading import behavior_decision_core, risk_tiering
 from paper_trading.execution_model import taker_fee_rate
 
 
+DEEP_ANALYSIS_SLOTS = 12
+
+
 @dataclass(frozen=True)
 class OrchestratedCandidate:
     candidate: dict[str, Any]
@@ -51,7 +54,8 @@ def _call(measure: Callable | None, name: str, function: Callable, *args, **kwar
 
 
 def orchestrate(
-    con, now, *, behavior_result=None, measure: Callable | None = None
+    con, now, *, behavior_result=None, measure: Callable | None = None,
+    deep_analysis_slots: int = DEEP_ANALYSIS_SLOTS
 ):
     """Combine behavior, technical, risk-tier and cost evidence for selection.
 
@@ -70,7 +74,39 @@ def orchestrate(
     def reject(reason: str):
         rejections[reason] = rejections.get(reason, 0) + 1
 
-    for source in behavior_result["candidates"]:
+    if not 0 <= deep_analysis_slots <= DEEP_ANALYSIS_SLOTS:
+        raise ValueError("deep analysis slots outside bounded capacity")
+    candidates = behavior_result["candidates"]
+    selected = candidates
+    if len(candidates) > deep_analysis_slots:
+        # Capacity is temporary scheduling, not evidence eligibility. Preserve
+        # ranked priority while giving the remaining fresh hypotheses a turn.
+        rotating_slots = max(1, deep_analysis_slots // 3) if deep_analysis_slots else 0
+        priority_slots = deep_analysis_slots - rotating_slots
+        pool = candidates[priority_slots:]
+        # Only completed overloaded orchestrator scans consume a turn. The
+        # caller also records pre-orchestrator exits (e.g. stale valuation), so
+        # run IDs are not a scheduling clock. Capacity deferral is the existing
+        # durable completion marker; unrecorded failed attempts consume no turn.
+        cycle_index = int(con.execute(
+            "SELECT COUNT(*) FROM paper_behavior_selection_runs "
+            "WHERE json_extract(reason_counts_json, "
+            "'$.DEEP_ANALYSIS_CAPACITY_DEFERRED') > 0"
+        ).fetchone()[0]) if rotating_slots else 0
+        start = (cycle_index * rotating_slots) % len(pool)
+        selected = candidates[:priority_slots] + [
+            pool[(start + offset) % len(pool)] for offset in range(rotating_slots)
+        ]
+        rejections["DEEP_ANALYSIS_CAPACITY_DEFERRED"] = len(candidates) - len(selected)
+    capacity = {
+        "opportunity_candidate_count": len(candidates),
+        "deep_analysis_slot_limit": deep_analysis_slots,
+        "deep_analysis_candidate_count": len(selected),
+        "deep_analysis_deferred_count": len(candidates) - len(selected),
+        "deep_shortlist_is_trade_universe": False,
+    }
+
+    for source in selected:
         candidate = dict(source)
         initial_tier = risk_tiering.tier_for(candidate)
         try:
@@ -124,6 +160,7 @@ def orchestrate(
         "ready": ready,
         "rejections": rejections,
         "technical_plan_errors": technical_plan_errors,
+        "capacity": capacity,
     }
 
 

@@ -364,7 +364,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
             normalized,
         )
 
-    def test_external_latest_search_is_anchored_on_sparse_evidence_table(self):
+    def test_external_search_is_bounded_on_sparse_evidence_table(self):
         self.add_history(days=1)
         self.add_current()
         statements = []
@@ -375,7 +375,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "ACTIONABLE")
         normalized = "\n".join(statements).upper()
         self.assertIn(
-            "SELECT MAX(E.MINUTE_END_TIMESTAMP_MS)\n            FROM CAUSAL_MINUTE_EXTERNAL_EVIDENCE E",
+            "FROM CAUSAL_MINUTE_EXTERNAL_EVIDENCE\n        WHERE MINUTE_END_TIMESTAMP_MS BETWEEN",
             normalized,
         )
 
@@ -385,7 +385,7 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         core.refresh_pattern_cache(self.con, NOW)
         reads = []
         def trace(sql):
-            if "SELECT MAX(e.minute_end_timestamp_ms)" in sql:
+            if "FROM causal_minute_external_evidence\n        WHERE minute_end_timestamp_ms BETWEEN" in sql:
                 reads.append((sql, self.con.in_transaction))
         self.con.set_trace_callback(trace)
         with patch.dict("os.environ", {"AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED": "1"}):
@@ -425,6 +425,28 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "ACTIONABLE")
         self.assertEqual(result["candidates"][0]["evidence"]["event"]["kind"],
                          "MARKET_STRUCTURE")
+
+    def test_rotating_shortlist_does_not_hide_previous_fresh_instrument(self):
+        self.add_history(days=1)
+        self.add_current()
+        self.con.execute("UPDATE behavior_event_forward_outcomes SET kind='MARKET_STRUCTURE'")
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        minute = int((NOW - timedelta(seconds=20)).timestamp() * 1000)
+        self.con.execute("""INSERT INTO market_behavior_minute_features
+            SELECT 'NEW-USDT-SWAP',market_data_provider,?,eligible_for_learning,
+                book_imbalance_20_mean,taker_imbalance_snapshot_mean,spread_bps_mean,
+                mid_price_last,open_interest_usd_first,open_interest_usd_change,
+                funding_rate_last,long_liquidation_notional_usd_estimate,
+                short_liquidation_notional_usd_estimate,liquidation_event_count,quality_gates_json
+            FROM market_behavior_minute_features""", (minute,))
+        self.con.execute("INSERT INTO asset_risk_snapshots VALUES(1,'NEWUSDT',1,10,100,?,2.0)",
+                         ((NOW - timedelta(minutes=1)).isoformat(),))
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual({row["symbol"] for row in result["candidates"]}, {"BTCUSDT", "NEWUSDT"})
+        self.assertEqual(result["review"]["fresh_behavior_instrument_count"], 2)
+        self.assertFalse(result["review"]["deep_shortlist_is_trade_universe"])
+        later = core.evaluate(self.con, NOW + timedelta(seconds=121))
+        self.assertEqual({row["symbol"] for row in later["candidates"]}, {"NEWUSDT"})
 
     def test_new_risk_snapshot_reuses_immutable_decision_thesis(self):
         self.add_history(days=1)
