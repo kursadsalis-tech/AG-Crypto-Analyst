@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from paper_trading import external_trader_learning, external_trader_rationale
-from paper_trading import continuous_improvement
+from paper_trading import continuous_improvement, controlled_challenger
 
 
 LEARNING_VERSION = "PAPER_TRADE_LEARNING_REVIEW_V2_TECHNICAL_SHADOW"
@@ -117,12 +117,16 @@ def load_closed(con, validation_cohort):
                  if "risk_tier" in position_columns else "'PAPER_RISK_TIER_1'")
     liquidated_expr = ("COALESCE(p.liquidated,0)"
                        if "liquidated" in position_columns else "0")
+    selected_at_expr = (
+        "p.selected_at" if "selected_at" in position_columns else "p.exit_time"
+    )
     rows = con.execute(f"""
         SELECT p.position_id,p.symbol,p.horizon_hours,p.direction,p.exit_time,
                p.notional,p.net_pnl,COALESCE(f.regime,'UNKNOWN'),
                COALESCE(p.policy_version,'UNKNOWN'),
                COALESCE(p.decision_source,'UNIFIED_FORECAST_BASELINE'),
-               {leverage_expr},{margin_expr},{tier_expr},{liquidated_expr}
+               {leverage_expr},{margin_expr},{tier_expr},{liquidated_expr},
+               {selected_at_expr}
         FROM paper_agent_positions p
         LEFT JOIN forecast_engine_predictions f ON f.forecast_id=p.forecast_id
         WHERE p.status='CLOSED' AND p.evidence_eligible=1
@@ -139,6 +143,7 @@ def load_closed(con, validation_cohort):
         "policy_version": str(row[8]), "decision_source": str(row[9]),
         "leverage": float(row[10]), "margin": float(row[11]),
         "risk_tier": str(row[12]), "liquidated": bool(row[13]),
+        "selected_at": str(row[14]),
     } for row in rows]
 
 
@@ -456,6 +461,9 @@ def run(con, validation_cohort, now=None, *, refresh_external=True):
                   pattern["pattern_key"], pattern["candidate_type"],
                   score["trades"], score["weeks"],
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
+    challenger = controlled_challenger.run(
+        con, validation_cohort, rows, now
+    )
     con.commit()
     if refresh_external:
         external_research = external_trader_learning.run_review(con, now)
@@ -472,6 +480,7 @@ def run(con, validation_cohort, now=None, *, refresh_external=True):
         "status": status, "closed": len(rows), "weeks": weeks,
         "patterns": patterns, "promotion_allowed": False,
         "technical_shadow": technical_shadow,
+        "controlled_challenger": challenger,
         "external_research": external_research,
         "continuous_improvement": improvement,
     }
