@@ -116,13 +116,14 @@ as a separate reviewed file operation.
 ## Minimal reviewed VM installation / acceptance
 
 Run only after this PR is reviewed and merged; do not merge as part of the audit.
-Use the reviewed commit as PANEL_COMMIT and require it to be on canonical main.
+Use the resulting reviewed main/merge commit as PANEL_COMMIT (a squash merge
+creates a different SHA from the PR head) and require it to be on canonical main.
 No database migration or trading configuration change is needed.
 
 ```bash
 set -euo pipefail
 cd /home/kursadsalis/AG-Crypto-Analyst-cloud
-PANEL_COMMIT=REPLACE_WITH_REVIEWED_PR_HEAD
+PANEL_COMMIT=REPLACE_WITH_REVIEWED_MAIN_MERGE_SHA
 [ -z "$(git status --porcelain)" ]
 git fetch origin main
 git merge-base --is-ancestor "$PANEL_COMMIT" origin/main
