@@ -50,15 +50,17 @@ def _call(measure: Callable | None, name: str, function: Callable, *args, **kwar
     return measure(name, function, *args, **kwargs)
 
 
-def orchestrate(con, now, *, measure: Callable | None = None):
+def orchestrate(\n    con, now, *, behavior_result=None, measure: Callable | None = None\n):
     """Combine behavior, technical, risk-tier and cost evidence for selection.
 
     Returned candidates are execution-ready inputs only. Portfolio capacity,
     idempotency, persistence and order simulation remain caller responsibilities.
     """
-    behavior_result = _call(
-        measure, "behavior_evaluation", behavior_decision_core.evaluate, con, now
-    )
+    if behavior_result is None:
+        behavior_result = _call(
+            measure, "behavior_evaluation",
+            behavior_decision_core.evaluate, con, now,
+        )
     ready: list[OrchestratedCandidate] = []
     rejections: dict[str, int] = {}
     technical_plan_errors: list[dict[str, str]] = []
