@@ -1,3 +1,54 @@
+# 2026-09-28 — PR #101 mismatch quote-evidence correction
+
+Branch `codex/panel-observability-audit`, parent `1503f4e182a3cfb71582b4089ab2513d7be4fd11`.
+The market mismatch button now carries escaped raw bid/ask values, avoiding
+both missing attributes and display-price thousands separators. The synthetic
+DOM test executes production JavaScript, parses the rendered button, captures
+the POST, and sends it through the real HTTP handler into a temporary diagnostic
+file. Price, bid, ask, source and freshness survive; trading and learning
+mutation permissions remain false. CI explicitly installs Node 22 for this test.
+
+Verification: 10 focused tests and 562 full offline regression tests pass.
+PR #101 remains open; no merge, deployment or live runtime changes. CI for this
+checkpoint must complete successfully before review. Earlier operational access
+findings below remain unchanged; this task does not perform live acceptance.
+
+---
+
+# 2026-09-28 — Read-only live panel audit and repair
+
+Canonical base `a2616017844bfb7699634feebda969b8c9510202`.
+Branch `codex/panel-observability-audit`, isolated checkout
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/panel-audit`.
+Primary dirty checkout and all existing user changes preserved.
+
+Read-only live checks proved the access failure: legacy panel/broker units are
+masked; no listener exists on 8765 or 8787. Active Tailscale Serve points
+`https://agca-runtime.tail3dd9cd.ts.net/` at 8787; active Caddy points the old
+sslip hostname at 8765. VM RUNNING and external IP unchanged. Who/when masked
+units is unknown. No VM mutation, trade, restart, merge or live acceptance.
+
+Completed: restored missing UI DOM/candidate reasons/feedback button, added
+existing radar/observer/scan/learning/source evidence and pending/management
+views, corrected residual-quantity/margin/technical-TP valuation, and included
+one telemetry-only orchestrator-capacity publication. No new decision authority.
+Prepared a constrained persistent loopback panel service; legacy masks remain.
+Full field matrix, access diagnosis, exact reviewed installation/rollback and
+remaining limits: `docs/CONTROL_CENTER_AUDIT.md`.
+
+Verification: 16 focused tests and 561 full regression tests pass. Headless
+Chrome render/tabs/mismatch/mobile smoke passes without JS errors. PR is to
+remain open for review; require its CI before merge. Live acceptance is the
+single remaining operational step after review/merge: install/start panel,
+open Tailscale URL, and restart only realtime if accepting the added capacity
+telemetry/source SHA. No evidence, risk, allocation or real-order gates changed.
+
+This supersedes older panel access/next-step claims below. Referenced #100
+acceptance is user-provided historical evidence; current VM source SHA was
+independently verified, but economic performance was not evaluated here.
+
+---
+
 # 2026-09-28 — PR #100 orchestrated-completion fairness correction
 
 Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:

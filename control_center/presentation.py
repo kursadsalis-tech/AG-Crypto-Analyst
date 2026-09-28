@@ -45,6 +45,8 @@ def operator_view(snapshot):
             "tp2": _price(row.get("tp2_price")),
             "tp2_durumu": "GERÇEKLEŞTİ" if row.get("tp2_done") else "BEKLİYOR",
             "güncel_stop": _price(row.get("current_stop_price")),
+            "değerleme_uyarısı": row.get("valuation_error"),
+            "trailing": "AKTİF" if row.get("trailing_active") else "BEKLİYOR",
             "anlık_sonuç": _money(row["unrealized_pnl"]),
             "son_fiyat": _age(row["freshness_seconds"]),
             "durum": (
@@ -146,9 +148,9 @@ def operator_view(snapshot):
             "işlem": f'{row.get("symbol") or "—"} {row.get("direction") or "—"}',
             "giriş": _price(row.get("entry_price")),
             "ajanın_fiyatı": _price(row.get("mark_price")),
-            "açık_sonuç": round(float(row.get("unrealized_pnl") or 0), 3),
+            "açık_sonuç": round(float(row["unrealized_pnl"]), 3) if row.get("unrealized_pnl") is not None else None,
             "tutar": round(float(row.get("notional") or 0), 2),
-        } for row in brain.get("open_positions", [])],
+        } for row in snapshot.get("positions", [])],
         "portföy_kapasitesi": brain.get("portfolio_capacity") or {},
         "fırsat_radarı": [{
             "sıra": row.get("rank"),
@@ -204,7 +206,8 @@ def operator_view(snapshot):
             "özet": "Henüz kanonik fırsat taraması kaydı yok.",
         }
     return {
-        "durum": health,
+        "visibility": snapshot.get("visibility", {}),
+        "durum": system.get("pipeline_explanation") or health,
         "gerçek_çalışma_durumu": system.get("pipeline_state", "BİLİNMİYOR"),
         "çalışma_açıklaması": system.get("pipeline_explanation", "—"),
         "izlenen_piyasa": (
@@ -232,6 +235,8 @@ def operator_view(snapshot):
             else f'{portfolio["total_return_pct"]:+.2f}%'
         ),
         "serbest_nakit": _money(portfolio["cash"]),
+        "teminat": _money(portfolio.get("reserved_margin")),
+        "brüt_maruz_kalma": _money(portfolio.get("gross_exposure")),
         "açık_pozisyon_tutarı": _money(portfolio.get("open_position_notional")),
         "gerçekleşmiş_sonuç": _money(portfolio["realized_pnl"]),
         "açık_pozisyon_sonucu": _money(portfolio["unrealized_pnl"]),
@@ -257,6 +262,9 @@ def operator_view(snapshot):
         } for row in snapshot.get("activity", {}).get("stages", [])],
         "açık_pozisyonlar": positions,
         "piyasa": [{
+            "symbol": row.get("symbol"), "market_type": row.get("market_type"),
+            "raw_price": row.get("last_price"),
+            "raw_bid": row.get("best_bid"), "raw_ask": row.get("best_ask"),
             "başlık": f'{row.get("symbol") or "—"} — {row.get("market_type") or "—"}',
             "son_fiyat": _price(row.get("last_price")),
             "bid": _price(row.get("best_bid")),
@@ -283,7 +291,7 @@ def operator_view(snapshot):
             "durum": learning_labels.get(learning["status"], learning["status"]),
             "kapanan_kanıtlı_işlem": learning["closed_count"],
             "bağımsız_hafta": learning["independent_weeks"],
-            "anlık_adaptasyon": "AKTİF — yeni deneyim sonraki kararları besleyebilir",
+            "anlık_adaptasyon": "Yeni deneyim sonraki kararları besleyebilir; çalışma durumu aşağıdaki canlı kanıttan doğrulanır",
             "kalıcı_politika_terfisi": (
                 "DOĞRULANDI" if learning["promotion_allowed"]
                 else "HENÜZ DOĞRULANMADI"
@@ -293,7 +301,7 @@ def operator_view(snapshot):
             "durum": "Henüz öğrenme incelemesi yok",
             "kapanan_kanıtlı_işlem": 0,
             "bağımsız_hafta": 0,
-            "anlık_adaptasyon": "AKTİF — yeni deneyim sonraki kararları besleyebilir",
+            "anlık_adaptasyon": "Yeni deneyim sonraki kararları besleyebilir; çalışma durumu aşağıdaki canlı kanıttan doğrulanır",
             "kalıcı_politika_terfisi": "HENÜZ DOĞRULANMADI",
             "sürüm": "—",
         }),

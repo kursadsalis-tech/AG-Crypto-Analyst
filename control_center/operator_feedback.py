@@ -5,6 +5,7 @@ for later diagnostics and never mutates positions, policy, learning, or orders.
 """
 from __future__ import annotations
 
+import math
 import json
 import os
 from datetime import datetime, timezone
@@ -27,8 +28,17 @@ def record_data_mismatch(payload, path=FEEDBACK_PATH):
         operator_price = float(observed)
     except (TypeError, ValueError):
         raise ValueError("invalid_operator_price")
-    if operator_price <= 0:
+    if not math.isfinite(operator_price) or operator_price <= 0:
         raise ValueError("invalid_operator_price")
+    for key in ("agent_price", "agent_bid", "agent_ask"):
+        if payload.get(key) is not None:
+            try:
+                value = float(payload[key])
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError("invalid_agent_price")
+                payload = {**payload, key: value}
+            except (TypeError, ValueError):
+                raise ValueError("invalid_agent_price")
     record = {
         "feedback_id": uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(),
