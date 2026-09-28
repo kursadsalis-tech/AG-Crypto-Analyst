@@ -1,3 +1,29 @@
+# 2026-09-28 — PR #100 scan-cadence fairness correction
+
+Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:
+`34f121945b4c7b93d6ecfff75c59b4e4e7a8235f`. Existing isolated checkout:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+
+Deep-analysis tail scheduling now reads the completed selection-run `MAX(run_id)`
+from the existing canonical SQLite table, instead of five-second wall-clock
+buckets. No new state file, table, service or authority. Candidate freshness,
+evidence eligibility, PAPER_ONLY and execution guards are unchanged. A scan
+aborted before completion does not advance the persisted scheduling index.
+
+Verification: 558/558 broad regression and 124/124 integration tests passed
+locally. The strengthened 40-candidate/12-slot test reaches all candidates in
+8 completed scans at elapsed seconds 0, 10, 20, 31, 42, 51, 62, 80. It also
+checks failed-scan retry stability and unchanged candidate evidence. Restoring
+the old rotation expression in memory makes this test fail with 16 missing
+tail candidates. Initial sandbox runs had only three local HTTP bind permission
+errors; rerunning with local server permission passed. No production DB used.
+
+PR #100 is to remain open; no merge, deployment or VM changes. CI for the new
+checkpoint must pass before review; prior broad-radar live acceptance below
+remains pending.
+
+---
+
 # 2026-09-28 — Broad radar / deep analysis implementation
 
 Canonical main base: `3fc9c4b5fa65498b4419c99d2acc6c11dedfca21`.
