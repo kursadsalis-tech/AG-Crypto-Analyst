@@ -31,6 +31,22 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         self.assertIn("real-order authority", text)
 
+    def test_controlled_challenger_has_no_trade_execution_authority(self):
+        text=(ROOT/"paper_trading/controlled_challenger.py").read_text(
+            encoding="utf-8"
+        )
+        for forbidden in (
+            "INSERT INTO paper_agent_positions",
+            "UPDATE paper_agent_positions",
+            "execute_paper(",
+            "simulated_fill(",
+            "process_market_state(",
+        ):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("promotion_allowed INTEGER NOT NULL DEFAULT 0", text)
+        self.assertIn("policy_mutation_allowed INTEGER NOT NULL DEFAULT 0", text)
+        self.assertIn("real_order_allowed INTEGER NOT NULL DEFAULT 0", text)
+
     def test_retired_parallel_runtime_entrypoints_do_not_exist(self):
         retired=["runtime/cloud_worker.py","runtime/paper_selection_cycle.py","deploy/agca-cloud-worker.service","deploy/agca-paper-selection.service","deploy/agca-paper-selection.timer","deploy/run_cloud_worker.sh"]
         self.assertEqual([p for p in retired if (ROOT/p).exists()],[])

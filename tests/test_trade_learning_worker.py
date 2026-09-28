@@ -86,6 +86,45 @@ class TradeLearningWorkerTests(unittest.TestCase):
             mock.call(initialize=True, refresh_external=True),
             mock.call(initialize=False, refresh_external=False)])
 
+    def test_cycle_exports_controlled_challenger_health(self):
+        fake = mock.MagicMock(spec=sqlite3.Connection)
+        with (
+            mock.patch.object(worker, "local_connection", return_value=fake),
+            mock.patch.object(worker.experience_memory, "review_closed_positions", return_value=2),
+            mock.patch.object(worker.trade_learning, "run", return_value={
+                "status": "CHALLENGER_EVIDENCE_READY",
+                "closed": 120,
+                "weeks": 8,
+                "promotion_allowed": False,
+                "controlled_challenger": {
+                    "challenger_count": 3,
+                    "reviewable_count": 1,
+                    "statuses": {
+                        "FORWARD_COLLECTING": 2,
+                        "FORWARD_BETTER_REVIEWABLE": 1,
+                    },
+                },
+            }),
+            mock.patch.object(worker.strategy_allocator, "rebalance", return_value={"A": 1.0}),
+        ):
+            result = worker.run_cycle_once(
+                initialize=False, refresh_external=False
+            )
+
+        self.assertEqual(result["challenger_count"], 3)
+        self.assertEqual(result["reviewable_challenger_count"], 1)
+        self.assertEqual(
+            result["challenger_statuses"],
+            {
+                "FORWARD_COLLECTING": 2,
+                "FORWARD_BETTER_REVIEWABLE": 1,
+            },
+        )
+        self.assertFalse(result["promotion_allowed"])
+        self.assertFalse(result["policy_mutation_allowed"])
+        fake.commit.assert_called_once()
+        fake.close.assert_called_once()
+
     def test_cycle_does_not_hide_non_lock_error(self):
         with (
             mock.patch.object(
