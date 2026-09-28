@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -125,7 +126,7 @@ class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
         with patch.object(technical_trade_plan, "build_for_candidate", return_value=plan()) as build, patch.object(
             realtime_technical_context, "load_latest", return_value=None
         ):
-            for seconds in elapsed_seconds:
+            for scan_index, seconds in enumerate(elapsed_seconds):
                 build.reset_mock()
                 result = orchestrator.orchestrate(con, NOW + timedelta(seconds=seconds),
                                                    behavior_result=behavior)
@@ -149,8 +150,20 @@ class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
                 con.execute("""INSERT INTO paper_behavior_selection_runs(
                     created_at, core_status, candidate_count, selected_count,
                     active_position_count, capacity, available_exposure,
-                    reason_counts_json) VALUES(?, 'ACTIONABLE', 40, 0, 0, 12, 0, '{}')""",
-                    ((NOW + timedelta(seconds=seconds + 2)).isoformat(),))
+                    reason_counts_json) VALUES(?, 'ACTIONABLE', 40, 0, 0, 12, 0, ?)""",
+                    ((NOW + timedelta(seconds=seconds + 2)).isoformat(),
+                     json.dumps(result["rejections"])))
+                # One or three pre-orchestrator completions between real scans
+                # make MAX(run_id) advance by even strides and starve the tail.
+                for extra in range(1 if scan_index % 2 == 0 else 3):
+                    reasons = ({"PORTFOLIO_VALUATION_STALE_OR_MISSING": 1} if extra == 0 else
+                               {"DEEP_ANALYSIS_CAPACITY_DEFERRED": 0})
+                    con.execute("""INSERT INTO paper_behavior_selection_runs(
+                        created_at, core_status, candidate_count, selected_count,
+                        active_position_count, capacity, available_exposure,
+                        reason_counts_json) VALUES(?, 'BLOCKED', 0, 0, 0, 12, 0, ?)""",
+                        ((NOW + timedelta(seconds=seconds + 3 + extra)).isoformat(),
+                         json.dumps(reasons)))
                 con.commit()
             self.assertEqual(seen, set(range(40)))
             build.reset_mock()

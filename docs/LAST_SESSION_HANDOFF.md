@@ -1,3 +1,30 @@
+# 2026-09-28 — PR #100 orchestrated-completion fairness correction
+
+Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:
+`8fa3e7cdbcce46173bd734d966b43c6626170aee`. Existing checkout:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/broad-radar-deep-analysis`.
+This correction supersedes the MAX(run_id) scheduling description below.
+
+The cycle index now counts only existing selection-run audit rows whose
+`reason_counts_json` has `DEEP_ANALYSIS_CAPACITY_DEFERRED > 0`, using SQLite
+JSON1. No new table or state. Pre-orchestrator valuation-stale completions,
+missing/zero deferral markers and unrecorded failed attempts consume no turn.
+Python 3.12 local tests exercise JSON1; CI uses Python 3.11 and the production
+image is Python 3.12. PAPER_ONLY, single authority and eligibility are unchanged.
+
+Verification: 558/558 full regression and 124/124 integration tests pass locally.
+The 40-candidate/12-slot fixture inserts alternating one/three non-orchestrated
+completions between real scans and uses irregular timestamps. All 40 candidates
+are planned within eight overloaded orchestrator completions. Failed-attempt
+retry stability and input immutability remain asserted. An in-memory mutation
+back to MAX(run_id) fails this test with 16 missing tail candidates.
+
+PR #100 remains open. Push this checkpoint and require its integration/full
+regression CI to pass before review. No merge, deployment or VM changes;
+previous live acceptance remains pending.
+
+---
+
 # 2026-09-28 — PR #100 scan-cadence fairness correction
 
 Branch: `codex/broad-radar-deep-analysis`; parent checkpoint:

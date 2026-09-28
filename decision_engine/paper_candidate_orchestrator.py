@@ -84,12 +84,14 @@ def orchestrate(
         rotating_slots = max(1, deep_analysis_slots // 3) if deep_analysis_slots else 0
         priority_slots = deep_analysis_slots - rotating_slots
         pool = candidates[priority_slots:]
-        # The single caller records a run only on completion. Read its durable
-        # high-water mark: wall-clock buckets can skip tail slices forever when
-        # completion-paced scans resonate with the rotation period. A failed
-        # scan does not consume a turn or change any evidence eligibility.
+        # Only completed overloaded orchestrator scans consume a turn. The
+        # caller also records pre-orchestrator exits (e.g. stale valuation), so
+        # run IDs are not a scheduling clock. Capacity deferral is the existing
+        # durable completion marker; unrecorded failed attempts consume no turn.
         cycle_index = int(con.execute(
-            "SELECT COALESCE(MAX(run_id), 0) FROM paper_behavior_selection_runs"
+            "SELECT COUNT(*) FROM paper_behavior_selection_runs "
+            "WHERE json_extract(reason_counts_json, "
+            "'$.DEEP_ANALYSIS_CAPACITY_DEFERRED') > 0"
         ).fetchone()[0]) if rotating_slots else 0
         start = (cycle_index * rotating_slots) % len(pool)
         selected = candidates[:priority_slots] + [
