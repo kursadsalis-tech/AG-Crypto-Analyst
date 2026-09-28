@@ -1,3 +1,51 @@
+# 2026-09-28 — Panel single-flight cache continuation
+
+Current branch: `codex/panel-single-flight-cache`.
+Canonical base: `b878c17553f8d53ae1e92aa858b50d1d0fc945e9` (merged #101).
+Checkpoint: `Share read-only panel snapshots with explicit stale telemetry`.
+Work checkout: `/workspace/scratch/d2b5aca05bec/AG-Crypto-Analyst`.
+Repository: `kursadsalis-tech/AG-Crypto-Analyst`; the GitHub PR branch is durable.
+
+Recovery: previous Work thread `01a0e7c0-b473-7381-b181-b23ece755c6b`
+did not expose a recoverable local checkout/worktree/patch. The historical Mac
+path is inaccessible here. Checked all 103 published branch names, current refs,
+recent commits and seven open historical PRs; no cache work was published.
+Reused the merged panel code on exact canonical main and implemented only the
+missing cache/UI/resource correction. Mac dirty work and old PRs were untouched;
+repo hygiene remains a separate TODO. This is not a project restart.
+
+Completed: one nonblocking, request-driven snapshot computation per panel
+server; 2 s completion TTL; immutable encoded payload shared by all clients;
+503 while cold; explicit STALE fallback and bounded retry after any failed
+compute/encoding; monotonic ages, wall/thread CPU duration, saturating counters,
+cache liveness telemetry and UI expiry/recovery labels. Mismatch POST remains
+diagnostic-only. No changes to realtime, observer, technical workers or their
+services; PAPER_ONLY and one trade authority remain intact.
+
+Resource proposal: retain a hard cap at 50%, add CPUWeight=20 and Nice=10;
+keep MemoryMax=256M and existing filesystem restrictions. Production minimum
+is not claimed: only the supplied 25% failure evidence exists. Review the
+bounded two-client acceptance and worker-latency gates before live acceptance.
+
+Verification on Python 3.12: 52 focused tests, 141 PAPER integration tests and
+576 full regression tests passed (full suite 13.546 s). Fourteen new cache/HTTP/
+UI tests cover exact single-flight, fast reuse, STALE/error recovery, retry
+backoff, liveness, readonly SQLite and mismatch authority. Existing injected
+remote-store errors/spot fallback and ResourceWarning output are test output;
+no production DB was used. CI is required on the final PR head; its current
+status and exact SHA are recorded on the PR, not inferred from these local runs.
+
+External state: PR for review only, MUST remain UNMERGED. No VM access,
+deployment, worker restart, DB/policy mutation or real order occurred. User's
+production evidence is reproduced with attribution in
+`docs/PANEL_SNAPSHOT_CACHE.md`, which contains exact isolated panel-only install,
+120 s two-client/30 s idle acceptance, process identity checks and rollback.
+This supersedes earlier claims below that #101 is still open or that realtime
+needs restarting for this panel task. Remaining: PR CI/review, then separately
+authorized live panel acceptance. Do not use the general worker deploy script.
+
+---
+
 # 2026-09-28 — PR #101 mismatch quote-evidence correction
 
 Branch `codex/panel-observability-audit`, parent `1503f4e182a3cfb71582b4089ab2513d7be4fd11`.
