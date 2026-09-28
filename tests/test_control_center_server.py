@@ -96,6 +96,13 @@ class ControlCenterServerTests(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=2)
 
+    def test_every_referenced_dom_element_exists(self):
+        import re
+        html = server.INDEX_PATH.read_text()
+        ids = set(re.findall(r'id="([^" ]+)"', html))
+        references = set(re.findall(r'\$\("([^" ]+)"\)', html))
+        self.assertEqual(references - ids, set())
+
     def test_v1_has_no_generic_write_surface(self):
         self.assertFalse(hasattr(server, "execute_sql"))
         self.assertFalse(hasattr(server, "mutate_database"))

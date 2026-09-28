@@ -1,6 +1,7 @@
 """Minimal read-only HTTP surface for AGCA Live Control Center v1."""
 from __future__ import annotations
 
+import sqlite3
 import json
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,7 +38,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if self.path == "/api/v1/overview":
-            self._json(snapshot())
+            try:
+                self._json(snapshot())
+            except (OSError, ValueError, sqlite3.Error):
+                self._json({"error": "snapshot_unavailable"}, 503)
             return
         if self.path == "/healthz":
             self._json({"status": "ok", "authority": "READ_ONLY"})
@@ -48,11 +52,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/api/v1/feedback/market-data-mismatch":
             self._json({"error": "read_only"}, 405)
             return
+        if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            self._json({"error": "json_required"}, 415)
+            return
+        origin = self.headers.get("Origin")
+        if origin:
+            from urllib.parse import urlsplit
+            if urlsplit(origin).netloc != self.headers.get("Host"):
+                self._json({"error": "origin_mismatch"}, 403)
+                return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 4096:
                 raise ValueError("invalid_payload_size")
             payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("object_required")
             record = record_data_mismatch(payload)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self._json({"error": str(exc)}, 400)

@@ -6,6 +6,7 @@ write path. It projects canonical PAPER runtime state into operator-friendly dat
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ from pathlib import Path
 
 from paper_trading.crypto_profit_agent import DB_NAME
 from paper_trading.position_policy import TP1_R, TP2_R
+from control_center.telemetry import runtime_visibility
+from paper_trading.execution_model import validate_quote
+from paper_trading.execution_contract import MarketSnapshot
 
 MARKET_STATE_PATH = Path(os.getenv(
     "AGCA_PAPER_REALTIME_MARKET_STATE",
@@ -54,6 +58,8 @@ def load_market_state(path=MARKET_STATE_PATH):
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return {"at": None, "live_market": []}
+    if not isinstance(payload, dict):
+        payload = {}
     if payload.get("execution_mode") != "PAPER_ONLY":
         return {"at": payload.get("at"), "live_market": []}
     if payload.get("real_order_allowed") is not False:
@@ -66,6 +72,8 @@ def load_brain_state(path=BRAIN_STATE_PATH):
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return {"at": None, "phase": "UNKNOWN", "scan": None}
+    if not isinstance(payload, dict):
+        payload = {}
     if payload.get("execution_mode") != "PAPER_ONLY":
         return {"at": payload.get("at"), "phase": "UNKNOWN", "scan": None}
     if payload.get("real_order_allowed") is not False:
@@ -88,6 +96,8 @@ def load_health(path=HEALTH_PATH):
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return {"status": "UNKNOWN", "at": None}
+    if not isinstance(payload, dict):
+        payload = {}
     if payload.get("execution_mode") != "PAPER_ONLY":
         return {"status": "UNKNOWN", "at": payload.get("at")}
     if payload.get("real_order_allowed") is not False:
@@ -133,16 +143,19 @@ def _freshness_seconds(state, now):
     stamp_ms = state.get("quote_timestamp_ms") or state.get("market_timestamp_ms")
     if not stamp_ms:
         return None
-    stamp = datetime.fromtimestamp(float(stamp_ms) / 1000, tz=timezone.utc)
-    return max(0.0, (now - stamp).total_seconds())
+    try:
+        age = now.timestamp() - float(stamp_ms) / 1000
+        return age if math.isfinite(age) and age >= 0 else None
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def _mark_price(direction, state):
     # What an operator can actually close against now: LONG sells to bid,
     # SHORT buys from ask. This matches executable-side PAPER semantics.
     if direction == "LONG":
-        return state.get("best_bid") or state.get("last_price")
-    return state.get("best_ask") or state.get("last_price")
+        return state.get("best_bid")
+    return state.get("best_ask")
 
 
 def _live_pnl(direction, entry_price, quantity, mark):
@@ -164,16 +177,23 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     states = _state_index(market)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
+        con.execute("PRAGMA query_only=ON")
+        visibility = runtime_visibility(con, health, brain, now)
+        management_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_position_management)")}
+        position_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_agent_positions)")}
+        extras = [f"m.{name}" if name in management_columns else "NULL" for name in
+                  ("remaining_cost_basis", "tp1_price", "tp2_price", "best_price")]
+        extras.append("p.margin_allocated" if "margin_allocated" in position_columns else "NULL")
         portfolio = con.execute(
             """SELECT initial_capital,cash,realized_pnl,total_fees
                FROM paper_agent_portfolio WHERE portfolio_id=1"""
         ).fetchone()
         rows = con.execute(
-            """SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
+            f"""SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
                       p.entry_price,p.quantity,p.notional,p.leverage,p.selection_reason,
                       p.decision_source,p.decision_reference_id,
                       m.stop_distance_pct,m.current_stop_price,m.tp1_done,m.tp2_done,
-                      m.remaining_quantity
+                      m.remaining_quantity,{",".join(extras)}
                FROM paper_agent_positions p
                LEFT JOIN paper_position_management m USING(position_id)
                WHERE p.status='OPEN' ORDER BY p.position_id"""
@@ -296,10 +316,20 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         (position_id, symbol, market_type, direction, entry_time, entry_price,
          quantity, notional, leverage, reason, decision_source, decision_reference_id,
          stop_distance_pct, current_stop_price, tp1_done, tp2_done,
-         remaining_quantity) = row
+         remaining_quantity, remaining_basis, frozen_tp1, frozen_tp2, best_price, margin) = row
         state = states.get((symbol, market_type), {})
         mark = _mark_price(direction, state)
-        pnl = _live_pnl(direction, entry_price, quantity, mark)
+        freshness = _freshness_seconds(state, now)
+        live_quantity = remaining_quantity if remaining_quantity is not None else quantity
+        validated_mark, mark_error = validate_quote(MarketSnapshot(
+            reference_price=state.get("last_price") or 0,
+            available_quote_volume=state.get("visible_quote_volume"),
+            observed_at=now.isoformat(), best_bid=state.get("best_bid"),
+            best_ask=state.get("best_ask"), quote_timestamp_ms=state.get("quote_timestamp_ms"),
+            market_type=market_type, source=state.get("quote_source"),
+        ), "SELL" if direction == "LONG" else "BUY")
+        valid_mark = validated_mark is not None
+        pnl = _live_pnl(direction, entry_price, live_quantity, mark) if valid_mark else None
         if pnl is not None:
             total_unrealized += pnl
         freshness = _freshness_seconds(state, now)
@@ -314,7 +344,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "best_bid": state.get("best_bid"),
             "best_ask": state.get("best_ask"),
             "mark_price": mark,
-            "quantity": quantity,
+            "quantity": live_quantity,
+            "remaining_cost_basis": remaining_basis if remaining_basis is not None else margin,
+            "valuation_error": mark_error,
+            "gross_exposure": abs(float(live_quantity) * float(mark)) if valid_mark else None,
+            "best_price": best_price,
+            "trailing_active": bool(tp1_done),
             "notional": notional,
             "leverage": leverage,
             "unrealized_pnl": pnl,
@@ -350,13 +385,13 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             },
             "current_stop_price": current_stop_price,
             "stop_distance_pct": stop_distance_pct,
-            "tp1_price": (
+            "tp1_price": frozen_tp1 if frozen_tp1 is not None else (
                 float(entry_price) * (1 + float(stop_distance_pct) * TP1_R / 100)
                 if direction == "LONG" and entry_price is not None and stop_distance_pct is not None
                 else float(entry_price) * (1 - float(stop_distance_pct) * TP1_R / 100)
                 if entry_price is not None and stop_distance_pct is not None else None
             ),
-            "tp2_price": (
+            "tp2_price": frozen_tp2 if frozen_tp2 is not None else (
                 float(entry_price) * (1 + float(stop_distance_pct) * TP2_R / 100)
                 if direction == "LONG" and entry_price is not None and stop_distance_pct is not None
                 else float(entry_price) * (1 - float(stop_distance_pct) * TP2_R / 100)
@@ -369,7 +404,12 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
 
     initial, cash, realized, fees = portfolio or (0.0, 0.0, 0.0, 0.0)
     open_notional = sum(float(p["notional"] or 0.0) for p in positions)
-    total_equity = float(cash or 0.0) + open_notional + total_unrealized
+    valuation_complete = portfolio is not None and all(
+        p["unrealized_pnl"] is not None and p["remaining_cost_basis"] is not None for p in positions)
+    reserved = sum(float(p["remaining_cost_basis"] or 0) for p in positions)
+    total_equity = float(cash) + reserved + total_unrealized if valuation_complete else None
+    if not valuation_complete:
+        total_unrealized = None
     fresh_count = sum(p["market_status"] == "CANLI" for p in positions)
     try:
         health_at = _parse_iso(health.get("at"))
@@ -484,6 +524,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 else "Kanonik worker heartbeat sağlıklı değil."
             ),
         },
+        "visibility": visibility,
         "brain": brain,
         "brain_timeline": brain_timeline,
         "selection": selection,
@@ -498,6 +539,9 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             } for name, stamp in activity.items()],
         },
         "portfolio": {
+            "valuation_complete": valuation_complete,
+            "reserved_margin": reserved if valuation_complete else None,
+            "gross_exposure": sum(p["gross_exposure"] for p in positions) if valuation_complete else None,
             "initial_capital": initial,
             "cash": cash,
             "realized_pnl": realized,
@@ -507,7 +551,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             "total_equity": total_equity,
             "total_return_pct": (
                 ((total_equity / float(initial)) - 1.0) * 100.0
-                if initial else None
+                if initial and total_equity is not None else None
             ),
         },
         "positions": positions,

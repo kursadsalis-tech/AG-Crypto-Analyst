@@ -624,6 +624,7 @@ async def run():
                 "available_exposure": latest_scan[5],
                 "reason_counts": json.loads(latest_scan[6] or "{}"),
             } if latest_scan else None),
+            "deep_analysis": selection_result.get("deep_analysis"),
             "candidates": selection_result.get("candidates", []),
             "open_positions": selection_result.get("open_positions", []),
             "portfolio_capacity": selection_result.get(

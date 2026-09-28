@@ -53,7 +53,7 @@ class ControlCenterPresentationTests(unittest.TestCase):
         self.assertIn("ajan güncel fiyatı görmüyor olabilir", position["uyarı"])
         self.assertEqual(position["son_fiyat"], "8.2 saniye önce")
         self.assertEqual(position["karar_akışı"]["karar"], "LONG — PAPER_OPPORTUNITY_POLICY")
-        self.assertIn("yeni deneyim sonraki kararları besleyebilir", view["öğrenme"]["anlık_adaptasyon"])
+        self.assertIn("Yeni deneyim sonraki kararları besleyebilir", view["öğrenme"]["anlık_adaptasyon"])
         self.assertEqual(view["öğrenme"]["kalıcı_politika_terfisi"], "HENÜZ DOĞRULANMADI")
 
     def test_operator_view_reports_live_market_plainly(self):

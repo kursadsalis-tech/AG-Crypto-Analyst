@@ -1,0 +1,29 @@
+[Unit]
+Description=AGCA read-only live panel (Tailscale Serve backend)
+After=network.target
+
+[Service]
+Type=simple
+User=kursadsalis
+Group=kursadsalis
+WorkingDirectory=/home/kursadsalis/AG-Crypto-Analyst-cloud
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+Environment=AGCA_CONTROL_CENTER_FEEDBACK=/var/lib/agca-panel/feedback.jsonl
+Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
+ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m control_center.server
+Restart=on-failure
+RestartSec=5
+StateDirectory=agca-panel
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/agca
+ReadWritePaths=/var/lib/agca-panel
+MemoryMax=256M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

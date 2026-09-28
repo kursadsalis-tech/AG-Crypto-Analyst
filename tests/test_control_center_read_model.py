@@ -93,6 +93,50 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertEqual(flow["decision"]["reference_id"], 101)
             self.assertEqual(flow["execution"]["status"], "AÇIK")
 
+    def test_partial_exit_margin_and_frozen_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "runtime.db"
+            state = Path(tmp) / "state.json"
+            con = sqlite3.connect(db)
+            con.executescript("""
+                CREATE TABLE paper_agent_portfolio(portfolio_id,initial_capital,cash,realized_pnl,total_fees);
+                INSERT INTO paper_agent_portfolio VALUES(1,10000,9900,0,0);
+                CREATE TABLE paper_agent_positions(position_id,symbol,market_type,direction,entry_time,
+                    entry_price,quantity,notional,leverage,selection_reason,status,decision_source,
+                    decision_reference_id,exit_time,exit_price,net_pnl,close_reason,entry_fee,exit_fee,margin_allocated);
+                INSERT INTO paper_agent_positions VALUES(1,'ETHUSDT','USD_M_PERPETUAL','LONG',NULL,
+                    100,4,400,2,'reason','OPEN','technical',1,NULL,NULL,NULL,NULL,0,0,200);
+                CREATE TABLE paper_position_management(position_id,stop_distance_pct,current_stop_price,
+                    tp1_done,tp2_done,remaining_quantity,remaining_cost_basis,tp1_price,tp2_price,best_price);
+                INSERT INTO paper_position_management VALUES(1,2,101,1,0,1,50,108,115,112);
+            """)
+            con.commit(); con.close()
+            before = db.read_bytes()
+            now = datetime(2026,9,28,tzinfo=timezone.utc)
+            quote = {"symbol":"ETHUSDT","market_type":"USD_M_PERPETUAL","last_price":110,
+                     "quote_source":"BINANCE_USD_M_WS_TICKER_BID_ASK", "best_bid":109,"best_ask":111,"quote_timestamp_ms":now.timestamp()*1000}
+            def project():
+                state.write_text(json.dumps({"execution_mode":"PAPER_ONLY","real_order_allowed":False,
+                                             "live_market":[quote]}))
+                return overview(db,state,now=now)
+            out = project()
+            self.assertEqual(out["positions"][0]["unrealized_pnl"],9)
+            self.assertEqual(out["portfolio"]["total_equity"],9959)
+            self.assertEqual(out["portfolio"]["gross_exposure"],109)
+            self.assertEqual(out["positions"][0]["tp1_price"],108)
+            self.assertEqual(out["positions"][0]["tp2_price"],115)
+            self.assertTrue(out["positions"][0]["trailing_active"])
+            quote["best_ask"] = 108
+            self.assertIsNone(project()["portfolio"]["total_equity"])
+            quote["best_ask"] = 111
+            quote["quote_timestamp_ms"] -= 3000
+            self.assertIsNone(project()["portfolio"]["total_equity"])
+            quote["quote_timestamp_ms"] -= 60000
+            self.assertIsNone(project()["portfolio"]["total_equity"])
+            quote["quote_timestamp_ms"] = now.timestamp()*1000 + 60000
+            self.assertIsNone(project()["portfolio"]["total_equity"])
+            self.assertEqual(before, db.read_bytes())
+
     def test_short_marks_against_ask_and_stale_data_is_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "runtime.db"
@@ -144,7 +188,7 @@ class ControlCenterReadModelTests(unittest.TestCase):
             }))
             position = overview(db, state, health, now=now)["positions"][0]
             self.assertEqual(position["mark_price"], 59001)
-            self.assertAlmostEqual(position["unrealized_pnl"], 99.9)
+            self.assertIsNone(position["unrealized_pnl"])
             self.assertEqual(position["market_status"], "GECİKMİŞ")
 
     def test_malformed_health_and_learning_evidence_fail_safe(self):
