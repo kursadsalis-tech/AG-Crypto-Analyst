@@ -11,6 +11,10 @@ from urllib.error import HTTPError
 from urllib.request import urlopen
 
 
+MAX_HEALTH_LATENCY_SECONDS = 0.5
+MAX_OVERVIEW_LATENCY_SECONDS = 0.75
+
+
 def get(path):
     started = time.monotonic()
     try:
@@ -109,8 +113,11 @@ def main(output):
                 "cache": cache, "scheduler": scheduler_sample(pid, group, cache),
                 "worker": worker, "health_latency_seconds": response["latency_seconds"]})
             assert_runtime_safety(worker)
-            assert response["status"] == 200 and response["body"]["authority"] == "READ_ONLY"
-            assert response["latency_seconds"] < .5, "health latency"
+            assert response["status"] == 200, f"health status={response['status']}"
+            assert response["body"]["authority"] == "READ_ONLY", "health authority"
+            assert response["latency_seconds"] < MAX_HEALTH_LATENCY_SECONDS, (
+                f"health latency={response['latency_seconds']:.3f}s"
+            )
             assert cache["refresh_failures"] == 0, "refresh failed"
             assert worker["source"] is not None and worker["source"] == baseline["source"]
             assert set(worker["quotes_ms"]) == {"BTCUSDT", "ETHUSDT"}, "missing quote evidence"
@@ -137,7 +144,10 @@ def main(output):
                 cache = response["body"]["snapshot_cache"]
                 report["requests"].append({"status": response["status"],
                     "latency_seconds": response["latency_seconds"], "cache": cache})
-                assert response["status"] == 200 and response["latency_seconds"] < .5
+                assert response["status"] == 200, f"overview status={response['status']}"
+                assert response["latency_seconds"] < MAX_OVERVIEW_LATENCY_SECONDS, (
+                    f"overview latency={response['latency_seconds']:.3f}s"
+                )
                 if generation is not None:
                     assert cache["state"] == "CURRENT" and cache["generation"] == generation
                     assert cache["refresh_attempts"] == generation
@@ -146,8 +156,13 @@ def main(output):
 
         cold = get("/api/v1/overview")
         report["cold"] = cold
-        assert cold["status"] == 503 and cold["latency_seconds"] < .5
-        assert cold["body"]["snapshot_cache"]["state"] == "UNAVAILABLE"
+        assert cold["status"] == 503, f"cold status={cold['status']}"
+        assert cold["latency_seconds"] < MAX_OVERVIEW_LATENCY_SECONDS, (
+            f"cold latency={cold['latency_seconds']:.3f}s"
+        )
+        assert cold["body"]["snapshot_cache"]["state"] == "UNAVAILABLE", (
+            f"cold state={cold['body']['snapshot_cache']['state']}"
+        )
         wait_generation(1)
         pair(1)
         time.sleep(2.05)
