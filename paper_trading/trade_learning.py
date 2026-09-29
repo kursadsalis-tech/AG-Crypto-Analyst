@@ -49,6 +49,8 @@ def ensure_tables(con):
             evidence_json TEXT NOT NULL,
             UNIQUE(learning_version, validation_cohort, closed_count)
         );
+        CREATE INDEX IF NOT EXISTS idx_paper_trade_learning_reviews_created_at
+        ON paper_agent_trade_learning_reviews(created_at);
 
         CREATE TABLE IF NOT EXISTS paper_agent_trade_learning_hypotheses (
             hypothesis_id INTEGER PRIMARY KEY AUTOINCREMENT,

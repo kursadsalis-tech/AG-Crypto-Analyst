@@ -1,3 +1,36 @@
+# ACTIVITY I/O root cause and canonical index migration — 2026-09-30
+
+The second live canary on exact head
+`7e0d1e4928610df6b39fff269baa7cd2e561380d` still stalled in
+`ACTIVITY` with neutral scheduling (`Nice=0`, `CPUWeight=100`,
+`CPUQuota=50%`).  The refresh thread was in Linux `D` state with
+`wchan=folio_wait_bit_common`; over a two-second sample it consumed only about
+4.4 ms CPU and accumulated about 16.3 ms runqueue wait.  This is filesystem/page
+cache I/O wait evidence, not CPU scheduler starvation.
+
+Read-only production `EXPLAIN QUERY PLAN` then showed all four ACTIVITY
+lookups doing a full table scan plus `USE TEMP B-TREE FOR ORDER BY`:
+`paper_behavior_selection_runs(created_at)`,
+`paper_agent_positions(selected_at)`,
+`paper_position_events(observed_at)`, and
+`paper_agent_trade_learning_reviews(created_at)`.
+
+This revision adds one normal single-column index for each timestamp.  Fresh
+databases get them from the canonical schema owners.  Existing databases use the
+separate reviewed migration `scripts/migrate_panel_activity_indexes.py`.
+**The panel never runs the migration and remains read-only.**  The migration
+requires explicit `--apply`, validates all four tables before writing, runs in
+one transaction, and verifies every ACTIVITY query uses its covering index with
+no temporary sort.
+
+The migration has **not** been run on production and the new canary has **not**
+been rerun.  `CREATE INDEX` needs a SQLite writer lock while each index is
+built, so production migration is a separate bounded maintenance step after the
+exact-head CI passes.  Do not replace it with ad-hoc SQL.  The prior canary
+rollback remains in force.
+
+---
+
 # Panel cache: başarısız canary sonrası revizyon — PR #102
 
 PR açık kalacak, **merge edilmeyecek**. Bu runbook yalnız panel içindir.

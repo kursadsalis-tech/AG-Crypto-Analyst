@@ -1,3 +1,30 @@
+# 2026-09-30 — PR #102 ACTIVITY I/O index correction
+
+The second live canary on exact head
+`7e0d1e4928610df6b39fff269baa7cd2e561380d` failed before merge.  With
+`CPUQuota=50%`, `CPUWeight=100`, `Nice=0`, the refresh stayed in
+`ACTIVITY`.  Native TID evidence was Linux `D` state,
+`folio_wait_bit_common`; CPU/runqueue deltas did not support scheduler
+starvation.  Read-only production query plans proved all four timestamp lookups
+were full scans with temp B-tree sorts.
+
+Work reported an unpublished local correction passing **52 focused** and
+**586 full-suite** tests before its credit expired.  The durable GitHub branch
+was still at the prior 7e0d1e4 head, so this checkpoint reconstructs the same
+intended fix: four normal single-column timestamp indexes, no partial indexes,
+canonical schema-owner support for new databases, and a separate explicit
+migration for existing databases.  The panel itself does not migrate and stays
+READ_ONLY.
+
+Production migration has not run and no new canary has run.  The exact new head
+must pass GitHub CI first.  After that, treat the index migration as a bounded
+SQLite writer-lock maintenance step, verify covering-index/no-temp-sort plans,
+then rerun only the isolated panel canary.  Do not merge PR #102 before that
+acceptance.  Realtime/observer/technical worker logic and priorities remain
+unchanged; repo hygiene is still a separate task.
+
+---
+
 # 2026-09-29 — PR #102 başarısız panel canary revizyonu
 
 Branch: `codex/panel-single-flight-cache`; parent/başarısız canary head:
