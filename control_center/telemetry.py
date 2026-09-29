@@ -77,6 +77,9 @@ def runtime_visibility(con, health, brain, now):
             "Beyan edilen gerçek emir izni": health.get("real_order_allowed"),
             "Çalışan kaynak": health.get("process_runtime_source"),
             "Tek yürütücü sözleşmesi": "runtime.paper_realtime_worker (repo contract; not process census)",
+            # Backward-compatible field: all-history count is intentionally not
+            # computed in the panel hot path, so never imply a zero count.
+            "Gerçek emir eventleri": None,
             "Son 50 eventte gerçek emir": recent_real_order_events,
             "Tam geçmiş gerçek emir taraması": "HOT_PATH_DIŞI",
         },
