@@ -186,8 +186,6 @@ def ensure_tables(con):
         ON paper_agent_positions(status,due_time);
         CREATE INDEX IF NOT EXISTS idx_paper_positions_symbol_status
         ON paper_agent_positions(symbol,status);
-        CREATE INDEX IF NOT EXISTS idx_paper_positions_selected_at
-        ON paper_agent_positions(selected_at);
 
         CREATE TABLE IF NOT EXISTS paper_agent_daily_reports (
             report_date TEXT PRIMARY KEY,
@@ -213,8 +211,6 @@ def ensure_tables(con):
             reason_counts_json TEXT NOT NULL,
             real_order_allowed INTEGER NOT NULL DEFAULT 0
         );
-        CREATE INDEX IF NOT EXISTS idx_paper_behavior_selection_runs_created_at
-        ON paper_behavior_selection_runs(created_at);
     """)
     columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
     for name, definition in (

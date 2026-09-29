@@ -76,8 +76,6 @@ def ensure_tables(con):
         );
         CREATE INDEX IF NOT EXISTS idx_paper_position_events_position
         ON paper_position_events(position_id,event_id);
-        CREATE INDEX IF NOT EXISTS idx_paper_position_events_observed_at
-        ON paper_position_events(observed_at);
         CREATE TABLE IF NOT EXISTS paper_funding_reconciliation_segments (
             segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
             position_id INTEGER NOT NULL,

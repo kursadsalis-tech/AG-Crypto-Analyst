@@ -1,29 +1,30 @@
-# 2026-09-30 — PR #102 ACTIVITY I/O index correction
+# 2026-09-30 — PR #102 ACTIVITY primary-key seek correction
 
-The second live canary on exact head
-`7e0d1e4928610df6b39fff269baa7cd2e561380d` failed before merge.  With
-`CPUQuota=50%`, `CPUWeight=100`, `Nice=0`, the refresh stayed in
-`ACTIVITY`.  Native TID evidence was Linux `D` state,
-`folio_wait_bit_common`; CPU/runqueue deltas did not support scheduler
-starvation.  Read-only production query plans proved all four timestamp lookups
-were full scans with temp B-tree sorts.
+Exact `7cb2a92b09f8ad1b978dcfd3f0293d40e2a40b73` index/migration checkpoint'i
+offline CI'da 151 integration + 586 broad regression geçti, ancak production
+migration 60 saniyede tamamlanmadı (`EXIT=124`). Migration prosesi kalmadı,
+dört hedef indexin tamamı yoktu; transaction commit edilmedi. Aynı migration
+tekrar denenmeyecek.
 
-Work reported an unpublished local correction passing **52 focused** and
-**586 full-suite** tests before its credit expired.  The durable GitHub branch
-was still at the prior 7e0d1e4 head, so this checkpoint reconstructs the same
-intended fix: four normal single-column timestamp indexes, no partial indexes,
-canonical schema-owner support for new databases, and a separate explicit
-migration for existing databases.  The panel itself does not migrate and stays
-READ_ONLY.
+Read-only production benchmark'ı global timestamp sort yerine son
+`INTEGER PRIMARY KEY` satırını okumanın selection 4.70 ms, positions 0.06 ms,
+events 0.05 ms, learning 0.05 ms olduğunu gösterdi. Positions/events/learning
+timestamp sonuçları önceki global MAX(timestamp) sonuçlarıyla aynıydı; selection
+canlı tarama nedeniyle arada yeni run satırları aldı.
 
-Production migration has not run and no new canary has run.  The exact new head
-must pass GitHub CI first.  After that, treat the index migration as a bounded
-SQLite writer-lock maintenance step, verify covering-index/no-temp-sort plans,
-then rerun only the isolated panel canary.  Do not merge PR #102 before that
-acceptance.  Realtime/observer/technical worker logic and priorities remain
-unchanged; repo hygiene is still a separate task.
+Bu checkpoint timestamp indexlerini ve migration yolunu tamamen geri çıkarır.
+`control_center.read_model` ACTIVITY görünürlüğünü
+`ORDER BY <canonical integer primary key> DESC LIMIT 1` ile son persisted audit
+satırından üretir. Bunun için production DB yazısı gerekmez. Regression testi
+global timestamp sort ile primary-key persisted-order semantiğini kasıtlı olarak
+ayırt eder.
+
+PR #102 merge edilmemeli; exact yeni head CI geçtikten sonra yalnız panel için
+izole canary yapılmalı. Realtime/observer/technical worker'lara dokunma. Başarılı
+canary de önce rollback edilip kanıt incelenmeden merge kararı verme.
 
 ---
+
 
 # 2026-09-29 — PR #102 başarısız panel canary revizyonu
 

@@ -1,35 +1,41 @@
-# ACTIVITY I/O root cause and canonical index migration — 2026-09-30
+# ACTIVITY I/O düzeltmesi: migration yok, primary-key seek — 2026-09-30
 
-The second live canary on exact head
-`7e0d1e4928610df6b39fff269baa7cd2e561380d` still stalled in
-`ACTIVITY` with neutral scheduling (`Nice=0`, `CPUWeight=100`,
-`CPUQuota=50%`).  The refresh thread was in Linux `D` state with
-`wchan=folio_wait_bit_common`; over a two-second sample it consumed only about
-4.4 ms CPU and accumulated about 16.3 ms runqueue wait.  This is filesystem/page
-cache I/O wait evidence, not CPU scheduler starvation.
+İkinci canlı canary exact `7e0d1e4928610df6b39fff269baa7cd2e561380d`
+ile `ACTIVITY` aşamasında takıldı. Native refresh thread Linux `D` state ve
+`wchan=folio_wait_bit_common` gösterdi; yaklaşık iki saniyede yalnız ~4.4 ms
+CPU ve ~16.3 ms runqueue wait birikti. Production üzerinde read-only
+`EXPLAIN QUERY PLAN`, dört ACTIVITY sorgusunun global timestamp sıralaması
+nedeniyle full scan + temp B-tree kullandığını gösterdi.
 
-Read-only production `EXPLAIN QUERY PLAN` then showed all four ACTIVITY
-lookups doing a full table scan plus `USE TEMP B-TREE FOR ORDER BY`:
-`paper_behavior_selection_runs(created_at)`,
-`paper_agent_positions(selected_at)`,
-`paper_position_events(observed_at)`, and
-`paper_agent_trade_learning_reviews(created_at)`.
+İlk düzeltme dört timestamp index ve explicit migration önerdi
+(`7cb2a92b09f8ad1b978dcfd3f0293d40e2a40b73`). CI başarılı olsa da production
+migration 60 saniyelik dış sınırda `EXIT=124` ile kesildi. Proses kalmadı,
+dört indexin hiçbiri oluşmadı ve disk dolmadı. Bu nedenle migration yaklaşımı
+terk edildi; production DB'ye tekrar schema yazısı yapılmayacak.
 
-This revision adds one normal single-column index for each timestamp.  Fresh
-databases get them from the canonical schema owners.  Existing databases use the
-separate reviewed migration `scripts/migrate_panel_activity_indexes.py`.
-**The panel never runs the migration and remains read-only.**  The migration
-requires explicit `--apply`, validates all four tables before writing, runs in
-one transaction, and verifies every ACTIVITY query uses its covering index with
-no temporary sort.
+Production read-only ölçümünde primary-key üzerinden son persisted satıra erişim:
+- selection: 4.70 ms
+- positions: 0.06 ms
+- events: 0.05 ms
+- learning: 0.05 ms
 
-The migration has **not** been run on production and the new canary has **not**
-been rerun.  `CREATE INDEX` needs a SQLite writer lock while each index is
-built, so production migration is a separate bounded maintenance step after the
-exact-head CI passes.  Do not replace it with ad-hoc SQL.  The prior canary
-rollback remains in force.
+Positions/events/learning timestamp'leri önceki global MAX(timestamp) sonuçlarıyla
+birebir aynıydı. Selection tablosu canlı worker çalışmaya devam ettiği için
+ölçümler arasında ilerledi; en son `run_id` ve timestamp birlikte ilerledi.
+
+Bu revizyon ACTIVITY için global timestamp sort yerine canonical append-only
+audit stream'lerinin `INTEGER PRIMARY KEY` alanında
+`ORDER BY <id> DESC LIMIT 1` kullanır. Semantik açıkça **son persisted activity
+satırı**dır. Panel read-only kalır; migration scripti, migration testi ve
+timestamp index eklemeleri kaldırılmıştır. Realtime/observer/technical worker
+logic veya priority değişmez. PAPER_ONLY ve tek trading authority korunur.
+
+Sonraki canlı kabul yalnız yeni exact head üzerinde izole panel canary'dir.
+Production DB schema migration'ı yoktur. Canary yine başarısız olursa rollback
+edilir ve merge yapılmaz.
 
 ---
+
 
 # Panel cache: başarısız canary sonrası revizyon — PR #102
 

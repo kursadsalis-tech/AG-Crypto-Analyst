@@ -207,11 +207,14 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         ).fetchall()
         progress("ACTIVITY")
         activity = {}
-        for table, time_column, label in (
-            ("paper_behavior_selection_runs", "created_at", "fırsat taraması"),
-            ("paper_agent_positions", "selected_at", "işlem seçimi"),
-            ("paper_position_events", "observed_at", "pozisyon yönetimi"),
-            ("paper_agent_trade_learning_reviews", "created_at", "öğrenme incelemesi"),
+        # These tables are append-only audit streams with INTEGER PRIMARY KEY
+        # identifiers. The panel needs the last persisted activity, not a
+        # global timestamp sort across large tables.
+        for table, id_column, time_column, label in (
+            ("paper_behavior_selection_runs", "run_id", "created_at", "fırsat taraması"),
+            ("paper_agent_positions", "position_id", "selected_at", "işlem seçimi"),
+            ("paper_position_events", "event_id", "observed_at", "pozisyon yönetimi"),
+            ("paper_agent_trade_learning_reviews", "review_id", "created_at", "öğrenme incelemesi"),
         ):
             exists = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -219,11 +222,11 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             if not exists:
                 continue
             columns = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
-            if time_column not in columns:
+            if id_column not in columns or time_column not in columns:
                 continue
             row = con.execute(
-                f"SELECT {time_column} FROM {table} WHERE {time_column} IS NOT NULL "
-                f"ORDER BY {time_column} DESC LIMIT 1"
+                f"SELECT {time_column} FROM {table} "
+                f"ORDER BY {id_column} DESC LIMIT 1"
             ).fetchone()
             activity[label] = row[0] if row else None
         progress("LEARNING")
