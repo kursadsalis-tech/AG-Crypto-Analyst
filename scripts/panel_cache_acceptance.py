@@ -57,17 +57,34 @@ def worker_sample():
     root = Path("/var/lib/agca")
     health = json.loads((root / "paper-realtime-health.json").read_text())
     market = json.loads((root / "paper-realtime-market-state.json").read_text())
-    for payload in (health, market):
-        assert payload["execution_mode"] == "PAPER_ONLY"
-        assert payload["real_order_allowed"] is False
     stamp = time.time() * 1000
     quotes = {r["symbol"]: stamp - r["quote_timestamp_ms"]
               for r in market.get("live_market", [])
               if r.get("symbol") in ("BTCUSDT", "ETHUSDT")
               and r.get("market_type") == "USD_M_PERPETUAL" and r.get("quote_timestamp_ms")}
     lag = health.get("quote_ingest", {}).get("USD_M_PERPETUAL", {}).get("last_receive_lag_ms")
-    return {"quotes_ms": quotes, "receive_lag_ms": lag,
-            "source": health.get("process_runtime_source")}
+    return {
+        "quotes_ms": quotes,
+        "receive_lag_ms": lag,
+        "source": health.get("process_runtime_source"),
+        "runtime_safety": {
+            "health_execution_mode": health.get("execution_mode"),
+            "health_real_order_allowed": health.get("real_order_allowed"),
+            "market_execution_mode": market.get("execution_mode"),
+            "market_real_order_allowed": market.get("real_order_allowed"),
+        },
+    }
+
+
+def assert_runtime_safety(worker):
+    safety = worker["runtime_safety"]
+    expected = {
+        "health_execution_mode": "PAPER_ONLY",
+        "health_real_order_allowed": False,
+        "market_execution_mode": "PAPER_ONLY",
+        "market_real_order_allowed": False,
+    }
+    assert safety == expected, f"runtime safety mismatch: {safety!r}"
 
 
 def main(output):
@@ -82,6 +99,7 @@ def main(output):
         assert pid > 0 and group.startswith("/")
         baseline = worker_sample()
         report["worker_baseline"] = baseline
+        assert_runtime_safety(baseline)
 
         def sample():
             response = get("/healthz")
@@ -90,6 +108,7 @@ def main(output):
             report["samples"].append({"elapsed_seconds": time.monotonic() - started,
                 "cache": cache, "scheduler": scheduler_sample(pid, group, cache),
                 "worker": worker, "health_latency_seconds": response["latency_seconds"]})
+            assert_runtime_safety(worker)
             assert response["status"] == 200 and response["body"]["authority"] == "READ_ONLY"
             assert response["latency_seconds"] < .5, "health latency"
             assert cache["refresh_failures"] == 0, "refresh failed"

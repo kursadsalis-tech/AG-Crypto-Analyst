@@ -37,7 +37,13 @@ class PanelAcceptanceTests(unittest.TestCase):
                     patch.object(probe, "scheduler_sample", return_value={"thread": {"state": "R"}}), \
                     patch.object(probe, "worker_sample", return_value={
                         "source": "canonical", "quotes_ms": {"BTCUSDT": 200, "ETHUSDT": 200},
-                        "receive_lag_ms": 20}), \
+                        "receive_lag_ms": 20,
+                        "runtime_safety": {
+                            "health_execution_mode": "PAPER_ONLY",
+                            "health_real_order_allowed": False,
+                            "market_execution_mode": "PAPER_ONLY",
+                            "market_real_order_allowed": False,
+                        }}), \
                     patch.object(probe.subprocess, "check_output", return_value="MainPID=123\nControlGroup=/panel\n"), \
                     patch("builtins.print"):
                 output = Path(tmp) / "report.json"
@@ -56,6 +62,29 @@ class PanelAcceptanceTests(unittest.TestCase):
         self.assertEqual(calls, 2)
         self.assertEqual(len(report["requests"]), 6)
         self.assertEqual(report["cold"]["status"], 503)
+
+
+    def test_runtime_safety_failure_is_recorded_with_exact_payload_values(self):
+        with tempfile.TemporaryDirectory() as tmp,                 patch.object(probe, "worker_sample", return_value={
+                    "source": "canonical",
+                    "quotes_ms": {"BTCUSDT": 200, "ETHUSDT": 200},
+                    "receive_lag_ms": 20,
+                    "runtime_safety": {
+                        "health_execution_mode": "PAPER_ONLY",
+                        "health_real_order_allowed": False,
+                        "market_execution_mode": "PAPER_ONLY",
+                        "market_real_order_allowed": 0,
+                    },
+                }),                 patch.object(probe.subprocess, "check_output",
+                             return_value="MainPID=123\nControlGroup=/panel\n"),                 patch("builtins.print"):
+            output = Path(tmp) / "report.json"
+            status = probe.main(output)
+            report = json.loads(output.read_text())
+        self.assertEqual(status, 1)
+        self.assertIn("runtime safety mismatch", report["failure"])
+        self.assertEqual(
+            report["worker_baseline"]["runtime_safety"]["market_real_order_allowed"], 0
+        )
 
     def test_stuck_refresh_stops_at_eight_seconds_and_preserves_diagnostics(self):
         status, report, calls = self.run_probe(blocked=True)
