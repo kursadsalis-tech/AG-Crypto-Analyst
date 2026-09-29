@@ -166,8 +166,10 @@ def _live_pnl(direction, entry_price, quantity, mark):
 
 
 def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
-             health_path=HEALTH_PATH, now=None):
+             health_path=HEALTH_PATH, now=None, *, checkpoint=None):
     """Return a read-only, human-facing snapshot of canonical PAPER state."""
+    progress = checkpoint if checkpoint is not None else lambda phase: None
+    progress("INPUTS")
     now = now or _utcnow()
     market = load_market_state(market_state_path)
     health = load_health(health_path)
@@ -175,19 +177,24 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     brain_timeline = load_brain_timeline()
     feedback = load_operator_feedback()
     states = _state_index(market)
+    progress("DB_CONNECT")
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         con.execute("PRAGMA query_only=ON")
+        progress("RUNTIME_VISIBILITY")
         visibility = runtime_visibility(con, health, brain, now)
+        progress("SCHEMA")
         management_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_position_management)")}
         position_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_agent_positions)")}
         extras = [f"m.{name}" if name in management_columns else "NULL" for name in
                   ("remaining_cost_basis", "tp1_price", "tp2_price", "best_price")]
         extras.append("p.margin_allocated" if "margin_allocated" in position_columns else "NULL")
+        progress("PORTFOLIO")
         portfolio = con.execute(
             """SELECT initial_capital,cash,realized_pnl,total_fees
                FROM paper_agent_portfolio WHERE portfolio_id=1"""
         ).fetchone()
+        progress("OPEN_POSITIONS")
         rows = con.execute(
             f"""SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
                       p.entry_price,p.quantity,p.notional,p.leverage,p.selection_reason,
@@ -198,6 +205,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                LEFT JOIN paper_position_management m USING(position_id)
                WHERE p.status='OPEN' ORDER BY p.position_id"""
         ).fetchall()
+        progress("ACTIVITY")
         activity = {}
         for table, time_column, label in (
             ("paper_behavior_selection_runs", "created_at", "fırsat taraması"),
@@ -218,6 +226,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                 f"ORDER BY {time_column} DESC LIMIT 1"
             ).fetchone()
             activity[label] = row[0] if row else None
+        progress("LEARNING")
         learning_row = None
         has_learning = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_trade_learning_reviews'"
@@ -229,6 +238,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                    FROM paper_agent_trade_learning_reviews
                    ORDER BY review_id DESC LIMIT 1"""
             ).fetchone()
+        progress("SELECTION")
         selection = None
         has_selection = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_behavior_selection_runs'"
@@ -262,6 +272,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                         "reason_counts": _safe_json_object(selection_row[7]),
                     }
 
+        progress("REPORTS")
         reports = []
         has_reports = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_daily_reports'"
@@ -279,6 +290,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                         "created_at": created_at,
                         "report": _safe_json_object(report_json),
                     })
+        progress("CLOSED_POSITIONS")
         closed_rows = con.execute(
             """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
                       exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
@@ -292,6 +304,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     finally:
         con.close()
 
+    progress("PROJECTION")
     market_rows = []
     for state in market.get("live_market", []):
         freshness = _freshness_seconds(state, now)

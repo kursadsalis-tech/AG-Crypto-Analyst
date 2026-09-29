@@ -23,10 +23,12 @@ PrivateTmp=true
 ReadOnlyPaths=/var/lib/agca
 ReadWritePaths=/var/lib/agca-panel
 MemoryMax=256M
-# Bounded starting point; verify the two-client acceptance before deployment approval.
+# Retain a hard cap. The failed canary used Nice=10/CPUWeight=20 and got
+# little CPU despite low quota throttling; restore neutral scheduling.
+# Worker priorities are unchanged. Require the short isolated canary.
 CPUQuota=50%
-CPUWeight=20
-Nice=10
+CPUWeight=100
+Nice=0
 
 [Install]
 WantedBy=multi-user.target

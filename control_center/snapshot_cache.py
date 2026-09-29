@@ -13,6 +13,12 @@ from datetime import datetime, timezone
 
 DEFAULT_TTL_SECONDS = 2.0
 MAX_COUNTER = 2**63 - 1
+# Fixed labels only: never expose SQL, paths, exceptions or unbounded history.
+REFRESH_PHASES = frozenset({
+    "COMPUTE", "INPUTS", "DB_CONNECT", "RUNTIME_VISIBILITY", "SCHEMA",
+    "PORTFOLIO", "OPEN_POSITIONS", "ACTIVITY", "LEARNING", "SELECTION",
+    "REPORTS", "CLOSED_POSITIONS", "PROJECTION", "PRESENTATION", "ENCODING",
+})
 
 
 class SnapshotCache:
@@ -37,6 +43,11 @@ class SnapshotCache:
         self._refreshing = False
         self._closed = False
         self._thread = None
+        self._phase = None
+        self._phase_started = None
+        self._thread_id = None
+        self._cpu_started = None
+        self._checkpoint_cpu = None
         self._counters = dict(hits=0, misses=0, stale_served=0,
                               refresh_attempts=0, refresh_failures=0, generation=0)
 
@@ -58,6 +69,13 @@ class SnapshotCache:
             "refresh_in_progress": self._refreshing,
             "refresh_elapsed_seconds": round(max(0.0, now - self._refresh_started), 3)
                 if self._refreshing else None,
+            "refresh_phase": self._phase,
+            "refresh_phase_elapsed_seconds": round(max(0.0, now - self._phase_started), 3)
+                if self._refreshing else None,
+            "refresh_thread_id": self._thread_id if self._refreshing else None,
+            # A checkpoint, not a continuously sampled CPU counter. The native
+            # TID permits a bounded external /proc schedstat/wchan diagnostic.
+            "refresh_checkpoint_cpu_seconds": self._checkpoint_cpu,
             "compute_duration_seconds": self._duration,
             "compute_cpu_seconds": self._cpu_duration,
             "last_error": self._error,
@@ -81,6 +99,10 @@ class SnapshotCache:
                     and now >= self._next_attempt):
                 self._refreshing = True
                 self._refresh_started = now
+                self._phase = "QUEUED"
+                self._phase_started = now
+                self._thread_id = None
+                self._checkpoint_cpu = None
                 self._increment("refresh_attempts")
                 try:
                     self._thread = threading.Thread(
@@ -101,9 +123,24 @@ class SnapshotCache:
         return prefix + b'"snapshot_cache":' + meta + b"}", (
             503 if metadata["state"] == "UNAVAILABLE" else 200), metadata
 
+    def checkpoint(self, phase):
+        """Record progress from the active compute thread; never starts work."""
+        if phase not in REFRESH_PHASES:
+            raise ValueError("unknown snapshot phase")
+        with self._lock:
+            if not self._refreshing or threading.current_thread() is not self._thread:
+                raise RuntimeError("snapshot checkpoint outside refresh thread")
+            self._phase = phase
+            self._phase_started = self._clock()
+            self._checkpoint_cpu = round(max(0.0, time.thread_time() - self._cpu_started), 6)
+
     def _refresh(self):
         started = self._clock()
         cpu_started = time.thread_time()
+        with self._lock:
+            self._thread_id = threading.get_native_id()
+            self._cpu_started = cpu_started
+        self.checkpoint("COMPUTE")
         captured_at = datetime.now(timezone.utc).isoformat()
         prefix = None
         error = None
@@ -111,6 +148,7 @@ class SnapshotCache:
             payload = self._compute()
             if not isinstance(payload, dict) or "snapshot_cache" in payload:
                 raise ValueError("snapshot must be an object without reserved cache metadata")
+            self.checkpoint("ENCODING")
             encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False,
                                  separators=(",", ":")).encode("utf-8")
             prefix = encoded[:-1] + (b"," if len(encoded) > 2 else b"")

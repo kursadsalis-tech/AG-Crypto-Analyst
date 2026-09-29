@@ -63,7 +63,7 @@ function showSnapshotCache(c){
   const state=c?.state||"UNAVAILABLE";
   const seconds=v=>Number.isFinite(v)?v.toFixed(2)+" s":"—";
   $("snapshotCache").className="status "+(current?"":"stale");
-  $("snapshotCache").textContent=`Panel kopyası: ${state} · Cache yaşı: ${seconds(c?.age_seconds)} · Snapshot yaşı: ${seconds(c?.snapshot_age_seconds)} · TTL: ${seconds(c?.ttl_seconds)} · Yenileme: ${c?.refresh_in_progress?"sürüyor":"bekliyor"} · Hesaplama: ${seconds(c?.compute_duration_seconds)} · Hit/miss: ${c?.hits??0}/${c?.misses??0} · Son başarı: ${c?.last_success_at||"—"}${c?.last_error?" · Yenileme başarısız":""}. Kaynak durumları hesaplama anına aittir.`;
+  $("snapshotCache").textContent=`Panel kopyası: ${state} · Cache yaşı: ${seconds(c?.age_seconds)} · Snapshot yaşı: ${seconds(c?.snapshot_age_seconds)} · TTL: ${seconds(c?.ttl_seconds)} · Yenileme: ${c?.refresh_in_progress?"sürüyor":"bekliyor"} · Aşama: ${c?.refresh_phase||"—"} (${seconds(c?.refresh_phase_elapsed_seconds)}) · Hesaplama: ${seconds(c?.compute_duration_seconds)} · Hit/miss: ${c?.hits??0}/${c?.misses??0} · Son başarı: ${c?.last_success_at||"—"}${c?.last_error?" · Yenileme başarısız":""}. Kaynak durumları hesaplama anına aittir.`;
   $("status").className="status "+(current?"":"stale");
   if(!current){
     $("status").textContent=state==="UNAVAILABLE"?"Panel görünümü hazır değil — AGCA bağımsız çalışır.":"STALE — son başarılı görünüm gösteriliyor; fiyatlar, pozisyonlar ve kaynak durumları güncel kabul edilmemeli.";

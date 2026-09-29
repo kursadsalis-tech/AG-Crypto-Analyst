@@ -13,8 +13,11 @@ from control_center.snapshot_cache import SnapshotCache
 INDEX_PATH = Path(__file__).with_name("static") / "index.html"
 
 
-def snapshot():
-    return operator_view(overview())
+def snapshot(*, checkpoint=None):
+    data = overview(checkpoint=checkpoint) if checkpoint is not None else overview()
+    if checkpoint is not None:
+        checkpoint("PRESENTATION")
+    return operator_view(data)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -93,7 +96,8 @@ class PanelHTTPServer(ThreadingHTTPServer):
     request_queue_size = 32
 
     def __init__(self, address, *, cache=None):
-        self.snapshot_cache = cache if cache is not None else SnapshotCache(snapshot)
+        self.snapshot_cache = cache if cache is not None else SnapshotCache(
+            lambda: snapshot(checkpoint=self.snapshot_cache.checkpoint))
         super().__init__(address, Handler)
 
     def server_close(self):

@@ -1,3 +1,55 @@
+# 2026-09-29 — PR #102 başarısız panel canary revizyonu
+
+Branch: `codex/panel-single-flight-cache`; parent/başarısız canary head:
+`7c77d4f90c08c6cb56c1a00fb6ebc7a0ad076f4e`.
+Canonical main: `b878c17553f8d53ae1e92aa858b50d1d0fc945e9`.
+Checkout: `/workspace/scratch/d2b5aca05bec/AG-Crypto-Analyst`.
+Checkpoint: `Diagnose panel refresh stalls and restore neutral scheduling`.
+PR: https://github.com/kursadsalis-tech/AG-Crypto-Analyst/pull/102 — **MERGE ETME**.
+
+Önceki çalışma bulundu: aynı branch ve exact 7c77 commit üzerinden devam edildi;
+yeni baştan cache uygulanmadı. Kullanıcı canary'nin yalnız panel üzerinde
+çalıştığını, generation=0 ile 69.512 s takıldığını bildirdi. 10 s CPU örneği:
+usage +606552 µs, throttle +4 / +361544 µs. %50 cap altında düşük CPU tüketimi
+tek başına hard quota açıklamasını desteklemiyor. Nice/weight kaynaklı scheduler
+beklemesi güçlü aday; production I/O/SQLite lock ve ancestor quota dışlanmadı.
+
+Yerel kontrollü deney (50k kapalı pozisyon, 12 snapshot/satır): doğrudan Nice0
+0.9260 s wall / 0.9259 s CPU; thread Nice0 1.0055 / 1.0053. Tek aynı-CPU rakibi
+varken thread Nice0 2.2432 / 1.1235; Nice10 11.0067 / 1.0736. Payload'lar aynı,
+DB değişmedi. CPUWeight cgroup A/B burada yapılmadı; bu production minimum veya
+kesin VM kök nedeni kanıtı değildir.
+
+Tamamlanan revizyon: panel Nice=0/CPUWeight=100; hard CPUQuota=50% ve MemoryMax=256M
+korundu. Cache compute hâlâ kilit dışında, tek uçuş; sabit aşama/elapsed/native
+TID/checkpoint CPU telemetry eklendi. Snapshot read_model checkpoint'leri SQL'i
+ve readonly sözleşmeyi değiştirmez. UI aşamayı gösterir. STALE/UNAVAILABLE,
+feedback diagnostic-only, PAPER_ONLY ve single authority değişmez. Worker kodu,
+unit'leri, priority değerleri ve eski dirty checkout/açık PR'lar değişmedi.
+
+`docs/PANEL_SNAPSHOT_CACHE.md` önceki 120 s kabul ve merge-sonrası talimatlarının
+yerine unmerged exact-head worktree, yalnız runtime panel drop-in'i, iki refresh,
+8 s readiness sınırı, 25 s probe dış sınırı ve her sonuçta otomatik rollback
+planını içerir. `scripts/panel_cache_acceptance.py` GET-only; phase, /proc TID
+schedstat/state/wchan ve leaf+ancestor cgroup örneklerini kaydeder. Worker
+identity ve quote/lag gate'leri vardır. Kısa smoke, uzun yükte p95/minimum kaynak
+ispatı değildir. Bir sonraki karar rapora bağlıdır; kör kota artışı yapma.
+
+Doğrulama: 16 cache/HTTP/UI testi geçti. Full offline suite **580/580**, bir kez,
+11.949 s (Python 3.12); iki probe testi buna dahil. CI integration listesine
+probe testleri eklendi. Canary Bash syntax kontrol edildi; komutlar canlıda
+çalıştırılmadı. CI ve final head SHA PR gövdesinde tutulur; yerel başarı CI veya
+canlı kabul olarak sunulmaz.
+
+Dış durum: kullanıcı production'ı eski cloud checkout / %25 / Nice0 / explicit
+CPUWeight yok unit'ine başarıyla döndürdü; 127.0.0.1:8787 READ_ONLY health başarılı.
+Bu çalışma VM deployment/restart yapmadı. PR açık kalmalı. Bekleyen iş yeni
+head'in kısa canlı kabulüdür; worker'ları yeniden başlatma. Repo hygiene ayrı
+TODO; bu görevde temizlik yok. Aşağıdaki önceki Nice10/weight20 önerisi ve uzun
+kabul planı yalnız tarihsel kayıttır, geçerli talimat değildir.
+
+---
+
 # 2026-09-28 — Panel single-flight cache continuation
 
 Current branch: `codex/panel-single-flight-cache`.

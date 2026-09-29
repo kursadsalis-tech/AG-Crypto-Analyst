@@ -48,7 +48,8 @@ jobs:
             tests.test_control_center_read_model \
             tests.test_control_center_presentation \
             tests.test_control_center_server \
-            tests.test_control_center_snapshot_cache
+            tests.test_control_center_snapshot_cache \
+            tests.test_panel_cache_acceptance
       - name: Check canonical branch ancestry
         run: |
           # main is the canonical product branch; lifecycle authority is enforced by

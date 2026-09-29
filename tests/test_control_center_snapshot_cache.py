@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from functools import partial
 from http.client import HTTPConnection
 from pathlib import Path
@@ -183,6 +184,53 @@ class SnapshotCacheTests(unittest.TestCase):
         self.assertEqual(self.cache.response()[1], 503)
         self.compute.assert_not_called()
 
+    def test_blocked_phase_is_observable_without_starting_another_compute(self):
+        entered, release = threading.Event(), threading.Event()
+        def compute():
+            self.cache.checkpoint("CLOSED_POSITIONS")
+            entered.set()
+            release.wait(2)
+            raise OSError("private database path must not escape")
+        self.compute.side_effect = compute
+        try:
+            self.cache.response()
+            self.assertTrue(entered.wait(1))
+            self.clock.now += 70
+            _, status, meta = self.cache.response()
+            self.assertEqual(status, 503)
+            self.assertEqual(meta["refresh_phase"], "CLOSED_POSITIONS")
+            self.assertEqual(meta["refresh_phase_elapsed_seconds"], 70)
+            self.assertEqual(meta["refresh_thread_id"], self.cache._thread.native_id)
+            self.assertGreaterEqual(meta["refresh_checkpoint_cpu_seconds"], 0)
+            self.assertEqual(self.compute.call_count, 1)
+            with self.assertRaises(ValueError):
+                self.cache.checkpoint("SQL or user input")
+            with self.assertRaises(RuntimeError):
+                self.cache.checkpoint("ACTIVITY")
+        finally:
+            release.set()
+            self.finish()
+        meta = self.cache.telemetry()
+        self.assertEqual(meta["refresh_phase"], "CLOSED_POSITIONS")
+        self.assertIsNone(meta["refresh_thread_id"])
+        self.assertIsNone(meta["refresh_phase_elapsed_seconds"])
+        self.assertEqual(meta["last_error"], "snapshot_refresh_failed")
+
+    def test_default_server_passes_checkpoints_to_snapshot(self):
+        def overview(*, checkpoint):
+            checkpoint("RUNTIME_VISIBILITY")
+            return {"read_only": True}
+        with patch.object(server, "overview", side_effect=overview), patch.object(
+            server, "operator_view", side_effect=lambda value: value
+        ), server.PanelHTTPServer(("127.0.0.1", 0)) as httpd:
+            cache = httpd.snapshot_cache
+            cache.response()
+            self.finish(cache)
+            body, status, meta = cache.response()
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["read_only"])
+            self.assertEqual(meta["refresh_phase"], "ENCODING")
+
     def test_thread_start_failure_is_retryable_without_false_success(self):
         with patch("control_center.snapshot_cache.threading.Thread.start",
                    side_effect=RuntimeError("no thread available")):
@@ -211,9 +259,17 @@ class SnapshotCacheTests(unittest.TestCase):
                         tp1_done,tp2_done,remaining_quantity);
                 """)
             before = db.read_bytes()
+            now = datetime(2026, 9, 28, tzinfo=timezone.utc)
+            direct = server.operator_view(server.overview(
+                db_path=db, market_state_path=Path(tmp)/"missing-market",
+                health_path=Path(tmp)/"missing-health", now=now))
+            phases = []
+            def progress(phase):
+                phases.append(phase)
+                cache.checkpoint(phase)
             compute = lambda: server.operator_view(server.overview(
                 db_path=db, market_state_path=Path(tmp)/"missing-market",
-                health_path=Path(tmp)/"missing-health"))
+                health_path=Path(tmp)/"missing-health", now=now, checkpoint=progress))
             cache = SnapshotCache(compute)
             self.addCleanup(cache.close)
             cache.response()
@@ -221,6 +277,12 @@ class SnapshotCacheTests(unittest.TestCase):
             body, status, _ = cache.response()
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["snapshot_cache"]["state"], "CURRENT")
+            background = json.loads(body)
+            del background["snapshot_cache"]
+            self.assertEqual(background, direct)
+            self.assertEqual(phases, ["INPUTS", "DB_CONNECT", "RUNTIME_VISIBILITY",
+                "SCHEMA", "PORTFOLIO", "OPEN_POSITIONS", "ACTIVITY", "LEARNING",
+                "SELECTION", "REPORTS", "CLOSED_POSITIONS", "PROJECTION"])
             self.assertEqual(db.read_bytes(), before)
             self.assertIn("PAPER", json.loads(body)["işlem_modu"])
             missing = Path(tmp)/"never-created.db"
