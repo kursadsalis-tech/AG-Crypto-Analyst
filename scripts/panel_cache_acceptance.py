@@ -78,13 +78,13 @@ def worker_sample():
 
 def assert_runtime_safety(worker):
     safety = worker["runtime_safety"]
-    expected = {
-        "health_execution_mode": "PAPER_ONLY",
-        "health_real_order_allowed": False,
-        "market_execution_mode": "PAPER_ONLY",
-        "market_real_order_allowed": False,
-    }
-    assert safety == expected, f"runtime safety mismatch: {safety!r}"
+    valid = (
+        safety.get("health_execution_mode") == "PAPER_ONLY"
+        and safety.get("market_execution_mode") == "PAPER_ONLY"
+        and safety.get("health_real_order_allowed") is False
+        and safety.get("market_real_order_allowed") is False
+    )
+    assert valid, f"runtime safety mismatch: {safety!r}"
 
 
 def main(output):

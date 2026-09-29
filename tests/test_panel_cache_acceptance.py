@@ -85,6 +85,7 @@ class PanelAcceptanceTests(unittest.TestCase):
         self.assertEqual(
             report["worker_baseline"]["runtime_safety"]["market_real_order_allowed"], 0
         )
+        self.assertEqual(report.get("samples"), [])
 
     def test_stuck_refresh_stops_at_eight_seconds_and_preserves_diagnostics(self):
         status, report, calls = self.run_probe(blocked=True)
