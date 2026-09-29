@@ -1,3 +1,26 @@
+# RUNTIME_VISIBILITY hot-path düzeltmesi — 2026-09-30
+
+Exact `4e9cb31520d076e25332b697a2ea37362d4bdd1f` canary'sinde refresh
+`RUNTIME_VISIBILITY` aşamasındayken native thread `D` state ve
+`wchan=folio_wait_bit_common` gösterdi. Aynı örnekte refresh thread yaklaşık
+17.3 ms CPU, yaklaşık 985.7 ms runqueue wait biriktirmişti; health isteği de
+0.735 s sürdü.
+
+Kod incelemesi `control_center.telemetry.runtime_visibility` içinde her panel
+snapshot'ında şu all-history sorgusunu buldu:
+`SELECT COUNT(*) FROM paper_position_events WHERE real_order_allowed != 0`.
+Production tablosunda büyük `evidence_json` payload'ları bulunduğu için bu
+kanıt sorgusu panel hot path'inde full table scan yapıyordu.
+
+Bu checkpoint all-history count'u panel hot path'inden kaldırır. Panel yalnız
+`ORDER BY event_id DESC LIMIT 50` ile bounded audit tail okur ve alanı açıkça
+`Son 50 eventte gerçek emir` olarak sunar. All-time doğrulama
+`Tam geçmiş gerçek emir taraması = HOT_PATH_DIŞI` diye işaretlenir; panel
+eksik bir taramayı tam geçmiş kanıtı gibi göstermeyecektir. Regression testi,
+eski bir non-zero event ilk 50 dışında olsa bile panelin all-time sıfır iddiası
+üretmediğini ve COUNT scan çalıştırmadığını doğrular.
+---
+
 # ACTIVITY I/O düzeltmesi: migration yok, primary-key seek — 2026-09-30
 
 İkinci canlı canary exact `7e0d1e4928610df6b39fff269baa7cd2e561380d`

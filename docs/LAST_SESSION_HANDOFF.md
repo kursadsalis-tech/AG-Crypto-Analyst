@@ -1,3 +1,22 @@
+# 2026-09-30 — PR #102 RUNTIME_VISIBILITY scan correction
+
+Exact `4e9cb31520d076e25332b697a2ea37362d4bdd1f` canary health-ready olduktan
+sonra acceptance başladı. Cold 503 0.513 s döndü. Refresh generation=0 iken:
+- SAMPLE 1: INPUTS, health 0.002 s, thread R
+- SAMPLE 2: RUNTIME_VISIBILITY, health 0.735 s, thread D,
+  `wchan=folio_wait_bit_common`, thread CPU ~17.3 ms, runqueue wait ~985.7 ms
+
+Root cause code-level olarak `runtime_visibility` içindeki all-history
+`COUNT(*) ... real_order_allowed != 0` sorgusuna indirildi. Bu sorgu her
+snapshot'ta büyük evidence payload'lı event tablosunu tarıyordu.
+
+Düzeltme all-history taramayı hot path'ten çıkarır ve son 50 event'i rowid/PK
+üzerinden bounded okur. UI bunu yalnız son-50 kanıtı olarak etiketler; all-time
+kanıt için `HOT_PATH_DIŞI` beyanı vardır. Production DB schema migration yok.
+Realtime/observer/technical worker'lara dokunma. Yeni CI geçmeden canary
+çalıştırma; PR #102 merge edilmemeli.
+---
+
 # 2026-09-30 — PR #102 ACTIVITY primary-key seek correction
 
 Exact `7cb2a92b09f8ad1b978dcfd3f0293d40e2a40b73` index/migration checkpoint'i

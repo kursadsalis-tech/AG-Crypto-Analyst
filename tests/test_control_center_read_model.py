@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from control_center.read_model import overview
+from control_center.telemetry import runtime_visibility
 
 
 class ControlCenterReadModelTests(unittest.TestCase):
@@ -288,6 +289,65 @@ class ControlCenterReadModelTests(unittest.TestCase):
                 stages["fırsat taraması"]["last_at"],
                 "2026-09-21T14:50:00+00:00",
             )
+
+    def test_runtime_visibility_uses_bounded_execution_audit_tail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
+            for name in (
+                "technical-kline-health.json",
+                "market-behavior-health.json",
+                "trade-learning-health.json",
+            ):
+                (root / name).write_text(json.dumps({"at": now.isoformat()}))
+
+            con = sqlite3.connect(":memory:")
+            con.executescript("""
+                CREATE TABLE paper_position_events(
+                    event_id INTEGER PRIMARY KEY,
+                    position_id INTEGER,
+                    observed_at TEXT,
+                    event_type TEXT,
+                    reason TEXT,
+                    stop_before REAL,
+                    stop_after REAL,
+                    real_order_allowed INTEGER);
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY,
+                    symbol TEXT,
+                    direction TEXT,
+                    entry_price REAL,
+                    selection_reason TEXT,
+                    status TEXT);
+            """)
+            con.executemany(
+                "INSERT INTO paper_position_events VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        i, 1, now.isoformat(), "HOLD", "TEST", None, None,
+                        1 if i == 1 else 0,
+                    )
+                    for i in range(1, 61)
+                ],
+            )
+            traced = []
+            con.set_trace_callback(traced.append)
+            with patch.dict("os.environ", {"AGCA_STATE_DIR": str(root)}):
+                result = runtime_visibility(
+                    con,
+                    {"execution_mode": "PAPER_ONLY", "real_order_allowed": False},
+                    {},
+                    now,
+                )
+            con.close()
+
+            authority = result["Yetki ve çalışan kaynak"]
+            self.assertEqual(authority["Son 50 eventte gerçek emir"], 0)
+            self.assertEqual(authority["Tam geçmiş gerçek emir taraması"], "HOT_PATH_DIŞI")
+            sql = "\n".join(traced).upper()
+            self.assertNotIn("COUNT(*) FROM PAPER_POSITION_EVENTS", sql)
+            self.assertIn("ORDER BY EVENT_ID DESC LIMIT 50", sql)
+
 
     def test_detects_silent_work_stall_with_live_worker_and_market(self):
         with tempfile.TemporaryDirectory() as tmp:
