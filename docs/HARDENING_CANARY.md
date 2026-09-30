@@ -1,12 +1,34 @@
-# Superseding hardening candidate — operator canary, not executed
+# Hardening candidate — operator re-canary
 
 Source repo: `kursadsalis-tech/AG-Crypto-Analyst`. Candidate branch:
 `codex/agca-comprehensive-hardening`, includes all of PR #103 at
 `b30f18e48e1b389620d56b51fefba4262d678da2`; main base
 `56f85d11a757732bfbf34307ebf39aa3b23fb814`. Do not merge #103.
-Use the exact 40-character reviewed head from the new PR/delivery, never a
+Use the exact 40-character reviewed head from PR #104/delivery, never a
 moving branch tip. This document specifies the procedure; this development task
 has performed no VM access, deployment, restart or operational canary.
+
+## Canary-discovered fix checkpoint
+
+The user reports the original `53246f15ea635c864a76ee578cc23933da3119dd` canary reached metadata/cache
+acceptance and stable PID 1834044 with NRestarts=0, but acceptance raced STARTING.
+WLD 1772 and ZEC 1781 were managed/HOLD; ENA 1788 lacked a manager row because
+its exact frozen stop was only 0.3498299513% from the actual SHORT fill. These
+are reported observations, not fresh VM checks in this follow-up.
+
+Source fixes are in `7db4d10145ccacd036f90e8ea75408b000d3c49a`; use the final reviewed PR #104/delivery
+head (including documentation) only after its full regression/PAPER CI passes.
+Do not merge PR #104 as part of this follow-up. No VM operations are authorized
+for this source-fix task. When a later re-canary is authorized, additionally verify:
+
+- Current-PID STARTING can await missing contracts/readiness within ready_timeout;
+  it cannot count toward the stability window or hide wrong source/contracts/errors.
+- If ENA 1788 is still OPEN, manager initialization preserves stop
+  `0.2651342857142857`, with the original plan/thesis untouched, and the route
+  leaves uninitialized management. If already closed, preserve that history;
+  do not recreate exposure or manufacture a replacement test position.
+- Existing WLD/ZEC management, PAPER_ONLY and real_order_allowed=false remain
+  intact; stop-side/finite/positive/5% maximum safeguards still apply.
 
 ## Preconditions and capture
 

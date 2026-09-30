@@ -1,3 +1,46 @@
+# 2026-09-30 — PR #104 canary bug fixes; re-canary pending
+
+Canonical source: `kursadsalis-tech/AG-Crypto-Analyst`.
+Branch/PR: `codex/agca-comprehensive-hardening`,
+[PR #104](https://github.com/kursadsalis-tech/AG-Crypto-Analyst/pull/104).
+Original canary head: `53246f15ea635c864a76ee578cc23933da3119dd`.
+Source-fix commit: `7db4d10145ccacd036f90e8ea75408b000d3c49a`. The final candidate head includes the
+following documentation commit; its exact SHA and final full-regression/PAPER
+CI results are pinned in PR #104 and the delivery, avoiding a self-referential
+commit hash in this file.
+Development worktree for this follow-up:
+`/Users/elifzilan/Documents/AG-Crypto-Analyst/.worktrees/agca-comprehensive-hardening`.
+
+## Completed and verified
+
+- STARTING absent/null version fields now remain pending until full health or
+  ready_timeout. Explicit wrong versions, source mismatch/dirty and startup
+  failures still fail fast; STARTING never starts the stability window.
+- Frozen technical stop initialization accepts finite positive actual-fill
+  distance up to 5%, including a safer distance below 0.5%. Exact frozen stop,
+  target geometry behavior, original plan/thesis and plan minimum are preserved.
+- Focused tests passed: runtime acceptance 21/21, position management 42/42,
+  existing hardening/failure-domain batch 14/14. Ten new test methods added.
+- Full regression and PAPER integration are required on the final candidate
+  head; use the exact-head result in PR #104/delivery for the final verdict.
+
+## External state and boundary
+
+User-reported old-head canary: metadata SPOT/USD-M and V2 cache preflights
+accepted; worker PID1834044 stable with NRestarts=0 and later CONNECTED/ENTRY_PATH
+READY. WLD1772/ZEC1781 managed HOLD; ENA1788 OPEN but uninitialized due to the
+post-fill minimum bug. Legacy rules adoption succeeded for all three.
+This follow-up did not access the VM or independently refresh those observations.
+No merge, deploy, restart, production DB mutation or re-canary was performed.
+PAPER_ONLY / real_order_allowed=false remain unchanged.
+
+Next product step after green exact-head CI is a separately authorized re-canary
+using HARDENING_CANARY.md, including ENA only if still naturally OPEN. Do not
+merge #104 or run VM operations under the source-fix authorization. Unrelated
+changes in the primary local checkout remain untouched.
+
+## Previous candidate record (historical; superseded by the follow-up above)
+
 # 2026-09-30 — Comprehensive PAPER hardening candidate
 
 Canonical source: `kursadsalis-tech/AG-Crypto-Analyst`.

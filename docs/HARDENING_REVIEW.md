@@ -1,9 +1,33 @@
-# Hardening review — source candidate, no runtime deployment
+# Hardening review — source candidate and canary follow-up
 
 Branch `codex/agca-comprehensive-hardening` supersedes PR #103 and retains its
 exact head as ancestor. Single PAPER authority, real_order_allowed=0, SQLite
 history, LONG/SHORT recovery, negative-edge veto, reason/direction telemetry,
 three-confirmation flow invalidation and immediate stop/liquidation remain.
+
+## PR #104 canary-discovered fixes
+
+The user-operated canary ran `53246f15ea635c864a76ee578cc23933da3119dd` and exposed two source bugs.
+Source-fix commit: `7db4d10145ccacd036f90e8ea75408b000d3c49a` on the same branch/PR. The final candidate
+head, including this documentation, and its full CI evidence are pinned in
+[PR #104](https://github.com/kursadsalis-tech/AG-Crypto-Analyst/pull/104) and delivery.
+
+- `runtime_acceptance.py`: absent/null versions during current-PID STARTING
+  remain pending inside ready_timeout; full health must precede the stability
+  window. Populated wrong contracts, SHA mismatch, dirty source and explicit
+  FAILED/ERROR/STARTUP_FAILED still fail fast. Endless STARTING times out.
+- `position_management.py`: frozen technical stops use finite `0 < actual_pct
+  <= 5` after fill, preserving exact stop/targets and side checks. The plan's
+  worst-entry 0.5% minimum remains unchanged; no plan/thesis/history is rewritten.
+- Focused tests: runtime acceptance 21/21, manager 42/42; existing metadata
+  failure-domain, realtime health, restart and producer-health tests 14/14.
+  Ten new methods cover both bugs and their safety boundaries, including the
+  ENA SHORT stop and a LONG better fill below 0.5%.
+
+This follow-up performs no VM operation, deployment, canary or merge. Source
+readiness for re-canary requires final-head full regression and PAPER integration;
+results are recorded with that exact head in the PR/delivery. Earlier validation
+below describes the original candidate, not acceptance of the new head.
 
 ## Root cause → correction → verification
 
