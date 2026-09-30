@@ -21,6 +21,8 @@ from pathlib import Path
 import certifi
 import websockets
 
+from runtime.process_identity import WorkerHealthState
+
 from data.binance_live_evidence import MARKET_RAW_BASE, fetch_market_tickers
 from data.binance_market_universe import build_universe
 from data.binance_technical_bars import normalize_closed_1m_kline
@@ -77,6 +79,7 @@ def _atomic_json_write(path: Path, payload: dict) -> None:
 
 
 _LAST_PERSISTENCE = {}
+_HEALTH_STATE = WorkerHealthState()
 
 
 def write_health(status: str, **details) -> None:
@@ -92,8 +95,9 @@ def write_health(status: str, **details) -> None:
     if status == "CONNECTED" and not radar_fresh:
         status = "DEGRADED"
         details.setdefault("error", "BROAD_RADAR_STALE_OR_MISSING")
-    _atomic_json_write(HEALTH_PATH, {
+    _atomic_json_write(HEALTH_PATH, _HEALTH_STATE.decorate({
         "health_contract_version": HEALTH_CONTRACT_VERSION,
+        "producer_version": "BINANCE_TECHNICAL_KLINE_PRODUCER_V1",
         "status": status,
         "at": datetime.now(timezone.utc).isoformat(),
         "execution_mode": "PAPER_ONLY",
@@ -104,7 +108,7 @@ def write_health(status: str, **details) -> None:
         "broad_radar_fresh": radar_fresh,
         **_LAST_PERSISTENCE,
         **details,
-    })
+    }))
 
 
 def subscription_params(symbols) -> list[str]:
@@ -425,11 +429,16 @@ async def run():
     for name in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(name, stop_event.set)
 
+    write_health("STARTING")
     # Create/upgrade the local-only bar cache once at process startup.
     # Closed-minute flushes must stay DDL-free while other AGCA writers share
     # the canonical WAL database.
-    await asyncio.to_thread(bootstrap_schema, DB_PATH)
-    await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
+    try:
+        await asyncio.to_thread(bootstrap_schema, DB_PATH)
+        await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
+    except Exception as exc:
+        write_health("STARTUP_FAILED", error=f"{type(exc).__name__}: {str(exc)[:400]}")
+        raise
 
     now_ms = int(time.time() * 1000)
     seed = recent_cached_symbols(DB_PATH, now_ms=now_ms)

@@ -3,6 +3,9 @@ Description=AGCA background behavior learning specialist
 Wants=network-online.target
 After=network-online.target
 
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
 [Service]
 Type=simple
 User=kursadsalis
@@ -18,7 +21,7 @@ Environment=AGCA_BEHAVIOR_LEARNING_RETRY_SECONDS=30
 Environment=AGCA_BEHAVIOR_MISSED_SETTLEMENT_LIMIT=2000
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.behavior_learning_worker
 Restart=always
-RestartSec=5
+RestartSec=30
 TimeoutStopSec=20
 Nice=15
 MemoryMax=256M

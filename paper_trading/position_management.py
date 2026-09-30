@@ -6,9 +6,13 @@ import json
 import os
 import math
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_FLOOR
 
 from paper_trading.execution_model import execute_paper, quote_evidence, validate_quote
 from paper_trading.execution_contract import ExecutionFill, ExecutionDecision, MarketSnapshot, OrderIntent
+from paper_trading.exchange_metadata import (
+    ExchangeMetadataError, freeze_execution_rules, rules_from_frozen, rules_for,
+)
 from paper_trading.futures_costs import (
     FuturesCostError, directional_funding_payment, liquidation_breached,
 )
@@ -18,7 +22,7 @@ from paper_trading.position_policy import (
 from analysis import technical_trade_plan
 
 
-VERSION = "PAPER_POSITION_MANAGER_V2_CONFIRMED_FLOW"
+VERSION = "PAPER_POSITION_MANAGER_V3_FROZEN_RULES_CONFIRMED_FLOW"
 FLOW_OPPOSITION_THRESHOLD = 0.20
 FLOW_CONFIRMATION_SECONDS = 5.0
 FLOW_EVIDENCE_MAX_AGE_MS = 2_000
@@ -166,6 +170,14 @@ def ensure_tables(con):
     event_columns = {row[1] for row in con.execute("PRAGMA table_info(paper_position_events)")}
     if "evidence_json" not in event_columns:
         con.execute("ALTER TABLE paper_position_events ADD COLUMN evidence_json TEXT")
+    con.executescript("""
+        CREATE TRIGGER IF NOT EXISTS immutable_paper_entry_execution_update
+        BEFORE UPDATE ON paper_position_events WHEN OLD.event_type IN ('ENTRY_FILLED','LEGACY_EXECUTION_RULES_ADOPTED')
+        BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_ENTRY_EXECUTION_EVIDENCE'); END;
+        CREATE TRIGGER IF NOT EXISTS immutable_paper_entry_execution_delete
+        BEFORE DELETE ON paper_position_events WHEN OLD.event_type IN ('ENTRY_FILLED','LEGACY_EXECUTION_RULES_ADOPTED')
+        BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_ENTRY_EXECUTION_EVIDENCE'); END;
+    """)
     columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_position_management)"
     )}
@@ -461,7 +473,8 @@ def _event(con, position_id, market_at, observed_at, event_type, reason,
 
 
 def record_execution(con, position_id, observed_at, purpose, symbol, side,
-                     market_type, decision, market=None):
+                     market_type, decision, market=None, *, rules=None,
+                     metadata=None, maintenance_margin_rate=None, frozen_rules=None):
     evidence = {
         "observed_at": iso(observed_at), "quote_timestamp_ms": None,
         "best_bid": None, "best_ask": None,
@@ -469,6 +482,7 @@ def record_execution(con, position_id, observed_at, purpose, symbol, side,
         "executable_reference_price": None, "final_simulated_fill_price": None,
         "quote_age_ms": None, "fee": 0, "slippage": 0, "quantity": 0,
         "notional": 0, "partial": False,
+        **(quote_evidence(market, side) if market is not None else {}),
         **decision.evidence,
     }
     evidence.update({"symbol": symbol, "side": side, "market_type": market_type,
@@ -476,12 +490,118 @@ def record_execution(con, position_id, observed_at, purpose, symbol, side,
     evidence.setdefault("status", decision.status)
     evidence.setdefault("rejection_reason", decision.reason if not decision.fill else None)
     fill = decision.fill
+    if fill is not None:
+        evidence.update({
+            "status": "PARTIAL" if fill.partial else "FILLED",
+            "rejection_reason": None, "final_simulated_fill_price": fill.price,
+            "quantity": fill.quantity, "notional": fill.quantity * fill.price,
+            "fee": fill.fee, "slippage": fill.slippage_cost,
+            "spread_cost": fill.spread_cost, "partial": bool(fill.partial),
+        })
+    if purpose == "ENTRY" and fill is not None and frozen_rules is not None:
+        evidence["execution_rules"] = frozen_rules
+    elif purpose == "ENTRY" and fill is not None and rules is not None:
+        evidence["execution_rules"] = freeze_execution_rules(
+            rules, symbol, market_type, metadata=metadata,
+            maintenance_margin_rate=maintenance_margin_rate,
+        )
     reference = evidence.get("executable_reference_price") or 0.0
     _event(con, position_id, observed_at, observed_at,
            purpose + ("_FILLED" if fill else "_REJECTED"), decision.reason,
            reference, fill.price if fill else None, fill.quantity if fill else 0,
            fill.fee if fill else 0, fill.spread_cost if fill else 0,
            fill.slippage_cost if fill else 0, None, None, evidence)
+
+
+def resolve_position_rules(con, position_id, symbol, market, current_rules=None):
+    """Prefer actual-fill rules; unavailable helpers cannot strand OPEN risk.
+
+    Legacy positions without frozen evidence may use current validated rules.
+    Corrupt frozen evidence is explicitly blocked, never silently replaced.
+    """
+    rows = con.execute("""SELECT evidence_json,evidence_sha256,event_type
+        FROM paper_position_events WHERE position_id=?
+        AND event_type IN ('ENTRY_FILLED','LEGACY_EXECUTION_RULES_ADOPTED')
+        ORDER BY CASE event_type WHEN 'ENTRY_FILLED' THEN 0 ELSE 1 END,event_id
+        LIMIT 2""", (position_id,)).fetchall()
+    for row in rows:
+        if not row[0]:
+            continue
+        try:
+            evidence = json.loads(row[0])
+            payload = evidence.get("execution_rules")
+            if payload is not None:
+                if hashlib.sha256(row[0].encode()).hexdigest() != row[1]:
+                    raise ExchangeMetadataError("FROZEN_RULES_EVIDENCE_HASH_MISMATCH")
+                source = ("FROZEN_ENTRY_RULES" if row[2] == "ENTRY_FILLED"
+                          else "FROZEN_LEGACY_ADOPTED_RULES")
+                return rules_from_frozen(payload, symbol, market), source, None
+        except (ValueError, TypeError, AttributeError, ExchangeMetadataError) as exc:
+            return None, "INVALID_FROZEN_ENTRY_RULES", (
+                str(exc) if isinstance(exc, ExchangeMetadataError)
+                else "FROZEN_RULES_EVIDENCE_INVALID"
+            )
+    return current_rules, "CURRENT_RULES_LEGACY_POSITION", (
+        None if current_rules is not None else "EXCHANGE_RULES_UNAVAILABLE"
+    )
+
+
+def _adopt_legacy_position_rules(con, position_id, symbol, market, now, rules,
+                                 metadata=None):
+    frozen = freeze_execution_rules(rules, symbol, market, metadata=metadata)
+    _event(con, position_id, now, now, "LEGACY_EXECUTION_RULES_ADOPTED",
+           "VALIDATED_RULES_AT_ADOPTION_NOT_HISTORICAL_FILL", 0, None,
+           0, 0, 0, 0, None, None, {
+               "execution_rules": frozen, "symbol": symbol, "market_type": market,
+               "adopted_at": iso(now), "historical_fill_rules_available": False,
+               "real_order_allowed": 0,
+           })
+    return rules, "FROZEN_LEGACY_ADOPTED_RULES", None
+
+
+def adopt_legacy_open_rules(con, metadata_by_market, now):
+    """Freeze current validated legacy rules once, without rewriting history.
+
+    Old actual fills did not save their rules. Adoption is labelled with its
+    true time/provenance; it must never masquerade as entry-time evidence.
+    """
+    adopted, blocked = [], []
+    rows = con.execute("""SELECT position_id,symbol,market_type
+        FROM paper_agent_positions WHERE status='OPEN' ORDER BY position_id""").fetchall()
+    for position_id, symbol, market in rows:
+        frozen, source, error = resolve_position_rules(con, position_id, symbol, market)
+        if frozen is not None:
+            continue
+        if source == "INVALID_FROZEN_ENTRY_RULES":
+            blocked.append((position_id, error))
+            continue
+        metadata = metadata_by_market.get(market)
+        try:
+            if metadata is None:
+                raise ExchangeMetadataError("LEGACY_POSITION_METADATA_UNAVAILABLE")
+            rules = rules_for(metadata, symbol)
+            _adopt_legacy_position_rules(con, position_id, symbol, market, now, rules, metadata)
+        except ExchangeMetadataError as exc:
+            blocked.append((position_id, str(exc)))
+            continue
+        adopted.append(position_id)
+    con.commit()
+    return {"adopted": adopted, "blocked": blocked}
+
+
+def _quantity_roundoff(quantity, step):
+    # Only arithmetic roundoff may be normalized. A fraction of an exchange
+    # step is real exposure, even when smaller than the former half-step rule.
+    return min(float(step) * 1e-6, 8 * max(math.ulp(float(quantity)), math.ulp(float(step))))
+
+
+def _quantized_exit_quantity(quantity, step):
+    value, quantum = Decimal(str(quantity)), Decimal(str(step))
+    units = (value / quantum).to_integral_value(rounding=ROUND_FLOOR)
+    upper = (units + 1) * quantum
+    if upper - value <= Decimal(str(_quantity_roundoff(quantity, step))):
+        units += 1
+    return float(units * quantum)
 
 
 def process_market_state(con, live, observed_at, rules, funding_loader=None):
@@ -513,6 +633,18 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
      signal_sources_json, market_type) = row
     if market_at <= parse(last_market_at):
         return {"status": "DUPLICATE_OR_OLD_EVENT"}
+    rules, rules_source, rules_error = resolve_position_rules(
+        con, position_id, live.symbol, market_type, rules,
+    )
+    if rules is not None and rules_source == "CURRENT_RULES_LEGACY_POSITION":
+        # A recovered route protects old OPEN positions before a later helper
+        # outage. The explicit legacy event never modifies original fill/thesis.
+        try:
+            rules, rules_source, rules_error = _adopt_legacy_position_rules(
+                con, position_id, live.symbol, market_type, observed_at, rules,
+            )
+        except ExchangeMetadataError as exc:
+            rules, rules_error = None, str(exc)
 
     try:
         signal_sources = set(json.loads(signal_sources_json or "[]"))
@@ -608,7 +740,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                    decision.reason, live.last_price, None, 0, 0, 0, 0,
                    stop_price, decision.stop_price, evidence)
         con.commit()
-        return {"status": decision.action, "reason": decision.reason}
+        result = {"status": decision.action, "reason": decision.reason}
+        if rules_error:
+            result["rules_error"] = rules_error
+        return result
 
     retry_seconds = max(0.1, float(os.getenv("AGCA_PAPER_EXIT_RETRY_SECONDS", "1")))
     if (last_exit_attempt_at is not None and
@@ -626,10 +761,11 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         liquidity_timestamp_ms=live.liquidity_timestamp_ms,
         market_type=market_type, source=live.quote_source,
     )
+    evidence["execution_rules_source"] = rules_source
     reference, quote_reason = validate_quote(market, exit_side)
     evidence.update(quote_evidence(market, exit_side))
     if quote_reason or rules is None:
-        reason = quote_reason or "EXCHANGE_RULES_UNAVAILABLE"
+        reason = quote_reason or rules_error or "EXCHANGE_RULES_UNAVAILABLE"
         record_execution(con, position_id, observed_at, "EXIT", live.symbol,
                          exit_side, market_type,
                          ExecutionDecision("REJECTED", reason, evidence=evidence))
@@ -658,9 +794,14 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                     (iso(market_at), position_id))
         con.commit()
         return {"status": "BLOCKED", "reason": quote_reason}
-    target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
-    if decision.action == "REDUCE" and target_qty * reference < rules.min_notional:
-        deferred_reason = f"{decision.reason}_BELOW_MIN_NOTIONAL"
+    requested_target_qty = min(float(remaining_qty), float(original_qty) * decision.close_fraction)
+    target_qty = _quantized_exit_quantity(requested_target_qty, rules.quantity_step)
+    evidence.update({"requested_exit_quantity": requested_target_qty,
+                     "step_aligned_exit_quantity": target_qty})
+    if decision.action == "REDUCE" and target_qty <= 0:
+        # A partial slice smaller than one step cannot execute, but its tighter
+        # protective stop still applies. A later full exit can close the step.
+        deferred_reason = f"{decision.reason}_BELOW_QUANTITY_STEP"
         con.execute("""UPDATE paper_position_management SET
             last_market_at=?,current_stop_price=?,best_price=?,opposing_events=?,
             tp1_done=?,tp2_done=?,last_thesis_at=? WHERE position_id=?""", (
@@ -675,6 +816,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                stop_price, decision.stop_price, evidence)
         con.commit()
         return {"status": "UPDATE_STOP", "reason": deferred_reason}
+    # Reduce-only exits remove existing exposure and are exempt from opening
+    # notional floors. The adapter still enforces exact steps, fresh executable
+    # quotes and observed liquidity; a small residual cannot be stranded by
+    # metadata refresh or an entry minimum.
     # A reduce-only BUY must budget for the adapter's adverse exit price;
     # otherwise one exact quantity step can round to zero. The accounted fill
     # is still capped to target_qty below, so this can never reverse exposure.
@@ -704,7 +849,11 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     # trigger trade timestamp (quote acquisition may have taken time).
     observed_at = parse(market.observed_at)
     market_at = observed_at
-    closed_qty = min(float(remaining_qty), target_qty, float(fill.quantity))
+    closed_qty = min(
+        _quantized_exit_quantity(float(remaining_qty), rules.quantity_step),
+        target_qty,
+        _quantized_exit_quantity(float(fill.quantity), rules.quantity_step),
+    )
     # Funding lookup stays outside the latency-critical path. A segment exists
     # only after a real fill; rejected/retried exits cannot pollute the ledger.
     funding_pending = market_type == "USD_M_PERPETUAL"
@@ -722,7 +871,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     exit_fee = fill.fee * fill_ratio
     spread_cost = fill.spread_cost * fill_ratio
     slippage_cost = fill.slippage_cost * fill_ratio
-    fraction = closed_qty / float(remaining_qty)
+    fraction = min(1.0, closed_qty / float(remaining_qty))
     cost_basis = float(remaining_basis) * fraction
     entry_fee_part = float(remaining_entry_fee) * fraction
     funding_pool = float(unallocated_funding) + new_funding
@@ -746,8 +895,10 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         0.0, cost_basis + gross - exit_fee - liquidation_fee - funding_part
     )
     net = recovery - cost_basis - entry_fee_part
-    new_qty = float(remaining_qty) - closed_qty
-    final = new_qty <= max(1e-12, rules.quantity_step / 2)
+    new_qty = float(Decimal(str(remaining_qty)) - Decimal(str(closed_qty)))
+    final = abs(new_qty) <= _quantity_roundoff(remaining_qty, rules.quantity_step)
+    if final:
+        new_qty = 0.0
     con.execute("""UPDATE paper_position_management SET
         last_market_at=?,last_funding_at=?,last_exit_attempt_at=?,current_stop_price=?,best_price=?,
         remaining_quantity=?,remaining_cost_basis=?,remaining_entry_fee=?,

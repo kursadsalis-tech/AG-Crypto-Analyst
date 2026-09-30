@@ -4,6 +4,9 @@ After=network-online.target
 Wants=network-online.target
 OnFailure=agca-market-behavior-observer-failure-alert.service
 
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
 [Service]
 Type=simple
 User=kursadsalis
@@ -16,7 +19,7 @@ Environment=AGCA_REMOTE_MIRROR_INLINE=0
 Environment=AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python scripts/collect_closed_behavior_minute.py --continuous --cycle-timeout-seconds 240 --refresh-live-universe --output /var/lib/agca/reports/live_behavior_closed_minute.json --database /var/lib/agca/crypto_data.db --retention-days 30 --health-output /var/lib/agca/market-behavior-health.json --lock-file /var/lib/agca/market-behavior.lock --samples 4 --cadence-seconds 10
 Restart=on-failure
-RestartSec=5
+RestartSec=30
 TimeoutStopSec=15
 Nice=10
 MemoryMax=384M

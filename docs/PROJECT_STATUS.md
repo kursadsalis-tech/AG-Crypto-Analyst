@@ -1,200 +1,38 @@
-# AG Crypto Analyst — Current Product Status
+# AGCA — Current status, 2026-09-30
 
-## Product objective
+Source: `kursadsalis-tech/AG-Crypto-Analyst`; runtime:
+`/home/kursadsalis/AG-Crypto-Analyst-cloud`. Main base
+`56f85d11a757732bfbf34307ebf39aa3b23fb814`; hardening builds on unmerged
+PR #103 head `b30f18e48e1b389620d56b51fefba4262d678da2`.
 
-AGCA is a live PAPER trading agent. Its job is not to maintain a fixed coin list,
-produce scheduled committee reports, or maximize backtest output. While the market
-is moving it must continuously:
+## Implemented candidate
 
-1. observe current market behaviour and executable liquidity,
-2. discover opportunities dynamically across the eligible market universe,
-3. interpret evidence and risk at the time it forms,
-4. decide and execute only in `PAPER_ONLY`,
-5. manage open positions from live market state,
-6. measure realised net economic outcome,
-7. learn from eligible forward evidence and improve behaviour without silently
-   granting itself real-order authority.
+- Independent SPOT/USD-M metadata availability and bounded direct-official refresh.
+- Immutable execution rules protect OPEN management after helper failures;
+  legacy adoption is explicit and never rewrites historical fill evidence.
+- V2 behavior cache validates schema and exact producer/core contracts.
+- At least 100 USDT actual new OPEN exposure, within unchanged hard risk/cash/
+  liquidity constraints; quarter recovery is a soft target, gross cap is 1.5%.
+- Global risk remains a 15-minute support cycle; local dynamic-symbol coverage
+  runs separately every 15 seconds with bounded work and genuine local evidence.
+- Helper degradation reduces risk caps; candidate-critical corruption remains vetoed.
+- Process SHA/version/last-result health and deployment preflight/stability acceptance.
 
-The economic objective is better risk-adjusted net trading performance. Research,
-historical data and challengers are supporting evidence only; they are never a
-parallel runtime authority.
+`runtime/paper_realtime_worker.py` is the single PAPER lifecycle authority.
+Technical plans affect ranking, sizing, entry, stop and take-profit through that
+one authority. The observer has 10 deep slots; planning has 12 per scan. Neither
+slot limit defines the eligible market universe.
 
-## Current specialist-worker architecture
+SQLite remains authoritative, Supabase an audit mirror. PAPER_ONLY and
+`real_order_allowed=0` remain mandatory. No real orders or history deletion.
 
-AGCA follows one binding orchestration rule: specialist workers run bounded jobs
-in parallel, a common decision path combines their evidence, and trade authority
-remains singular.
+## Acceptance state
 
-Current runtime roles:
-- `runtime/technical_kline_worker.py`: long-lived Binance USD-M closed 1m
-  technical-bar collector; data-only, no trade authority.
-- market-behavior observer: rotating deep evidence for order book, taker flow,
-  funding and liquidation context; no direct trade authority.
-- risk/support cycles: bounded policy/context support, fail-closed when required
-  evidence is missing.
-- `runtime/paper_realtime_worker.py`: canonical live PAPER lifecycle and the
-  single execution authority.
-- adaptive technical trade plan: pre-trade execution geometry/evidence
-  (entry zone, stop, targets, sizing inputs) consumed by the canonical decision
-  path; it is not a parallel execution loop.
+This source candidate is not deployed. Test and exact PR evidence live in
+`LAST_SESSION_HANDOFF.md` / the superseding PR. Operational canary follows
+`HARDENING_CANARY.md`; profitability is not claimed by passing software tests.
+No merge of #103, production mutation, VM restart or canary occurred here.
 
-The continuous technical-bar worker exists specifically because exact 1m
-continuity is a long-lived data obligation and does not belong inside the
-oneshot behavior observer.
-
-## Canonical runtime
-
-- Canonical branch: `main`
-- Execution authority: `PAPER_ONLY`
-- Real orders: disabled
-- Live lifecycle authority: `runtime/paper_realtime_worker.py`
-- Dynamic opportunity selection: `paper_trading/crypto_profit_agent.py`
-- Executable-price contract: bid/ask + freshness + visible liquidity, fail closed
-- Position management: `paper_trading/position_management.py`
-- Learning: `paper_trading/trade_learning.py`
-- Allocation: `paper_trading/strategy_allocator.py`
-- Experience memory: `paper_trading/experience_memory.py`
-- Risk tiering: `paper_trading/risk_tiering.py`
-- Runtime persistence/mirror: `database/runtime_store.py`
-
-No fixed coin cohort is product authority. The observed universe is formed
-dynamically from eligible market behaviour plus symbols required to manage open
-positions.
-
-## Retired product authorities
-
-The following paths/concepts are no longer runtime authorities and must not be
-reintroduced as competing control loops:
-
-- daily investment committee report generation,
-- Telegram notification authority,
-- scheduled hourly forecast job,
-- Forward Shadow scheduled runtime/validator,
-- Decision Shadow validator as a parallel decision authority,
-- fixed-cohort launchd schedulers,
-- legacy report-cycle orchestration.
-
-Historical forecast/backtest/research modules may remain only when they provide
-bounded evidence or regression value. They do not select trades, mutate live
-policy, or block the realtime agent merely because an old reporting contract is
-missing.
-
-## Validation baseline
-
-On 2026-09-22 the first mandatory correctness package (P0) was merged to
-canonical `main` through five isolated pull requests. The final P0 pull request
-passed GitHub Actions with:
-
-- focused PAPER integration: 107/107
-- broad offline regression: 384/384
-- canonical `main` head after P0: `42645f47a196224f0ce860dd55f61c30f2c90851`
-
-The P0 package corrects five execution/economic defects without granting new
-real-order authority:
-
-1. volatility stop evidence is carried from the asset-risk snapshot into the
-   position path and missing stop evidence fails closed;
-2. an evidence-mature matching pattern is suspended from new exposure when at
-   least 10 own closed PAPER trades across at least three independent days leave
-   calibrated net expectancy non-positive;
-3. adverse same-setup re-entry requires materially new evidence or at least a
-   one-risk-unit price reset instead of a new decision id alone;
-4. `PENDING_ENTRY` routes remain subscribed so a 1x LONG selected for SPOT can
-   receive its own executable Spot quote, and cloud attestation now records the
-   deployed git SHA/dirty state;
-5. selection, risk sizing, reservation and simulated fills share one
-   venue-specific taker-fee contract.
-
-P0 live acceptance was completed on 2026-09-22/23 after two operational defects
-found during deployment were also fixed: the installer now re-execs after its own
-git update, cloud attestation is bound to the running worker process source (not
-checkout state alone), and realtime housekeeping expires stale pending entries
-without waiting for a market callback.
-
-Canonical VM evidence at acceptance:
-- checkout/process SHA: `483a8b5d9c818cf60d5f717665d14e124b8be69b`
-- realtime worker: `CONNECTED`
-- execution mode: `PAPER_ONLY`
-- real-order authority: false
-- tracked checkout dirty state: false
-- stale IOSTUSDT SPOT pending entry was cancelled by runtime housekeeping
-- no failed systemd units were observed and canonical timers were active
-
-The local SQLite database remains authoritative. The Supabase mirror was still
-lagging by a few minutes at the acceptance checkpoint, so remote-mirror freshness
-must be treated as a separate operational concern rather than proof of runtime
-failure.
-
-## P1 shadow technical-context acceptance
-
-P1 research-gate implementation was live-accepted on 2026-09-23 without granting
-technical analysis any trade authority.
-
-Implemented contract:
-- existing closed 1h risk candles are reused; no additional exchange request is
-  made for technical context;
-- the existing advanced 1h feature pack is computed causally;
-- completed 4h structural context is aggregated from the same 1h candles;
-- only the latest context per symbol is stored in local SQLite;
-- the context is not in the Supabase runtime mirror;
-- a fresh context may be frozen into an already-selected PAPER thesis only as
-  observed evidence;
-- technical context is not a direction, ranking, confidence, sizing or stop
-  input in V1.
-
-Live resource/latency evidence from the canonical VM:
-- 23 technical contexts in one risk refresh;
-- total technical compute: 119.863 ms;
-- latest-cache aggregate at the checkpoint: 25 symbols / 124.826 ms;
-- maximum per-symbol compute in that cache: 22.353 ms;
-- the work runs in the 15-minute support risk cycle, not the realtime decision
-  hot path.
-
-Operational defects found while accepting P1 were also closed:
-- the legacy `agca-binance-risk-refresh.timer` was retired/masked because its
-  old code path could recreate a deployment-local `crypto_data.db`;
-- the canonical risk refresh now uses `AGCA_DATABASE_PATH` and a support-only
-  timer;
-- behavior decisions fail closed if risk policy is older than 30 minutes;
-- transient SQLite writer contention gets a 30-second busy timeout rather than
-  being mislabeled immediately as a BTC cross-source data failure.
-
-Final runtime evidence:
-- canonical worker/process SHA:
-  `22debf3daa5f6d242aa4e3aecc1e73a12f531fe0`;
-- worker health: `CONNECTED`;
-- stale subscribed symbols: none;
-- latest risk snapshot: `NORMAL`, `new_positions_allowed=1`,
-  `source_errors={}`;
-- canonical risk timer: active;
-- legacy Binance risk timer: masked;
-- deployment-local `crypto_data.db`: absent.
-
-P1 does not authorize technical signals. The next gate is natural forward PAPER
-evidence: compare frozen shadow technical context with realized net-after-cost
-trade outcomes before considering any bounded challenger or authority change.
-
-## Current priorities
-
-1. Live-accept the continuous technical-bar path through 24+ contiguous exact 1m bars and confirm adaptive technical plans stop failing solely for missing continuity.
-2. Verify the first natural post-P0 selections use the intended stop evidence,
-   venue, fee contract and re-entry/suspension gates.
-3. Collect natural PAPER trades with frozen/authoritative technical-plan evidence and
-   evaluate whether alignment/structure adds forward net-after-cost information.
-   Do not grant technical direction/confidence/sizing/stop authority from
-   historical fit or a small forward sample.
-4. Audit opportunity discovery so the lightweight broad market universe is not
-   collapsed into the small deep-analysis slot set.
-5. Extend learning from underperformance detection toward bounded challenger
-   generation/evaluation without creating a second live decision authority.
-6. Keep high-frequency raw evidence in memory/local compact storage by default;
-   do not expand Supabase/cloud cost without measured product benefit.
-
-## Explicit non-claims
-
-A green CI run does not prove that an external VM, Supabase mirror, exchange
-connection, or market-data source is currently healthy. Those states must be
-verified from current runtime evidence before being described as operational.
-
-AGCA remains PAPER-only until a separate, explicit real-trading authorization and
-safety review is made.
+Earlier P0/P1 checkpoints and observation-only technical-context statements are
+[historical records](history/PROJECT_STATUS_BEFORE_HARDENING_20260930.md), not
+current authority or next-step instructions.

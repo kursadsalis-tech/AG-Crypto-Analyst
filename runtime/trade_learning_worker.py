@@ -16,6 +16,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from runtime.process_identity import WorkerHealthState
+
 from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables
 from paper_trading import experience_memory, position_management, strategy_allocator, trade_learning
 
@@ -33,11 +35,18 @@ RETRY_SECONDS = max(
 HEALTH_CONTRACT_VERSION = "AGCA_TRADE_LEARNING_HEALTH_V2_CONTROLLED_CHALLENGER"
 
 
+_HEALTH_STATE = WorkerHealthState()
+
 def utcnow():
     return datetime.now(timezone.utc)
 
 
 def write_health(payload):
+    payload = _HEALTH_STATE.decorate({
+        **payload,
+        "core_version": trade_learning.LEARNING_VERSION,
+        "producer_version": "PAPER_TRADE_LEARNING_PRODUCER_V1",
+    })
     HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:

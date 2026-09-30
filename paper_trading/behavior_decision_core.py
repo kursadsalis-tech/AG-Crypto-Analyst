@@ -11,9 +11,12 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
 import statistics
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+
+from runtime.process_identity import PROCESS_SOURCE
 
 
 VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V4"
@@ -38,7 +41,8 @@ EXECUTION_PRIOR_STRENGTH = 10.0
 MAX_EVIDENCE_AGE_SECONDS = 180
 ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
-PATTERN_CACHE_CONTRACT_VERSION = "PAPER_BEHAVIOR_PATTERN_CACHE_V1"
+PATTERN_CACHE_CONTRACT_VERSION = "PAPER_BEHAVIOR_PATTERN_CACHE_V2"
+PATTERN_CACHE_PRODUCER_VERSION = "PAPER_BEHAVIOR_CACHE_PRODUCER_V2"
 MAX_PATTERN_CACHE_AGE_SECONDS = 15 * 60
 RECOVERY_WINDOW_HOURS = 72
 MAX_RECOVERY_SAMPLES = 120
@@ -138,6 +142,14 @@ def ensure_tables(con):
             review_status,event_id,instrument,evidence_minute_end_ms
         );
     """)
+    # Additive migration: old snapshots remain visible but cannot satisfy V2.
+    columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_behavior_pattern_cache)"
+    )}
+    for column in ("producer_version", "core_version", "producer_git_sha",
+                   "producer_source_json"):
+        if column not in columns:
+            con.execute(f"ALTER TABLE paper_behavior_pattern_cache ADD COLUMN {column} TEXT")
 
 
 def execution_feedback(con, now=None):
@@ -449,19 +461,99 @@ def _patterns_to_json(patterns):
         {"event_kind": key[0], "flow_pattern": key[1], "pattern": value}
         for key, value in sorted(patterns.items())
     ]
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":"), allow_nan=False)
+    _patterns_from_json(raw)  # A producer cannot publish incomplete V2 evidence.
+    return raw
+
+
+def _cache_timestamp(value):
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be a string")
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise ValueError("timestamp must include timezone")
+    return stamp.astimezone(timezone.utc)
+
+
+def _cache_number(value, *, minimum=None, maximum=None, integer=False):
+    if (type(value) not in ((int,) if integer else (int, float))
+            or not math.isfinite(value)
+            or (minimum is not None and value < minimum)
+            or (maximum is not None and value > maximum)):
+        raise ValueError("invalid numeric evidence")
+
+
+def _validate_cached_pattern(pattern, key, *, recovery=False):
+    if not isinstance(pattern, dict):
+        raise ValueError("pattern must be an object")
+    if (pattern.get("event_kind"), pattern.get("flow_pattern")) != key:
+        raise ValueError("pattern key mismatch")
+    if pattern.get("direction") not in {"LONG", "SHORT"}:
+        raise ValueError("invalid pattern direction")
+    for field in ("sample_count", "independent_days"):
+        _cache_number(pattern.get(field), minimum=1, integer=True)
+    for field in ("mean_net_edge_pct", "calibrated_net_edge_pct"):
+        _cache_number(pattern.get(field))
+    for field in ("cost_after_win_rate", "calibrated_win_rate"):
+        _cache_number(pattern.get(field), minimum=0, maximum=1)
+    _cache_number(pattern.get("execution_size_multiplier"), minimum=0.01, maximum=1.25)
+    for field in ("exploration_eligible", "promotion_ready", "ready",
+                  "observational_promotion_ready", "execution_suspended"):
+        if type(pattern.get(field)) is not bool:
+            raise ValueError("invalid pattern boolean")
+    if "execution_feedback" not in pattern:
+        raise ValueError("missing execution feedback")
+    feedback = pattern["execution_feedback"]
+    if feedback is not None:
+        if not isinstance(feedback, dict):
+            raise ValueError("execution feedback must be object or null")
+        if (feedback.get("event_kind"), feedback.get("pattern_key")) != key:
+            raise ValueError("feedback key mismatch")
+        if (feedback.get("direction") != pattern["direction"]
+                or feedback.get("real_orders") is not False
+                or feedback.get("basis") != "OWN_CLOSED_PAPER_TRADES_NET_AFTER_ALL_EXECUTION_COSTS"):
+            raise ValueError("invalid feedback authority")
+        for field in ("closed_count", "independent_days", "cutoff_position_id"):
+            _cache_number(feedback.get(field), minimum=1, integer=True)
+        _cache_number(feedback.get("mean_net_return_pct"))
+        _cache_number(feedback.get("cost_after_win_rate"), minimum=0, maximum=1)
+        if (_cache_timestamp(feedback.get("latest_exit_at"))
+                > _cache_timestamp(feedback.get("outcome_cutoff_at"))):
+            raise ValueError("future execution feedback")
+        _cache_number(pattern.get("execution_feedback_weight"), minimum=0, maximum=1)
+        _cache_number(pattern.get("execution_performance_signal"), minimum=-1, maximum=1)
+    if recovery:
+        if (pattern.get("learning_scope") != "POST_EXECUTION_RECOVERY"
+                or pattern.get("prior_direction") not in {"LONG", "SHORT"}
+                or pattern["promotion_ready"] or pattern["ready"]
+                or pattern["execution_size_multiplier"] > RECOVERY_SIZE_MULTIPLIER
+                or "recovery_hypothesis" in pattern):
+            raise ValueError("invalid recovery contract")
+        for field in ("observation_start_ms", "observation_end_ms"):
+            _cache_number(pattern.get(field), minimum=1, integer=True)
+        if pattern["observation_start_ms"] > pattern["observation_end_ms"]:
+            raise ValueError("invalid recovery observation window")
+    elif "recovery_hypothesis" in pattern:
+        _validate_cached_pattern(pattern["recovery_hypothesis"], key, recovery=True)
 
 
 def _patterns_from_json(raw):
-    rows = json.loads(raw or "[]")
+    rows = json.loads(raw)
+    if not isinstance(rows, list):
+        raise ValueError("cache payload must be a list")
     output = {}
     for item in rows:
         if not isinstance(item, dict):
-            continue
-        key = (str(item.get("event_kind")), str(item.get("flow_pattern")))
+            raise ValueError("cache row must be an object")
+        key = (item.get("event_kind"), item.get("flow_pattern"))
+        if any(not isinstance(value, str) or not value for value in key):
+            raise ValueError("invalid cache key")
+        if key in output:
+            raise ValueError("duplicate cache key")
         pattern = item.get("pattern")
-        if isinstance(pattern, dict):
-            output[key] = pattern
+        _validate_cached_pattern(pattern, key)
+        output[key] = pattern
     return output
 
 
@@ -484,11 +576,14 @@ def refresh_pattern_cache(con, now=None, missed_limit=2000):
     con.execute(
         """INSERT INTO paper_behavior_pattern_cache(
                generated_at,horizon_minutes,outcome_cutoff_at,pattern_count,
-               patterns_json,contract_version,real_order_allowed
-           ) VALUES(?,?,?,?,?,?,0)""",
+               patterns_json,contract_version,producer_version,core_version,
+               producer_git_sha,producer_source_json,real_order_allowed
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,0)""",
         (
             iso(now), HORIZON_MINUTES, cutoff, len(patterns),
             _patterns_to_json(patterns), PATTERN_CACHE_CONTRACT_VERSION,
+            PATTERN_CACHE_PRODUCER_VERSION, VERSION, PROCESS_SOURCE["git_sha"],
+            json.dumps(PROCESS_SOURCE, sort_keys=True),
         ),
     )
     con.execute(
@@ -507,50 +602,72 @@ def refresh_pattern_cache(con, now=None, missed_limit=2000):
         "pattern_count": len(patterns),
         "settled_missed": settled,
         "contract_version": PATTERN_CACHE_CONTRACT_VERSION,
+        "producer_version": PATTERN_CACHE_PRODUCER_VERSION,
+        "core_version": VERSION,
+        "producer_git_sha": PROCESS_SOURCE["git_sha"],
         "real_orders": False,
     }
 
 
 def load_cached_patterns(con, now=None, max_age_seconds=MAX_PATTERN_CACHE_AGE_SECONDS):
-    """Load the latest bounded learning snapshot without historical rescans."""
+    """Validate the complete latest snapshot; never silently use an older one."""
     now = now or datetime.now(timezone.utc)
-    row = con.execute(
-        """SELECT generated_at,outcome_cutoff_at,pattern_count,patterns_json,
-                  contract_version
-           FROM paper_behavior_pattern_cache
-           WHERE horizon_minutes=? AND generated_at<=?
-           ORDER BY cache_id DESC LIMIT 1""",
-        (HORIZON_MINUTES, iso(now)),
-    ).fetchone()
+    try:
+        row = con.execute(
+            """SELECT generated_at,outcome_cutoff_at,pattern_count,patterns_json,
+                      contract_version,producer_version,core_version,
+                      producer_git_sha,producer_source_json,real_order_allowed
+               FROM paper_behavior_pattern_cache WHERE horizon_minutes=?
+               ORDER BY cache_id DESC LIMIT 1""",
+            (HORIZON_MINUTES,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None, {"status": "CACHE_SCHEMA_UNAVAILABLE"}
     if not row:
         return None, {"status": "MISSING"}
+    detail = {
+        "generated_at": row[0], "contract_version": row[4],
+        "producer_version": row[5], "core_version": row[6],
+        "producer_git_sha": row[7],
+    }
+    if row[4] != PATTERN_CACHE_CONTRACT_VERSION:
+        return None, {**detail, "status": "CONTRACT_MISMATCH",
+                      "expected_contract_version": PATTERN_CACHE_CONTRACT_VERSION}
+    if row[5] != PATTERN_CACHE_PRODUCER_VERSION or row[6] != VERSION:
+        return None, {**detail, "status": "PRODUCER_VERSION_MISMATCH",
+                      "expected_producer_version": PATTERN_CACHE_PRODUCER_VERSION,
+                      "expected_core_version": VERSION}
     try:
-        generated = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
-        if generated.tzinfo is None:
-            generated = generated.replace(tzinfo=timezone.utc)
-        generated = generated.astimezone(timezone.utc)
+        generated = _cache_timestamp(row[0])
     except (TypeError, ValueError):
-        return None, {"status": "INVALID_TIMESTAMP"}
+        return None, {**detail, "status": "INVALID_TIMESTAMP"}
     age = (now - generated).total_seconds()
-    if age < -60.0 or age > float(max_age_seconds):
-        return None, {
-            "status": "STALE",
-            "generated_at": str(row[0]),
-            "age_seconds": age,
-            "maximum_age_seconds": float(max_age_seconds),
-        }
+    if age < 0.0 or age > float(max_age_seconds):
+        return None, {**detail, "status": "STALE", "age_seconds": age,
+                      "maximum_age_seconds": float(max_age_seconds)}
     try:
         patterns = _patterns_from_json(row[3])
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None, {"status": "INVALID_PAYLOAD", "generated_at": str(row[0])}
+        _cache_number(row[2], minimum=0, integer=True)
+        if row[2] != len(patterns) or row[9] != 0:
+            raise ValueError("cache count or authority mismatch")
+        if row[1] is not None and _cache_timestamp(row[1]) > generated:
+            raise ValueError("future outcome cutoff")
+        source = json.loads(row[8])
+        if not isinstance(source, dict) or source.get("git_sha") != row[7]:
+            raise ValueError("producer source mismatch")
+        if row[7] is not None and (not isinstance(row[7], str) or len(row[7]) != 40
+                or any(ch not in "0123456789abcdef" for ch in row[7])):
+            raise ValueError("invalid producer source SHA")
+        if source.get("git_dirty") is not None and type(source["git_dirty"]) is not bool:
+            raise ValueError("invalid producer dirty state")
+        _cache_number(source.get("pid"), minimum=1, integer=True)
+        _cache_timestamp(source.get("process_started_at"))
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return None, {**detail, "status": "INVALID_PAYLOAD"}
     return patterns, {
-        "status": "READY",
-        "generated_at": str(row[0]),
-        "outcome_cutoff_at": row[1],
-        "pattern_count": int(row[2]),
-        "age_seconds": age,
-        "maximum_age_seconds": float(max_age_seconds),
-        "contract_version": str(row[4]),
+        **detail, "status": "READY", "outcome_cutoff_at": row[1],
+        "pattern_count": int(row[2]), "age_seconds": age,
+        "maximum_age_seconds": float(max_age_seconds), "producer_source": source,
     }
 
 
@@ -619,6 +736,21 @@ def _latest_risk(con, now=None):
             "stop_reference_pct": stop_reference_pct,
             "policy_created_at": str(policy[0]),
         }
+    # A bounded background producer covers newly observed symbols from strict
+    # local closed-bar evidence without delaying WebSocket management or doing
+    # network work here. Full historical coverage (including a veto) wins.
+    from risk_manager.local_symbol_risk import load_local_risks, latest_policy_limits
+    for symbol, local_risk in load_local_risks(con, latest, now).items():
+        risks.setdefault(symbol, local_risk)
+    limits = latest_policy_limits(con, now)
+    if limits is not None:
+        frozen_limits = {key: limits[key] for key in (
+            "max_total_exposure_pct", "max_alt_exposure_pct",
+            "max_single_position_pct", "max_new_positions",
+        )}
+        for risk in risks.values():
+            risk["global_limits"] = frozen_limits
+            risk["policy_snapshot_id"] = int(latest)
     return risks
 
 

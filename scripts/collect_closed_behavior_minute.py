@@ -20,6 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from runtime.process_identity import WorkerHealthState
+
 from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
 from data.binance_liquidation_channel import probe
@@ -35,6 +37,7 @@ from database.causal_evidence_store import evidence_for_closed_minute
 
 
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
+_HEALTH_STATE = WorkerHealthState()
 
 
 def collection_alignment(now_ms, required_span_seconds):
@@ -78,6 +81,19 @@ def write_json_atomic(path, payload):
         temporary = Path(handle.name)
     os.chmod(temporary, 0o600)
     os.replace(temporary, output)
+
+
+def write_health(path, payload):
+    health = _HEALTH_STATE.decorate({
+        "health_contract_version": HEALTH_CONTRACT_VERSION,
+        "producer_version": "BINANCE_MARKET_BEHAVIOR_PRODUCER_V1",
+        "execution_mode": "PAPER_ONLY", "may_send_real_orders": False,
+        **payload,
+    })
+    health["completed_at"] = health["at"]
+    canonical = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
+    health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
+    write_json_atomic(path, health)
 
 
 async def _collect_minute_attempt(route, universe, contract_values, args, timings=None):
@@ -304,11 +320,7 @@ def run_cycle(args):
                 .get("forward_outcomes", {}).get("independent_event_count")
             ),
         }
-        health_canonical = json.dumps(
-            health, sort_keys=True, separators=(",", ":")
-        ).encode()
-        health["health_sha256"] = hashlib.sha256(health_canonical).hexdigest()
-        write_json_atomic(args.health_output, health)
+        write_health(args.health_output, health)
     print(json.dumps({
         "row_count": result["row_count"],
         "eligible_row_count": result["eligible_row_count"],
@@ -327,6 +339,12 @@ def run_bounded_cycle(args):
     signal.alarm(args.cycle_timeout_seconds)
     try:
         return run_cycle(args)
+    except (Exception, SystemExit) as exc:
+        if getattr(args, "health_output", None):
+            write_health(args.health_output, {
+                "status": "ERROR", "error": f"{type(exc).__name__}: {str(exc)[:400]}",
+            })
+        raise
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous)
@@ -364,6 +382,8 @@ def main():
                 fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise SystemExit("Another market behavior observer owns the lock") from exc
+        if args.health_output:
+            write_health(args.health_output, {"status": "STARTING"})
         while True:
             run_bounded_cycle(args)
             if not args.continuous:

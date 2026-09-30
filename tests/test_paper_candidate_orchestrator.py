@@ -133,7 +133,7 @@ class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
             ready, equity=10_000.0,
             exposure_cap=6_000.0, available_cash=10_000.0,
         )
-        self.assertAlmostEqual(sized.notional, 50.0)
+        self.assertAlmostEqual(sized.notional, 100.0)
         self.assertGreater(sized.expected_profit_usdt, 0.0)
         self.assertGreater(sized.expected_profit_per_risk, 0.0)
 

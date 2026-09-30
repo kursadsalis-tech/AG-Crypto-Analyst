@@ -27,7 +27,7 @@ from paper_trading.execution_model import (
 from paper_trading.execution_contract import ExecutionDecision, OrderIntent
 from paper_trading.position_management import record_execution
 from paper_trading.exchange_metadata import (
-    ExchangeMetadataError, load_cache, rules_for,
+    ExchangeMetadataError, load_cache, rules_for, freeze_execution_rules,
 )
 from paper_trading.governance import validate_agent_authority
 from paper_trading.futures_costs import (
@@ -50,7 +50,7 @@ INITIAL_CAPITAL = float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000"))
 MAX_TOTAL_EXPOSURE = 0.60
 MAX_OPEN_POSITIONS = 6
 MAX_NEW_PER_CYCLE = 3
-MIN_PAPER_NOTIONAL_USDT = 10.0
+MIN_PAPER_NOTIONAL_USDT = paper_candidate_orchestrator.MIN_PAPER_NOTIONAL_USDT
 MIN_DIRECTION_PROBABILITY = 0.52
 MIN_PROBABILITY_GAP = 0.05
 TRADE_HORIZONS = (4, 24)
@@ -475,6 +475,7 @@ def portfolio_snapshot(con, now=None, *, market_snapshots=None):
     reserved = 0.0
     unrealized = 0.0
     gross_exposure = 0.0
+    alt_gross_exposure = 0.0
     valuation_complete = True
     missing_marks = []
     for symbol, direction, entry, quantity, margin_basis, market_type in open_rows:
@@ -501,6 +502,8 @@ def portfolio_snapshot(con, now=None, *, market_snapshots=None):
         qty = float(quantity)
         unrealized += directional_pnl(direction, float(entry), mark, qty)
         gross_exposure += abs(qty * mark)
+        if symbol not in {"BTCUSDT", "ETHUSDT"}:
+            alt_gross_exposure += abs(qty * mark)
     initial, cash, realized, fees = map(float, portfolio[:4])
     equity = cash + reserved + unrealized
     return {
@@ -512,6 +515,7 @@ def portfolio_snapshot(con, now=None, *, market_snapshots=None):
         "total_fees": fees,
         "equity": equity,
         "gross_exposure": gross_exposure,
+        "alt_gross_exposure": alt_gross_exposure,
         "valuation_complete": valuation_complete,
         "missing_marks": tuple(missing_marks),
         "return_pct": (equity / initial - 1.0) * 100.0,
@@ -552,6 +556,93 @@ def cancel_expired_pending_entries(con, now):
     if cancelled:
         con.commit()
     return cancelled
+
+
+def _entry_risk_policy(con, now, *, required=False):
+    """Canonical policy is mandatory when its schema exists.
+
+    Legacy offline fixtures/research stores predate global-policy production and
+    have no canonical schema. The deployed worker preflight requires this schema;
+    missing/stale/invalid rows in it can never grant entry permission.
+    """
+    from risk_manager.local_symbol_risk import latest_policy_limits
+    columns = {row[1] for row in con.execute("PRAGMA table_info(risk_policy_snapshots)")}
+    if not {"max_total_exposure_pct", "max_alt_exposure_pct", "max_new_positions"}.issubset(columns):
+        missing_is_blocking = required or os.getenv("AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED") == "1"
+        return None, "ENTRY_RISK_POLICY_UNAVAILABLE" if missing_is_blocking else None
+    policy = latest_policy_limits(con, now)
+    if policy is None:
+        return None, "ENTRY_RISK_POLICY_UNAVAILABLE"
+    if not policy["new_positions_allowed"] or policy["max_new_positions"] <= 0:
+        return policy, "ENTRY_GLOBAL_RISK_BLOCKED"
+    return policy, None
+
+
+def _actual_entry_risk_rejection(
+    con, now, *, position_id, symbol, actual_notional, entry_price,
+    market_type, stop_price=None, market_snapshots=None,
+):
+    """Revalidate current policy immediately before a simulated OPEN mutation.
+
+    Realtime supplies its frozen exact-market quote map, so marked equity and
+    total/alt exposure use the same fresh quote contract as selection. The
+    explicit offline path uses remaining booked exposure without network work.
+    Other pending intents reserve capacity; this intent is replaced by its
+    actual proposed fill, never counted twice.
+    """
+    policy, rejection = _entry_risk_policy(con, now, required=market_snapshots is not None)
+    if rejection or policy is None:
+        return rejection
+    risks = behavior_decision_core._latest_risk(con, now)
+    risk = risks.get(symbol)
+    if not risk:
+        return "ENTRY_ASSET_RISK_UNAVAILABLE"
+    if not risk["allowed"]:
+        return "ENTRY_ASSET_RISK_VETO"
+    if market_snapshots is not None:
+        snapshot = portfolio_snapshot(con, now, market_snapshots=market_snapshots)
+        if not snapshot["valuation_complete"]:
+            return "ENTRY_PORTFOLIO_VALUATION_UNAVAILABLE"
+        equity = float(snapshot["equity"])
+        open_gross = float(snapshot["gross_exposure"])
+        open_alt = float(snapshot["alt_gross_exposure"])
+    else:
+        open_rows = con.execute("""SELECT p.symbol,
+            COALESCE(m.remaining_quantity,p.quantity)/NULLIF(p.quantity,0)*p.notional,
+            COALESCE(m.remaining_cost_basis,p.margin_allocated)
+            FROM paper_agent_positions p LEFT JOIN paper_position_management m USING(position_id)
+            WHERE p.status='OPEN'""").fetchall()
+        cash = float(con.execute("SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1").fetchone()[0])
+        equity = cash + sum(float(row[2] or 0.0) for row in open_rows)
+        open_gross = sum(float(row[1] or 0.0) for row in open_rows)
+        open_alt = sum(float(row[1] or 0.0) for row in open_rows if row[0] not in {"BTCUSDT", "ETHUSDT"})
+    if not math.isfinite(equity) or equity <= 0:
+        return "ENTRY_PORTFOLIO_EQUITY_INVALID"
+    pending = con.execute("""SELECT symbol,notional FROM paper_agent_positions
+        WHERE status='PENDING_ENTRY' AND position_id<>?""", (position_id,)).fetchall()
+    pending_total = sum(float(row[1] or 0.0) for row in pending)
+    pending_alt = sum(float(row[1] or 0.0) for row in pending if row[0] not in {"BTCUSDT", "ETHUSDT"})
+    total_limit = equity * min(MAX_TOTAL_EXPOSURE, policy["max_total_exposure_pct"] / 100.0)
+    if open_gross + pending_total + actual_notional > total_limit + 1e-8:
+        return "ENTRY_GLOBAL_TOTAL_EXPOSURE_LIMIT"
+    if symbol not in {"BTCUSDT", "ETHUSDT"} and (
+        open_alt + pending_alt + actual_notional > equity * policy["max_alt_exposure_pct"] / 100.0 + 1e-8
+    ):
+        return "ENTRY_GLOBAL_ALT_EXPOSURE_LIMIT"
+    single_cap = min(float(risk["cap_pct"]), policy["max_single_position_pct"])
+    if actual_notional > equity * single_cap / 100.0 + 1e-8:
+        return "ENTRY_CURRENT_ASSET_EXPOSURE_LIMIT"
+    try:
+        stop_pct = (100.0 * abs(float(entry_price)-float(stop_price)) / float(entry_price)
+                    if stop_price is not None else float(risk["stop_reference_pct"]))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return "ENTRY_STOP_RISK_INVALID"
+    if not math.isfinite(stop_pct) or not 0.5 - 1e-8 <= stop_pct <= 5.0 + 1e-8:
+        return "ENTRY_STOP_RISK_INVALID"
+    roundtrip_risk = actual_notional * (stop_pct / 100.0 + 2.0 * taker_fee_rate(market_type))
+    if roundtrip_risk > equity * policy["risk_per_trade_pct"] / 100.0 + 1e-8:
+        return "ENTRY_CURRENT_STOP_RISK_LIMIT"
+    return None
 
 
 def fill_pending(con, now, exchange_metadata=None):
@@ -649,6 +740,28 @@ def fill_pending(con, now, exchange_metadata=None):
             continue
         entry_price, fee = fill.price, fill.fee
         actual_notional = fill.quantity * fill.price
+        if not math.isfinite(actual_notional) or actual_notional < MIN_PAPER_NOTIONAL_USDT:
+            rejection = ExecutionDecision("REJECTED", "ACTUAL_OPEN_NOTIONAL_BELOW_100_USDT",
+                evidence={"actual_notional": actual_notional, "requested_notional": float(notional),
+                          "minimum_actual_open_notional": MIN_PAPER_NOTIONAL_USDT,
+                          "partial_fill": bool(fill.partial)})
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
+                             market_type, rejection)
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (rejection.reason, position_id))
+            cancelled += 1
+            continue
+        risk_rejection = _actual_entry_risk_rejection(
+            con, entry_time, position_id=position_id, symbol=symbol,
+            actual_notional=actual_notional, entry_price=entry_price, market_type=market_type,
+        )
+        if risk_rejection:
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side, market_type,
+                             ExecutionDecision("REJECTED", risk_rejection))
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (risk_rejection, position_id))
+            cancelled += 1
+            continue
         margin = actual_notional / float(leverage)
         cash = float(con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
@@ -665,6 +778,16 @@ def fill_pending(con, now, exchange_metadata=None):
             continue
         quantity = fill.quantity
         maintenance_rate = float(os.getenv("AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"))
+        try:
+            frozen_rules = freeze_execution_rules(rules, symbol, market_type, metadata,
+                                                  maintenance_margin_rate=maintenance_rate)
+        except ExchangeMetadataError as exc:
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (str(exc), position_id))
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side, market_type,
+                             ExecutionDecision("REJECTED", str(exc)))
+            cancelled += 1
+            continue
         liquidation_threshold = liquidation_price(
             entry_price=entry_price, direction=direction, leverage=float(leverage),
             maintenance_margin_rate=maintenance_rate,
@@ -684,7 +807,7 @@ def fill_pending(con, now, exchange_metadata=None):
             WHERE portfolio_id=1
         """, (margin + fee, fee))
         record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
-                         market_type, execution)
+                         market_type, execution, frozen_rules=frozen_rules)
         filled += 1
     con.commit()
     return filled, cancelled
@@ -967,16 +1090,31 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                               "core_status": behavior_result["status"],
                               "rejection_reasons": dict(reasons)})
         return 0
+    current_policy, policy_rejection = _entry_risk_policy(con, now, required=market_snapshots is not None)
+    if policy_rejection:
+        reject(policy_rejection)
+        record_run(0, 0.0)
+        con.commit()
+        diagnostics.update({"selected_count": 0, "candidates": [],
+                            "core_status": behavior_result["status"],
+                            "rejection_reasons": dict(reasons)})
+        return 0
     portfolio_full = capacity <= 0
     if portfolio_full:
         reject("PORTFOLIO_POSITION_CAPACITY_FULL")
     max_new = min(MAX_NEW_PER_CYCLE, capacity)
     max_exposure = snapshot["equity"] * MAX_TOTAL_EXPOSURE
+    max_alt_exposure = max_exposure
+    if current_policy is not None:
+        max_new = min(max_new, current_policy["max_new_positions"])
+        max_exposure = min(max_exposure, snapshot["equity"] * current_policy["max_total_exposure_pct"] / 100.0)
+        max_alt_exposure = snapshot["equity"] * current_policy["max_alt_exposure_pct"] / 100.0
+        diagnostics["global_risk_limits"] = current_policy
     # Fresh marked exposure comes from the same valuation used for equity.
     # Entry price is historical accounting data and must not size new risk.
     open_gross_exposure = float(snapshot["gross_exposure"])
     pending_rows = con.execute("""
-        SELECT notional,leverage,market_type
+        SELECT notional,leverage,market_type,symbol
         FROM paper_agent_positions
         WHERE status='PENDING_ENTRY'
     """).fetchall()
@@ -995,6 +1133,9 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
     available_exposure = max(
         0.0, max_exposure - open_gross_exposure - pending_gross_exposure
     )
+    pending_alt_exposure = sum(float(row[0] or 0.0) for row in pending_rows
+                               if row[3] not in {"BTCUSDT", "ETHUSDT"})
+    available_alt_exposure = max(0.0, max_alt_exposure - float(snapshot.get("alt_gross_exposure", 0.0)) - pending_alt_exposure)
     selected = 0
     planned_entry = immediate_paper_entry_time(now)
 
@@ -1159,21 +1300,40 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                 "status": "REDDEDİLDİ", "reason": reason_code,
             }
             continue
+        if current_policy is not None:
+            row["risk_cap_pct"] = min(float(row["risk_cap_pct"]), current_policy["max_single_position_pct"])
+            row["risk_per_trade_pct"] = min(float(row["risk_per_trade_pct"]), current_policy["risk_per_trade_pct"])
+        candidate_exposure = min(available_exposure, available_alt_exposure) if row["symbol"] not in {"BTCUSDT", "ETHUSDT"} else available_exposure
         fee_rate = orchestrated.fee_rate
+        minimum_target = MIN_PAPER_NOTIONAL_USDT + 0.10
+        if exchange_metadata is not None:
+            market_metadata = exchange_metadata.get(tier.market_type)
+            try:
+                candidate_rules = rules_for(market_metadata, row["symbol"]) if market_metadata else None
+            except ExchangeMetadataError:
+                candidate_rules = None
+            if candidate_rules is not None:
+                # One lot plus small execution headroom avoids selecting exactly
+                # 100 then rounding the executable quantity below the floor.
+                minimum_target = max(MIN_PAPER_NOTIONAL_USDT, float(candidate_rules.min_notional))
+                minimum_target += max(0.10, float(row["current_price"]) * candidate_rules.quantity_step)
         strategy_id = behavior_decision_core.STRATEGY_ID
         strategy_weight = 1.0
         due_time = planned_entry + timedelta(hours=row["horizon"])
         sizing = paper_candidate_orchestrator.size_candidate(
             orchestrated,
             equity=snapshot["equity"],
-            exposure_cap=available_exposure,
+            exposure_cap=candidate_exposure,
             available_cash=available_cash,
+            minimum_target=minimum_target,
         )
         notional = sizing.notional
         if notional < MIN_PAPER_NOTIONAL_USDT:
             reason_code = "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"
             if available_exposure < MIN_PAPER_NOTIONAL_USDT:
                 reason_code = "PORTFOLIO_EXPOSURE_LIMIT"
+            elif row["symbol"] not in {"BTCUSDT", "ETHUSDT"} and available_alt_exposure < MIN_PAPER_NOTIONAL_USDT:
+                reason_code = "GLOBAL_ALT_EXPOSURE_LIMIT"
             elif available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage) < MIN_PAPER_NOTIONAL_USDT:
                 reason_code = "PORTFOLIO_CASH_LIMIT"
             reject(reason_code)
@@ -1195,7 +1355,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
                 requested_notional=notional,
                 side="BUY" if row["direction"] == "LONG" else "SELL",
                 symbol=row["symbol"], quantity_step=rules.quantity_step,
-                price_tick=rules.price_tick, min_notional=rules.min_notional,
+                price_tick=rules.price_tick, min_notional=max(MIN_PAPER_NOTIONAL_USDT, rules.min_notional),
                 market_type=tier.market_type,
             )
             if executable.status == "REJECTED":
@@ -1265,6 +1425,8 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
             direction_counts["selected"][row["direction"]] += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
+            if row["symbol"] not in {"BTCUSDT", "ETHUSDT"}:
+                available_alt_exposure -= notional
             reservation = notional / tier.leverage + notional * fee_rate
             available_cash = max(0.0, available_cash - reservation)
             snapshot["cash"] -= reservation
@@ -1785,7 +1947,7 @@ if __name__ == "__main__":
     main()
 
 
-def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
+def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, market_snapshots=None):
     """Fill pending PAPER entries only from the authoritative live state callback."""
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
@@ -1812,7 +1974,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
             rules = rules_for(metadata, symbol) if metadata else None
         except ExchangeMetadataError:
             rules = None
-        if exchange_metadata is not None and rules is None:
+        if rules is None:
             con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',
                 cancel_reason=? WHERE position_id=? AND status='PENDING_ENTRY'""",
                 (f"LIVE_{market_type}_SYMBOL_RULES_UNAVAILABLE", position_id))
@@ -1826,6 +1988,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         if executable_price is None or float(executable_price) <= 0:
             continue
 
+        levels = None
         if decision_source == "MARKET_BEHAVIOR_CORE":
             thesis_row = con.execute("""
                 SELECT thesis_json FROM paper_agent_decision_theses
@@ -1998,6 +2161,30 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
             continue
         entry_price, fee = fill.price, fill.fee
         actual_notional = fill.quantity * fill.price
+        if not math.isfinite(actual_notional) or actual_notional < MIN_PAPER_NOTIONAL_USDT:
+            rejection = ExecutionDecision("REJECTED", "ACTUAL_OPEN_NOTIONAL_BELOW_100_USDT",
+                evidence={"actual_notional": actual_notional, "requested_notional": float(notional),
+                          "minimum_actual_open_notional": MIN_PAPER_NOTIONAL_USDT,
+                          "partial_fill": bool(fill.partial)})
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side,
+                             market_type, rejection)
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (rejection.reason, position_id))
+            cancelled += 1
+            continue
+        risk_rejection = _actual_entry_risk_rejection(
+            con, entry_time, position_id=position_id, symbol=symbol,
+            actual_notional=actual_notional, entry_price=entry_price, market_type=market_type,
+            stop_price=levels["invalidation_price"] if levels else None,
+            market_snapshots=market_snapshots,
+        )
+        if risk_rejection:
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side, market_type,
+                             ExecutionDecision("REJECTED", risk_rejection))
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (risk_rejection, position_id))
+            cancelled += 1
+            continue
         margin = actual_notional / float(leverage)
         cash = float(con.execute(
             "SELECT cash FROM paper_agent_portfolio WHERE portfolio_id=1"
@@ -2011,6 +2198,16 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         maintenance_rate = float(os.getenv(
             "AGCA_PAPER_MAINTENANCE_MARGIN_RATE", "0.005"
         ))
+        try:
+            frozen_rules = freeze_execution_rules(rules, symbol, market_type, metadata,
+                                                  maintenance_margin_rate=maintenance_rate)
+        except ExchangeMetadataError as exc:
+            con.execute("""UPDATE paper_agent_positions SET status='CANCELLED',cancel_reason=?
+                WHERE position_id=? AND status='PENDING_ENTRY'""", (str(exc), position_id))
+            record_execution(con, position_id, entry_time, "ENTRY", symbol, side, market_type,
+                             ExecutionDecision("REJECTED", str(exc)))
+            cancelled += 1
+            continue
         liquidation_threshold = liquidation_price(
             entry_price=entry_price, direction=direction, leverage=float(leverage),
             maintenance_margin_rate=maintenance_rate,
@@ -2027,6 +2224,9 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         con.execute("""UPDATE paper_agent_portfolio
             SET cash=cash-?,total_fees=total_fees+? WHERE portfolio_id=1""",
             (margin + fee, fee))
+        record_execution(con, position_id, entry_time, "ENTRY", symbol, side, market_type,
+                         ExecutionDecision("FILLED", "LIVE_EXECUTABLE_FILL", fill=fill),
+                         frozen_rules=frozen_rules)
         filled += 1
     con.commit()
     return filled, cancelled

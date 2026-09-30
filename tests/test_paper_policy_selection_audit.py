@@ -136,8 +136,11 @@ class PaperPolicySelectionAuditTests(unittest.TestCase):
         self.assertEqual(selected, 1)
         notional, leverage = self.con.execute(
             "SELECT notional,leverage FROM paper_agent_positions").fetchone()
-        self.assertLessEqual(notional, 12.5)  # quarter of normal 0.5% margin
-        self.assertLessEqual(notional, self.snapshot["equity"] * .0025)
+        # Quarter recovery is a soft target; the user floor is still bounded
+        # by the explicit 1.5% recovery gross cap and ordinary hard limits.
+        self.assertGreaterEqual(notional, 100.0)
+        self.assertAlmostEqual(notional, 100.1)
+        self.assertLessEqual(notional, self.snapshot["equity"] * .015)
         self.assertEqual(leverage, 1.0)
 
     def test_portfolio_exposure_limit_has_its_own_reason(self):

@@ -8,7 +8,8 @@ from pathlib import Path
 
 from paper_trading.exchange_metadata import (
     ExchangeMetadataError, OFFICIAL_ENDPOINTS, load_cache, parse_exchange_info,
-    refresh_cache_via_postgres, rules_for,
+    refresh_cache_via_postgres, rules_for, load_market_caches, refresh_cache_bounded,
+    freeze_execution_rules, rules_from_frozen, CachedExchangeMetadata,
 )
 
 
@@ -112,6 +113,104 @@ class ExchangeMetadataTests(unittest.TestCase):
                     Path(directory) / "cache.json", "SPOT", "postgres://example",
                 )
             self.assertEqual(rules_for(cache, "BTCUSDT").min_notional, 100)
+
+
+class IsolatedMetadataTests(unittest.TestCase):
+    def write_cache(self, path, market, age_seconds=0):
+        data = payload()
+        path.write_text(json.dumps({
+            "schema_version": 1, "market": market,
+            "source_url": OFFICIAL_ENDPOINTS[market],
+            "fetched_at": (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat(),
+            "payload_sha256": hashlib.sha256(
+                json.dumps(data, separators=(",", ":")).encode()
+            ).hexdigest(), "payload": data,
+        }))
+
+    def test_stale_market_never_removes_other_route(self):
+        for stale, healthy in (("SPOT", "USD_M_PERPETUAL"), ("USD_M_PERPETUAL", "SPOT")):
+            with self.subTest(stale=stale), tempfile.TemporaryDirectory() as directory:
+                paths = {market: Path(directory) / (market + ".json") for market in OFFICIAL_ENDPOINTS}
+                for market, path in paths.items():
+                    self.write_cache(path, market, age_seconds=7201 if market == stale else 0)
+                available, health = load_market_caches(paths)
+                self.assertEqual(set(available), {healthy})
+                self.assertEqual(health[healthy]["status"], "READY")
+                self.assertEqual(health[stale]["reason"], "STALE_METADATA_CACHE")
+                self.assertEqual(rules_for(available[healthy], "BTCUSDT").min_notional, 100)
+
+    def test_corrupt_or_missing_market_is_bounded_route_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "corrupt.json"
+            path.write_text("[]")
+            available, health = load_market_caches({"SPOT": path, "USD_M_PERPETUAL": path.parent / "missing"})
+            self.assertEqual(available, {})
+            self.assertEqual(health["SPOT"]["reason"], "INVALID_METADATA_SCHEMA")
+            self.assertEqual(health["USD_M_PERPETUAL"]["reason"], "METADATA_CACHE_UNAVAILABLE")
+
+    def test_in_memory_rules_expire_without_process_restart(self):
+        cache = CachedExchangeMetadata(
+            "SPOT", OFFICIAL_ENDPOINTS["SPOT"],
+            (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(),
+            "a" * 64, parse_exchange_info(payload(), "SPOT"), max_age_seconds=1,
+        )
+        with self.assertRaisesRegex(ExchangeMetadataError, "STALE_METADATA_CACHE"):
+            rules_for(cache, "BTCUSDT")
+
+    def test_direct_primary_does_not_depend_on_database_transport(self):
+        with patch("paper_trading.exchange_metadata.refresh_cache", return_value="VALID") as direct, patch(
+            "paper_trading.exchange_metadata.refresh_cache_via_postgres"
+        ) as fallback:
+            self.assertEqual(refresh_cache_bounded("cache", "SPOT"), "VALID")
+            direct.assert_called_once_with("cache", "SPOT", timeout_seconds=10)
+            fallback.assert_not_called()
+
+    def test_direct_failure_uses_one_bounded_optional_database_fallback(self):
+        with patch("paper_trading.exchange_metadata.refresh_cache", side_effect=ExchangeMetadataError("DOWN")), patch(
+            "paper_trading.exchange_metadata.refresh_cache_via_postgres", return_value="VALID"
+        ) as fallback:
+            self.assertEqual(refresh_cache_bounded("cache", "SPOT", "private-test-dsn"), "VALID")
+            fallback.assert_called_once_with("cache", "SPOT", "private-test-dsn", timeout_seconds=10)
+
+    def test_all_transports_fail_without_overwriting_previous_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            path.write_text("existing-cache")
+            with patch("paper_trading.exchange_metadata.refresh_cache", side_effect=ExchangeMetadataError("DOWN")), patch(
+                "paper_trading.exchange_metadata.refresh_cache_via_postgres", side_effect=ExchangeMetadataError("DOWN")
+            ):
+                with self.assertRaisesRegex(ExchangeMetadataError, "ALL_METADATA_TRANSPORTS_UNAVAILABLE"):
+                    refresh_cache_bounded(path, "SPOT", "private-test-dsn")
+            self.assertEqual(path.read_text(), "existing-cache")
+
+    def test_frozen_contract_roundtrip_and_wrong_route_or_schema_fail(self):
+        rules = parse_exchange_info(payload(), "USD_M_PERPETUAL")["BTCUSDT"]
+        frozen = freeze_execution_rules(rules, "BTCUSDT", "USD_M_PERPETUAL", maintenance_margin_rate=.005)
+        self.assertEqual(rules_from_frozen(frozen, "BTCUSDT", "USD_M_PERPETUAL"), rules)
+        self.assertEqual(frozen["maintenance_margin_rate"], .005)
+        for invalid in ({**frozen, "market": "SPOT"}, {**frozen, "contract_version": "OLD"},
+                        {**frozen, "rules": {**frozen["rules"], "liquidation_fee_rate": float("nan")}},
+                        {**frozen, "rules": {**frozen["rules"], "quantity_step": -1}}):
+            with self.subTest(invalid=invalid), self.assertRaises(ExchangeMetadataError):
+                rules_from_frozen(invalid, "BTCUSDT", "USD_M_PERPETUAL")
+
+    def test_refresh_failure_does_not_skip_other_market(self):
+        from scripts import refresh_exchange_metadata as refresh
+        with tempfile.TemporaryDirectory() as directory:
+            health_path = Path(directory) / "health.json"
+            fake = CachedExchangeMetadata("SPOT", OFFICIAL_ENDPOINTS["SPOT"],
+                datetime.now(timezone.utc).isoformat(), "a" * 64,
+                parse_exchange_info(payload(), "SPOT"))
+            with patch.dict("os.environ", {
+                "AGCA_EXCHANGE_METADATA_HEALTH": str(health_path),
+                "AGCA_EXCHANGE_METADATA_CACHE": str(Path(directory) / "usdm.json"),
+                "AGCA_SPOT_EXCHANGE_METADATA_CACHE": str(Path(directory) / "spot.json"),
+            }), patch.object(refresh, "refresh_cache_bounded", side_effect=[ExchangeMetadataError("DOWN"), fake]) as fetch, patch("builtins.print"):
+                self.assertEqual(refresh.main(), 1)
+            health = json.loads(health_path.read_text())
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(health["markets"]["SPOT"]["status"], "READY")
+            self.assertEqual(health["markets"]["USD_M_PERPETUAL"]["refresh_status"], "FAILED")
 
 
 if __name__ == "__main__":

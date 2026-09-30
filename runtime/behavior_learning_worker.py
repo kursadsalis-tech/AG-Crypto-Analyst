@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from runtime.process_identity import WorkerHealthState
+
 from database.behavior_event_outcome_store import (
     ensure_outcome_table,
     settle_queued_outcomes,
@@ -42,11 +44,19 @@ OUTCOME_QUEUE_LIMIT = max(
 HEALTH_CONTRACT_VERSION = "AGCA_BEHAVIOR_LEARNING_HEALTH_V1_BACKGROUND_CACHE"
 
 
+_HEALTH_STATE = WorkerHealthState()
+
 def utcnow():
     return datetime.now(timezone.utc)
 
 
 def write_health(payload):
+    payload = _HEALTH_STATE.decorate({
+        **payload,
+        "core_version": core.VERSION,
+        "producer_version": core.PATTERN_CACHE_PRODUCER_VERSION,
+        "cache_contract_version": core.PATTERN_CACHE_CONTRACT_VERSION,
+    })
     HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -140,6 +150,12 @@ def main():
         raise SystemExit("Safety gate: behavior learning accepts PAPER_ONLY exclusively")
 
     while True:
+        write_health({
+            "health_contract_version": HEALTH_CONTRACT_VERSION,
+            "status": "RUNNING", "phase": "LEARNING_CYCLE",
+            "at": utcnow().isoformat(), "execution_mode": "PAPER_ONLY",
+            "may_send_real_orders": False, "database_path": DB_PATH,
+        })
         try:
             result = run_cycle()
             write_health({

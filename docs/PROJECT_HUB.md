@@ -6,15 +6,16 @@ kanonik çatı altında buluşturmaktır.
 
 ## Tek kaynak
 
-Kanonik proje deposu:
+Kaynak otoritesi: GitHub `kursadsalis-tech/AG-Crypto-Analyst`.
+Kanonik runtime checkout: `/home/kursadsalis/AG-Crypto-Analyst-cloud`
+(`agca-runtime`, GCP `project-6a717580-e37d-48f6-832`, `us-east1-b`).
 
-`/Users/elifzilan/Documents/AG-Crypto-Analyst`
-
-Çalışan kaynak kodu, Git geçmişi, testler, deployment dosyaları ve kalıcı proje
-dokümanları yalnız bu depoda tutulur. ChatGPT proje aynaları,
-`Documents/Codex/...` altındaki eski oturum klasörleri ve sohbet içerikleri
-bağlam/provenance kaynağı olabilir; geliştirme checkout'u veya ikinci bir doğru
-kaynak değildir.
+Geliştirme, bu GitHub deposunun doğrulanmış branch/SHA'sından alınan bir Git
+checkout'unda yapılır. Runtime yolu yerel makinede bulunmak zorunda değildir;
+Work görevleri eski `/Users/...` checkout'larını aramamalıdır. ChatGPT proje
+aynaları ve sohbetler yalnız bağlamdır, düzenlenecek kaynak depo değildir.
+Bu hardening geliştirme checkout'u: `/Users/elifzilan/Developer/AG-Crypto-Analyst-hardening`.
+Bu yol runtime veya genel gelecek-oturum varsayımı değildir.
 
 ## Belge yetki sırası
 
@@ -88,16 +89,12 @@ otoritesi olmasını sona erdirir.
 
 ## Güncel çalışma noktası
 
-Son operasyonel deployment checkpoint'i: `b8ac89d` — davranış ve exact-macro
-observer'ları kontrollü bulut dağıtımı ile funding sınırı düzeltmesi.
-
-Bulutta market-behavior, exact-macro ve attestation timer'ları aktiftir. Ana
-worker `PAPER_ONLY` çalışır; gerçek emir kapalıdır. Davranış ve kesin-zamanlı
-olay verisi doğal olarak birikmektedir. Yeni model/eşik araması açılmadan önce
-yeterli olay/dakika ve farklı piyasa rejimi kapsamı ölçülmelidir.
-
-En ayrıntılı ve zaman damgalı dış durum için her zaman
-`docs/LAST_SESSION_HANDOFF.md` okunur.
+Main tabanı: `56f85d11a757732bfbf34307ebf39aa3b23fb814`.
+Hardening branch'i `codex/agca-comprehensive-hardening`, PR #103'ün
+`b30f18e48e1b389620d56b51fefba4262d678da2` head'ini kapsar. #103 merge edilmeyecek.
+Yeni adayın test/PR kanıtı `LAST_SESSION_HANDOFF.md`, canary protokolü
+`HARDENING_CANARY.md` içindedir. Bu değişiklik runtime'a dağıtılmadı; canlı
+sağlık veya ekonomik performans kabulü yapılmış sayılmaz.
 
 ## Her çalışma için kısa yönlendirme
 

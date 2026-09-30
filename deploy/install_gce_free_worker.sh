@@ -49,10 +49,22 @@ if [[ "${AGCA_DEPLOY_REEXEC:-0}" != "1" ]]; then
   exec env AGCA_DEPLOY_REEXEC=1 bash "$DEPLOY/deploy/install_gce_free_worker.sh"
 fi
 
+EXPECTED_SHA=$(git rev-parse HEAD)
+if [[ -n "${AGCA_EXPECTED_DEPLOY_SHA:-}" && "$EXPECTED_SHA" != "$AGCA_EXPECTED_DEPLOY_SHA" ]]; then
+  echo "Refusing deployment: checkout does not match AGCA_EXPECTED_DEPLOY_SHA" >&2
+  exit 7
+fi
+
 if [[ ! -x .venv/bin/python ]]; then
   python3.12 -m venv .venv
 fi
 .venv/bin/pip install --no-cache-dir -r requirements-runtime.txt -r requirements-forecast-v3.txt
+
+# Read-only preflight runs before any service stop/restart or schema change.
+# Both routes must be ready for initial acceptance; a running manager remains
+# independently available if a helper later degrades.
+.venv/bin/python -m scripts.runtime_acceptance metadata \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR"
 
 sudo install -d -o kursadsalis -g kursadsalis -m 700 "$DATA_DIR"
 
@@ -147,36 +159,41 @@ for timer in "${active_timers[@]}"; do
   sudo systemctl enable --now "$timer"
 done
 
-# Keep the existing observer process alive across minute publications.
+# Historical behavior learning is outside the realtime decision hot path.
+# Publish a compatible cache from the reviewed process before replacing its
+# consumer; failures stop installation before the realtime worker is restarted.
+sudo systemctl enable agca-behavior-learning-worker.service
+sudo systemctl restart agca-behavior-learning-worker.service
+.venv/bin/python -m scripts.runtime_acceptance cache \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --ready-timeout 120
+
+# Exact closed 1m technical bars have one independent websocket owner.
+sudo systemctl enable agca-technical-kline-worker.service
+sudo systemctl restart agca-technical-kline-worker.service
+
+# Keep the observer process alive across minute publications.
 sudo systemctl enable agca-market-behavior-observer.service
 sudo systemctl restart agca-market-behavior-observer.service
 
-# Historical behavior learning is intentionally outside the realtime decision
-# hot path. Start its low-priority cache worker before restarting the consumer.
-sudo systemctl enable agca-behavior-learning-worker.service
-sudo systemctl restart agca-behavior-learning-worker.service
-
-# Post-trade learning, experience review and strategy allocation are also
-# background specialist work. They must never block opportunity scans or fills.
+# Post-trade learning remains a background specialist without order authority.
 sudo systemctl enable agca-trade-learning-worker.service
 sudo systemctl restart agca-trade-learning-worker.service
 
-# A deployment must replace the running worker process, not only ensure the
-# unit is enabled. enable --now leaves an already-running process on the old
-# checkout/commit, which makes runtime source attestation lie about the deploy.
+# enable --now does not replace an existing process. Restart the sole PAPER
+# lifecycle only after metadata and the producer cache passed preflight.
 sudo systemctl enable agca-paper-realtime-worker.service
 sudo systemctl restart agca-paper-realtime-worker.service
-
-# Exact closed 1m technical bars need one long-lived websocket owner.
-# Keep this data-only collector independent from the rotating oneshot observer.
-sudo systemctl enable agca-technical-kline-worker.service
-sudo systemctl restart agca-technical-kline-worker.service
 
 systemctl is-active --quiet agca-paper-realtime-worker.service
 systemctl is-active --quiet agca-technical-kline-worker.service
 systemctl is-active --quiet agca-behavior-learning-worker.service
 systemctl is-active --quiet agca-trade-learning-worker.service
+systemctl is-active --quiet agca-market-behavior-observer.service
+.venv/bin/python -m scripts.runtime_acceptance runtime \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 60 --ready-timeout 120 --poll-seconds 5
 test ! -e "$DEPLOY/crypto_data.db"
 echo "COMMIT=$(git rev-parse HEAD)"
 echo "CANONICAL_DB=$DB"
-echo "PAPER_RUNTIME=ACTIVE"
+echo "PAPER_RUNTIME=ACCEPTED_STABLE_EXACT_SOURCE"

@@ -135,7 +135,8 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         block = source[process_start:process_end]
 
         self.assertIn("except ExchangeMetadataError:", block)
-        self.assertIn('error="LIVE_SYMBOL_RULES_UNAVAILABLE"', block)
+        self.assertNotIn('error="LIVE_SYMBOL_RULES_UNAVAILABLE"', block)
+        self.assertIn("execution_at, rule", block)
         self.assertIn("metadata.get(execution_state.market_type)", block)
         self.assertNotIn(
             "metadata[execution_state.market_type]", block

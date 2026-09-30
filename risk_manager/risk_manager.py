@@ -26,7 +26,7 @@ from analysis import realtime_technical_context
 DB_NAME = os.getenv("AGCA_DATABASE_PATH", "crypto_data.db")
 BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
 USER_AGENT = "AG-Crypto-Analyst/1.0.0"
-POLICY_VERSION = "MARKET_RISK_POLICY_V3_CONTEXT_SIZES_PAPER_RISK"
+POLICY_VERSION = "MARKET_RISK_POLICY_V4_HELPER_FAILURE_ISOLATION"
 KLINE_LIMIT = 170
 MIN_CLOSED_CANDLES = 169
 MIN_COVERAGE_RATIO = 0.80
@@ -372,7 +372,6 @@ def reference_stress_level(asset):
 
 def build_global_policy(assets, source_errors, created_at=None):
     created_at = created_at or iso(utcnow())
-    by_symbol = {asset["symbol"]: asset for asset in assets}
     reference_assets = [asset for asset in assets if asset["symbol"] in SYMBOLS]
     reference_by_symbol = {asset["symbol"]: asset for asset in reference_assets}
     reference_errors = {
@@ -381,7 +380,7 @@ def build_global_policy(assets, source_errors, created_at=None):
     }
     coverage_count = len(reference_by_symbol)
     coverage_total = len(SYMBOLS)
-    coverage_ratio = coverage_count / coverage_total
+    coverage_ratio = coverage_count / coverage_total if coverage_total else 0.0
     market_stress_count = sum(
         asset["market_risk_score"] >= 4 or asset["market_hard_block"]
         for asset in reference_assets
@@ -395,45 +394,42 @@ def build_global_policy(assets, source_errors, created_at=None):
     )
     reasons = []
 
+    # Reference symbols and independent anchor checks are global context helpers.
+    # Their absence cannot invalidate fresh, independently validated Binance
+    # candidate evidence. Missing candidate-critical history still fails closed
+    # at the asset gate. Never fabricate a missing reference measurement.
+    helper_reasons = []
     if "CROSS_SOURCE_BTC" in reference_errors:
-        state = "DATA_BLOCKED"
-        reasons.append("BTC_CROSS_SOURCE_VALIDATION_FAILED")
-    elif "BTCUSDT" not in reference_by_symbol:
-        state = "DATA_BLOCKED"
-        reasons.append("BTC_REFERENCE_MISSING")
-    elif coverage_ratio < MIN_COVERAGE_RATIO:
-        state = "DATA_BLOCKED"
-        reasons.append("COVERAGE_BELOW_80_PERCENT")
+        helper_reasons.append("BTC_CROSS_SOURCE_VALIDATION_FAILED")
+    if "BTCUSDT" not in reference_by_symbol:
+        helper_reasons.append("BTC_REFERENCE_MISSING")
+    if coverage_ratio < MIN_COVERAGE_RATIO:
+        helper_reasons.append("COVERAGE_BELOW_80_PERCENT")
+    btc = reference_by_symbol.get("BTCUSDT")
+    eth = reference_by_symbol.get("ETHUSDT")
+    btc_level = reference_stress_level(btc) if btc else "MISSING"
+    eth_level = reference_stress_level(eth) if eth else "MISSING"
+    if btc_level == "TAIL" or market_stress_ratio >= 0.75:
+        state = "LOCKDOWN"
+        reasons.append("MARKET_TAIL_RISK")
+    elif (btc_level == "STRESS" or eth_level == "TAIL"
+          or market_stress_ratio >= 0.50):
+        state = "DEFENSIVE"
+        reasons.append("MARKET_STRESS")
+    elif (btc_level == "CAUTION" or eth_level in {"STRESS", "CAUTION"}
+          or market_stress_ratio >= 0.25 or reference_errors):
+        state = "CAUTION"
+        reasons.append("ELEVATED_MARKET_RISK")
     else:
-        btc = reference_by_symbol["BTCUSDT"]
-        eth = reference_by_symbol.get("ETHUSDT")
-        btc_level = reference_stress_level(btc)
-        eth_level = reference_stress_level(eth) if eth else "MISSING"
-
-        if (
-            btc_level == "TAIL"
-            or market_stress_ratio >= 0.75
-        ):
-            state = "LOCKDOWN"
-            reasons.append("MARKET_TAIL_RISK")
-        elif (
-            btc_level == "STRESS"
-            or eth_level == "TAIL"
-            or market_stress_ratio >= 0.50
-        ):
+        state = "NORMAL"
+        reasons.append("NO_GLOBAL_STRESS_TRIGGER")
+    if helper_reasons:
+        # Preserve a stronger observed tail-risk envelope. Helper uncertainty
+        # can only tighten NORMAL/CAUTION to DEFENSIVE (one new position).
+        if state in {"NORMAL", "CAUTION"}:
             state = "DEFENSIVE"
-            reasons.append("MARKET_STRESS")
-        elif (
-            btc_level == "CAUTION"
-            or eth_level in {"STRESS", "CAUTION"}
-            or market_stress_ratio >= 0.25
-            or reference_errors
-        ):
-            state = "CAUTION"
-            reasons.append("ELEVATED_MARKET_RISK")
-        else:
-            state = "NORMAL"
-            reasons.append("NO_GLOBAL_STRESS_TRIGGER")
+        reasons.extend(helper_reasons)
+        reasons.append("GLOBAL_HELPER_DEGRADED_BOUNDED_PAPER")
 
     if reference_errors:
         reasons.append("PARTIAL_SOURCE_ERRORS")
@@ -466,6 +462,9 @@ def build_global_policy(assets, source_errors, created_at=None):
         "liquidity_block_count": liquidity_block_count,
         "new_positions_allowed": new_positions_allowed,
         "policy_reasons": reasons,
+        "helper_health": "DEGRADED" if helper_reasons or reference_errors else "READY",
+        "helper_degradation_reasons": helper_reasons,
+        "candidate_evidence_authority": "VALIDATED_BINANCE_ASSET_RISK_ONLY",
         "dynamic_behavior_symbol_count": sum(
             asset["symbol"] not in SYMBOLS for asset in assets
         ),

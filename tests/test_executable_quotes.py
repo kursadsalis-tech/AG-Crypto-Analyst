@@ -111,7 +111,10 @@ class QuoteAccountingTests(unittest.TestCase):
             id INTEGER PRIMARY KEY,symbol TEXT,created_at TEXT,
             volatility_stop_reference_pct REAL)""")
         self.addCleanup(self.con.close)
-        self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
+        from paper_trading.exchange_metadata import CachedExchangeMetadata, OFFICIAL_ENDPOINTS
+        self.metadata = {market: CachedExchangeMetadata(market, OFFICIAL_ENDPOINTS[market],
+            datetime.now(timezone.utc).isoformat(), "a" * 64, {"DYNAMICUSDT": RULES})
+            for market in ("SPOT", "USD_M_PERPETUAL")}
         rules_patch = patch.object(agent, "rules_for", return_value=RULES)
         rules_patch.start()
         self.addCleanup(rules_patch.stop)
@@ -119,7 +122,7 @@ class QuoteAccountingTests(unittest.TestCase):
             forecast_id,agent_version,policy_version,symbol,horizon_hours,direction,status,
             selected_at,as_of,planned_entry_time,due_time,notional,confidence,p_up,p_down,
             target_price,model_version,artifact_hash,selection_reason,market_type)
-            VALUES(1,'test','test','DYNAMICUSDT',4,'LONG','PENDING_ENTRY',?,?,?,?,100,.6,.6,.4,
+            VALUES(1,'test','test','DYNAMICUSDT',4,'LONG','PENDING_ENTRY',?,?,?,?,100.1,.6,.6,.4,
                    102,'test','test','test','SPOT')""",
             (NOW.isoformat(), NOW.isoformat(), NOW.isoformat(), (NOW+timedelta(hours=4)).isoformat()))
 
@@ -163,6 +166,13 @@ class QuoteAccountingTests(unittest.TestCase):
         self.assertTrue(required <= audit.keys())
         self.assertEqual(audit["selected_executable_side"], "ASK")
         self.assertEqual(audit["final_simulated_fill_price"], price)
+
+    def test_actual_rounded_entry_below_100_is_not_opened(self):
+        self.con.execute("UPDATE paper_agent_positions SET notional=100")
+        before = self.con.execute("SELECT cash,total_fees FROM paper_agent_portfolio").fetchone()
+        self.assertEqual(self.entry(quote()), (0, 1))
+        self.assertEqual(self.audit()["rejection_reason"], "ACTUAL_OPEN_NOTIONAL_BELOW_100_USDT")
+        self.assertEqual(self.con.execute("SELECT cash,total_fees FROM paper_agent_portfolio").fetchone(), before)
 
     def test_short_entry_uses_bid(self):
         self.con.execute("UPDATE paper_agent_positions SET direction='SHORT',market_type='USD_M_PERPETUAL'")
