@@ -209,9 +209,16 @@ def ensure_tables(con):
             capacity INTEGER NOT NULL,
             available_exposure REAL NOT NULL,
             reason_counts_json TEXT NOT NULL,
+            direction_counts_json TEXT NOT NULL DEFAULT '{}',
             real_order_allowed INTEGER NOT NULL DEFAULT 0
         );
     """)
+    selection_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_behavior_selection_runs)"
+    )}
+    if "direction_counts_json" not in selection_columns:
+        con.execute("""ALTER TABLE paper_behavior_selection_runs
+            ADD COLUMN direction_counts_json TEXT NOT NULL DEFAULT '{}'""")
     columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
     for name, definition in (
         ("remote_mirror_status", "TEXT NOT NULL DEFAULT 'PENDING'"),
@@ -914,19 +921,41 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
     """).fetchall()
     active_symbols = {row[0] for row in active}
     capacity = max(0, MAX_OPEN_POSITIONS - len(active))
-    reasons = {}
+    reasons = dict(behavior_result.get("reason_counts") or {})
+    direction_counts = {
+        stage: dict(counts)
+        for stage, counts in (behavior_result.get("direction_counts") or {}).items()
+    }
+    direction_counts["candidates"] = {
+        direction: sum(row.get("direction") == direction
+                       for row in behavior_result["candidates"])
+        for direction in ("LONG", "SHORT")
+    }
+    direction_counts["selected"] = {"LONG": 0, "SHORT": 0}
+    diagnostics["direction_counts"] = direction_counts
     def reject(reason):
         reasons[reason] = reasons.get(reason, 0) + 1
 
     def record_run(selected_count, available_exposure):
+        if selected_count == 0 and not reasons:
+            reject("CORE_" + str(behavior_result["status"]))
+        recent_directions = [row[0] for row in con.execute("""
+            SELECT direction FROM paper_agent_positions
+            ORDER BY position_id DESC LIMIT 20
+        """)]
+        direction_counts["recent_positions_20"] = {
+            direction: recent_directions.count(direction)
+            for direction in ("LONG", "SHORT")
+        }
         con.execute("""INSERT INTO paper_behavior_selection_runs(
             created_at,core_status,candidate_count,selected_count,
             active_position_count,capacity,available_exposure,
-            reason_counts_json,real_order_allowed
-        ) VALUES(?,?,?,?,?,?,?,?,0)""", (
+            reason_counts_json,direction_counts_json,real_order_allowed
+        ) VALUES(?,?,?,?,?,?,?,?,?,0)""", (
             iso(now), behavior_result["status"], len(behavior_result["candidates"]),
             selected_count, len(active), capacity, available_exposure,
             json.dumps(reasons, sort_keys=True),
+            json.dumps(direction_counts, sort_keys=True),
         ))
 
     if not snapshot["valuation_complete"]:
@@ -976,6 +1005,11 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
         con, now, behavior_result=behavior_result, measure=measured
     )
     diagnostics["deep_analysis"] = orchestration["capacity"]
+    direction_counts["technical_ready"] = {
+        direction: sum(item.candidate["direction"] == direction
+                       for item in orchestration["ready"])
+        for direction in ("LONG", "SHORT")
+    }
     for reason, count in orchestration["rejections"].items():
         reasons[reason] = reasons.get(reason, 0) + int(count)
     diagnostics.setdefault("technical_plan_errors", []).extend(
@@ -1137,8 +1171,13 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
         )
         notional = sizing.notional
         if notional < MIN_PAPER_NOTIONAL_USDT:
-            reject("NOTIONAL_BELOW_EXECUTABLE_MINIMUM")
-            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"}
+            reason_code = "NOTIONAL_BELOW_EXECUTABLE_MINIMUM"
+            if available_exposure < MIN_PAPER_NOTIONAL_USDT:
+                reason_code = "PORTFOLIO_EXPOSURE_LIMIT"
+            elif available_cash * tier.leverage / (1.0 + fee_rate * tier.leverage) < MIN_PAPER_NOTIONAL_USDT:
+                reason_code = "PORTFOLIO_CASH_LIMIT"
+            reject(reason_code)
+            candidate_outcomes[outcome_key] = {"status": "REDDEDİLDİ", "reason": reason_code}
             continue
         if exchange_metadata is not None:
             metadata = exchange_metadata.get(tier.market_type)
@@ -1223,6 +1262,7 @@ def select_new_positions(con, now, exchange_metadata=None, telemetry=None, *, ma
             )
             candidate_outcomes[outcome_key] = {"status": "SEÇİLDİ", "reason": "PAPER_POSITION_SELECTED"}
             selected += 1
+            direction_counts["selected"][row["direction"]] += 1
             active_symbols.add(row["symbol"])
             available_exposure -= notional
             reservation = notional / tier.leverage + notional * fee_rate
@@ -1990,5 +2030,4 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None):
         filled += 1
     con.commit()
     return filled, cancelled
-
 

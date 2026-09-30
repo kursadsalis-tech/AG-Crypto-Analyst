@@ -53,6 +53,29 @@ def _call(measure: Callable | None, name: str, function: Callable, *args, **kwar
     return measure(name, function, *args, **kwargs)
 
 
+def execution_edge_rejection(candidate: dict[str, Any]):
+    """Require cost-positive evidence even for bounded PAPER exploration.
+
+    Check the frozen calibration as well as the ranking field so an adapter
+    cannot accidentally turn a negative calibrated hypothesis into exposure.
+    Missing calibration is compatible with older candidates; missing expected
+    edge is not. Recovery hypotheses must pass the same economic boundary.
+    """
+    edges = [candidate.get("expected_net_edge_pct")]
+    calibration = (candidate.get("evidence") or {}).get("execution_calibration") or {}
+    if "calibrated_net_edge_pct" in calibration:
+        edges.append(calibration["calibrated_net_edge_pct"])
+    try:
+        edges = [float(value) for value in edges]
+    except (TypeError, ValueError):
+        return "INVALID_EDGE_EVIDENCE"
+    if not all(math.isfinite(value) for value in edges):
+        return "INVALID_EDGE_EVIDENCE"
+    if any(value <= 0.0 for value in edges):
+        return "NEGATIVE_EDGE_VETO"
+    return None
+
+
 def orchestrate(
     con, now, *, behavior_result=None, measure: Callable | None = None,
     deep_analysis_slots: int = DEEP_ANALYSIS_SLOTS
@@ -108,6 +131,10 @@ def orchestrate(
 
     for source in selected:
         candidate = dict(source)
+        edge_rejection = execution_edge_rejection(candidate)
+        if edge_rejection:
+            reject(edge_rejection)
+            continue
         initial_tier = risk_tiering.tier_for(candidate)
         try:
             plan = _call(
@@ -176,15 +203,22 @@ def size_candidate(
     tier = orchestrated.risk_tier
     fee_rate = orchestrated.fee_rate
 
+    recovery = candidate.get("experiment_tier") == "RECOVERY_EXPLORATION"
+    size_multiplier = float(candidate.get("execution_size_multiplier", 1.0))
+    if recovery:
+        size_multiplier = min(behavior_decision_core.RECOVERY_SIZE_MULTIPLIER,
+                              size_multiplier)
     base_margin = (
         float(equity)
         * float(tier.margin_fraction)
-        * float(candidate.get("execution_size_multiplier", 1.0))
+        * size_multiplier
         * float(candidate["technical_plan"]["quality_multiplier"])
     )
     position_cap = (
         float(equity) * float(candidate["risk_cap_pct"]) / 100.0
     )
+    if recovery:
+        position_cap = min(position_cap, float(equity) * 0.0025)
     trade_risk_budget = (
         float(equity)
         * float(candidate.get("risk_per_trade_pct") or 0.0)

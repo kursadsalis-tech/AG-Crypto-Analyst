@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 
 VERSION = "PAPER_BEHAVIOR_DECISION_CORE_V4"
-POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V4_EXECUTION_CALIBRATED"
+POLICY_VERSION = "PAPER_BEHAVIOR_POLICY_V5_RECOVERY"
 STRATEGY_ID = "BEHAVIOR_CORE_V4"
 EXECUTION_CALIBRATION_VERSION = "PAPER_EXECUTION_CALIBRATION_V1"
 HORIZON_MINUTES = 240
@@ -40,6 +40,9 @@ ROUND_TRIP_FEE_PCT = 0.20
 EXTRA_COST_BUFFER_PCT = 0.05
 PATTERN_CACHE_CONTRACT_VERSION = "PAPER_BEHAVIOR_PATTERN_CACHE_V1"
 MAX_PATTERN_CACHE_AGE_SECONDS = 15 * 60
+RECOVERY_WINDOW_HOURS = 72
+MAX_RECOVERY_SAMPLES = 120
+RECOVERY_SIZE_MULTIPLIER = 0.25
 
 
 def iso(value):
@@ -176,6 +179,7 @@ def execution_feedback(con, now=None):
             "mean_net_return_pct": statistics.fmean(returns),
             "cost_after_win_rate": statistics.fmean(value > 0 for value in returns),
             "cutoff_position_id": max(sample["position_id"] for sample in samples),
+            "latest_exit_at": max(sample["exit_time"] for sample in samples),
             "outcome_cutoff_at": iso(now), "real_orders": False,
         }
         con.execute("""INSERT OR IGNORE INTO paper_behavior_execution_calibrations(
@@ -372,44 +376,72 @@ def learned_patterns(con, now=None):
         price_pattern = _price_pattern(price_move, spread)
         if price_pattern and str(kind) == "MARKET_STRUCTURE":
             grouped[("PRICE_ACTION", price_pattern)].append(sample)
-    output = {}
-    for key, samples in grouped.items():
-        days = {datetime.fromtimestamp(x["minute_ms"] / 1000, timezone.utc).date() for x in samples}
+    own_results = execution_feedback(con, now)
+
+    def summarize(key, samples):
+        days = {datetime.fromtimestamp(x["minute_ms"] / 1000, timezone.utc).date()
+                for x in samples}
         long_net = [x["return_pct"] - x["cost_pct"] for x in samples]
         short_net = [-x["return_pct"] - x["cost_pct"] for x in samples]
-        candidates = (("LONG", long_net), ("SHORT", short_net))
-        direction, returns = max(candidates, key=lambda item: sum(item[1]) / len(item[1]))
-        mean_edge = sum(returns) / len(returns)
-        win_rate = sum(value > 0 for value in returns) / len(returns)
-        exploration_eligible = (
-            len(samples) >= MIN_EXPLORATION_SAMPLES
-            and len(days) >= MIN_EXPLORATION_DAYS
-            and mean_edge > 0
-        )
+        direction, returns = max((("LONG", long_net), ("SHORT", short_net)),
+                                 key=lambda item: statistics.fmean(item[1]))
+        mean_edge = statistics.fmean(returns)
+        win_rate = statistics.fmean(value > 0 for value in returns)
         promotion_ready = (
             len(samples) >= MIN_PATTERN_SAMPLES
             and len(days) >= MIN_INDEPENDENT_DAYS
             and win_rate >= MIN_COST_AFTER_WIN_RATE
             and mean_edge >= MIN_MEAN_NET_EDGE_PCT
         )
-        output[key] = {
+        pattern = {
             "event_kind": key[0], "flow_pattern": key[1], "direction": direction,
             "sample_count": len(samples), "independent_days": len(days),
             "mean_net_edge_pct": mean_edge, "cost_after_win_rate": win_rate,
-            "exploration_eligible": exploration_eligible,
-            "promotion_ready": promotion_ready,
-            # Backward-compatible report field; it means trusted/promotion-ready,
-            # never whether a small PAPER learning experiment may be opened.
-            "ready": promotion_ready,
+            "exploration_eligible": (len(samples) >= MIN_EXPLORATION_SAMPLES
+                                     and len(days) >= MIN_EXPLORATION_DAYS
+                                     and mean_edge > 0),
+            "promotion_ready": promotion_ready, "ready": promotion_ready,
         }
-    own_results = execution_feedback(con, now)
-    return {
-        key: calibrate_pattern(
-            pattern,
-            own_results.get((key[0], key[1], pattern["direction"])),
-        )
-        for key, pattern in output.items()
-    }
+        return calibrate_pattern(pattern, own_results.get((*key, direction)))
+
+    output = {}
+    for key, samples in grouped.items():
+        pattern = summarize(key, samples)
+        output[key] = pattern
+        if pattern["calibrated_net_edge_pct"] > 0:
+            continue
+        # Keep the historical pattern and its suspension visible. A recovery
+        # hypothesis needs NEW closed observations after the last own loss
+        # cohort, not a blind sign flip or a reset of execution history.
+        feedback = pattern.get("execution_feedback") or {}
+        last_exit = feedback.get("latest_exit_at")
+        if not last_exit:
+            continue
+        cutoff = max(now - timedelta(hours=RECOVERY_WINDOW_HOURS),
+                     datetime.fromisoformat(last_exit.replace("Z", "+00:00")))
+        recent = [sample for sample in samples
+                  if sample["minute_ms"] > cutoff.timestamp() * 1000][-MAX_RECOVERY_SAMPLES:]
+        if len(recent) < MIN_EXPLORATION_SAMPLES:
+            continue
+        recovery = summarize(key, recent)
+        recovery.update({
+            "learning_scope": "POST_EXECUTION_RECOVERY",
+            "observation_start_ms": min(x["minute_ms"] for x in recent),
+            "observation_end_ms": max(x["minute_ms"] for x in recent),
+            "prior_direction": pattern["direction"],
+            "execution_size_multiplier": min(RECOVERY_SIZE_MULTIPLIER,
+                                               recovery["execution_size_multiplier"]),
+            "promotion_ready": False, "ready": False,
+        })
+        pattern["recovery_hypothesis"] = recovery
+    return output
+
+
+def _execution_eligible(pattern):
+    edge = pattern.get("calibrated_net_edge_pct")
+    return (bool(pattern.get("exploration_eligible"))
+            and not pattern.get("execution_suspended", False)
+            and isinstance(edge, (int, float)) and math.isfinite(edge) and edge > 0)
 
 
 def _patterns_to_json(patterns):
@@ -611,6 +643,8 @@ def evaluate(con, now=None):
     if not required_tables.issubset(available_tables):
         return {
             "status": "BEHAVIOR_SCHEMA_UNAVAILABLE",
+            "reason_counts": {"BEHAVIOR_SCHEMA_UNAVAILABLE": 1},
+            "direction_counts": {},
             "candidates": [],
             "review": {
                 "missing_tables": sorted(required_tables - available_tables),
@@ -628,17 +662,39 @@ def evaluate(con, now=None):
     else:
         settle_missed_opportunities(con)
         patterns = learned_patterns(con, now)
-    exploration_patterns = {
-        key: value for key, value in patterns.items()
-        if value["exploration_eligible"] and not value.get("execution_suspended", False)
-    }
+    reason_counts = defaultdict(int)
+    direction_counts = {stage: {"LONG": 0, "SHORT": 0}
+                        for stage in ("patterns", "exploration", "suspended", "recovery", "candidates")}
+    exploration_patterns = {}
+    for key, pattern in patterns.items():
+        direction_counts["patterns"][pattern["direction"]] += 1
+        if pattern.get("execution_suspended", False):
+            reason_counts["PATTERN_SUSPENDED"] += 1
+            direction_counts["suspended"][pattern["direction"]] += 1
+        elif not _execution_eligible(pattern):
+            reason_counts["NEGATIVE_EDGE_VETO" if pattern.get("exploration_eligible")
+                          else "PATTERN_NOT_TESTABLE"] += 1
+        if _execution_eligible(pattern):
+            exploration_patterns[key] = pattern
+        else:
+            recovery = pattern.get("recovery_hypothesis")
+            if recovery:
+                direction_counts["recovery"][recovery["direction"]] += 1
+                if _execution_eligible(recovery):
+                    exploration_patterns[key] = recovery
+                else:
+                    reason_counts["RECOVERY_NOT_TESTABLE"] += 1
+    for pattern in exploration_patterns.values():
+        direction_counts["exploration"][pattern["direction"]] += 1
+    if not patterns:
+        reason_counts["NO_LEARNED_PATTERN"] += 1
     suspended_patterns = {
         key: value for key, value in patterns.items()
         if value.get("execution_suspended", False)
     }
     promoted_patterns = {
         key: value for key, value in patterns.items()
-        if value["promotion_ready"]
+        if value["promotion_ready"] and _execution_eligible(value)
     }
     review = {
         "basis": "POINT_IN_TIME_CLOSED_BEHAVIOR_EVENT_OUTCOMES_NET_AFTER_COST_MODEL",
@@ -660,6 +716,16 @@ def evaluate(con, now=None):
             "suspend_when_calibrated_net_edge_pct_lte": 0.0,
             "small_losing_sample_is_hard_veto": False,
         },
+        "recovery_policy": {
+            "window_hours": RECOVERY_WINDOW_HOURS,
+            "maximum_samples": MAX_RECOVERY_SAMPLES,
+            "size_multiplier_cap": RECOVERY_SIZE_MULTIPLIER,
+            "requires_new_closed_observations_after_own_execution": True,
+            "retains_direction_specific_execution_feedback": True,
+            "negative_calibrated_edge_execution_allowed": False,
+        },
+        "direction_counts": direction_counts,
+        "reason_counts": reason_counts,
         "risk_freshness_gate": {
             "maximum_policy_age_seconds": MAX_RISK_POLICY_AGE_SECONDS,
             "stale_policy_is_fail_closed": True,
@@ -670,8 +736,8 @@ def evaluate(con, now=None):
         ),
         "pattern_cache": pattern_cache,
     }
-    review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     def record_review():
+        review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         con.execute("""INSERT OR IGNORE INTO paper_behavior_policy_reviews(
             created_at,core_version,horizon_minutes,status,evidence_json,execution_allowed
         ) VALUES(?,?,?,?,?,?)""", (
@@ -684,9 +750,11 @@ def evaluate(con, now=None):
         ))
 
     if cache_required and pattern_cache.get("status") != "READY":
+        reason_counts["BEHAVIOR_PATTERN_CACHE_UNAVAILABLE"] += 1
         record_review()
         con.commit()
         return {
+            "reason_counts": dict(reason_counts), "direction_counts": direction_counts,
             "status": "BEHAVIOR_PATTERN_CACHE_UNAVAILABLE",
             "candidates": [], "review": review,
         }
@@ -694,16 +762,18 @@ def evaluate(con, now=None):
         "PRAGMA table_info(market_behavior_minute_features)"
     )}
     if "market_data_provider" not in feature_columns:
+        reason_counts["NO_CANONICAL_BEHAVIOR_PROVENANCE"] += 1
         record_review()
         con.commit()
         return {
+            "reason_counts": dict(reason_counts), "direction_counts": direction_counts,
             "status": "NO_CANONICAL_BEHAVIOR_PROVENANCE",
             "candidates": [], "review": review,
         }
     cutoff_ms = int(now.timestamp() * 1000)
     oldest_ms = cutoff_ms - int(MAX_EVIDENCE_AGE_SECONDS * 1000)
     has_market_structure_hypothesis = any(
-        kind == "MARKET_STRUCTURE" for kind, _ in exploration_patterns
+        kind in {"MARKET_STRUCTURE", "PRICE_ACTION"} for kind, _ in exploration_patterns
     )
     # Read only the existing freshness window, never the retained history.
     # Each instrument keeps its own latest usable minute when attention rotates.
@@ -741,18 +811,18 @@ def evaluate(con, now=None):
         ):
             rows_by_instrument[instrument] = raw
     if not rows_by_instrument:
+        reason_counts["NO_FRESH_ELIGIBLE_BEHAVIOR"] += 1
         record_review()
         con.commit()
-        return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review}
+        return {"status": "NO_FRESH_ELIGIBLE_BEHAVIOR", "candidates": [], "review": review,
+                "reason_counts": dict(reason_counts), "direction_counts": direction_counts}
     risks = _latest_risk(con, now)
     rows = list(rows_by_instrument.values())
     review["fresh_behavior_instrument_count"] = len(rows)
     review["deep_shortlist_is_trade_universe"] = False
-    review_json = json.dumps(review, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    # Keep the writer lock out of all evidence/risk reads. The remaining
-    # decision inserts are bounded by the unchanged 180-second evidence window.
-    record_review()
+    # Persist the completed review after the bounded evidence/risk evaluation.
     candidates = []
+    matched_patterns = set()
     for raw in rows:
         (instrument, book, taker, spread, mid, oi_first, oi_change, funding,
          long_liq, short_liq, liq_count, quality_json, mid_first, latest) = raw
@@ -767,6 +837,7 @@ def evaluate(con, now=None):
         symbol = _symbol(instrument)
         risk = risks.get(symbol)
         if not pattern or mid is None:
+            reason_counts["BEHAVIOR_EVIDENCE_MISSING"] += 1
             continue
         candidate_events = list(events)
         price_pattern = _price_pattern(
@@ -781,6 +852,7 @@ def evaluate(con, now=None):
         for kind, symbols_json, event_id, available_at, event_direction in candidate_events:
             available = datetime.fromisoformat(str(available_at).replace("Z", "+00:00"))
             if available.astimezone(timezone.utc) > evidence_end:
+                reason_counts["EVENT_NOT_CAUSALLY_AVAILABLE"] += 1
                 continue
             learned_options = []
             lookup_pattern = price_pattern if str(kind) == "PRICE_ACTION" else pattern
@@ -794,6 +866,9 @@ def evaluate(con, now=None):
             if not learned_options or not _applies(symbols_json, instrument):
                 continue
             for learned, event_only_hypothesis in learned_options:
+                matched_patterns.add((str(kind), learned["flow_pattern"]))
+                if not risk or not risk["allowed"]:
+                    reason_counts["RISK_COVERAGE_MISSING" if not risk else "RISK_VETO"] += 1
                 candidates.extend(_candidate_for_hypothesis(
                     con=con, now=now, latest=int(latest), instrument=instrument,
                     symbol=symbol, pattern=lookup_pattern, kind=str(kind),
@@ -803,19 +878,27 @@ def evaluate(con, now=None):
                     mid=mid, book=book, taker=taker, spread=spread,
                     oi_first=oi_first, oi_change=oi_change, funding=funding,
                     long_liq=long_liq, short_liq=short_liq, liq_count=liq_count,
-                    quality_json=quality_json,
+                    quality_json=quality_json, reason_counts=reason_counts,
                 ))
+    for key in exploration_patterns.keys() - matched_patterns:
+        reason_counts["EVIDENCE_EVENT_MISSING"] += 1
+    for candidate in candidates:
+        direction_counts["candidates"][candidate["direction"]] += 1
+    if not candidates and not reason_counts:
+        reason_counts["NO_MATCHING_HYPOTHESIS"] += 1
+    record_review()
     con.commit()
     candidates.sort(key=lambda x: (x["expected_net_edge_pct"], x["confidence"]), reverse=True)
     return {"status": "ACTIONABLE" if candidates else "NO_ACTIONABLE_PATTERN",
-            "candidates": candidates, "review": review}
+            "candidates": candidates, "review": review,
+            "reason_counts": dict(reason_counts), "direction_counts": direction_counts}
 
 
 def _candidate_for_hypothesis(
     *, con, now, latest, instrument, symbol, pattern, kind, symbols_json,
     event_id, available_at, event_direction, learned, event_only, risk, mid,
     book, taker, spread, oi_first, oi_change, funding, long_liq, short_liq,
-    liq_count, quality_json,
+    liq_count, quality_json, reason_counts=None,
 ):
     """Persist one immutable single-source or confluence PAPER hypothesis."""
     quality_gates = json.loads(quality_json)
@@ -885,7 +968,9 @@ def _candidate_for_hypothesis(
             "calibrated_win_rate": learned["calibrated_win_rate"],
             "size_multiplier": learned["execution_size_multiplier"],
         },
-        "experiment_tier": ("PROMOTION_READY" if learned["promotion_ready"]
+        "experiment_tier": ("RECOVERY_EXPLORATION"
+                            if learned.get("learning_scope") == "POST_EXECUTION_RECOVERY"
+                            else "PROMOTION_READY" if learned["promotion_ready"]
                             else "EXPLORATORY_LEARNING"),
         "risk": risk, "capabilities_used": capabilities,
         "unified_forecast_used": False, "real_orders": False,
@@ -918,7 +1003,16 @@ def _candidate_for_hypothesis(
         raise RuntimeError("idempotent behavior decision could not be resolved")
     decision_id, stored_evidence_json, digest = existing
     evidence = json.loads(stored_evidence_json)
-    learned = evidence["learned_pattern"]
+    stored = evidence["learned_pattern"]
+    if (stored["direction"] != learned["direction"]
+            or stored.get("learning_scope") != learned.get("learning_scope")
+            or not _execution_eligible(stored)):
+        # A recalibration cannot rewrite an already persisted minute's thesis.
+        # Wait for a new observation rather than resurrecting its old direction.
+        if reason_counts is not None:
+            reason_counts["IMMUTABLE_DECISION_POLICY_MISMATCH"] += 1
+        return []
+    learned = stored
     risk = evidence["risk"]
     return [{
         "decision_id": int(decision_id), "decision_source": "MARKET_BEHAVIOR_CORE",

@@ -1,3 +1,51 @@
+# 2026-09-30 — Candidate generation / learning / risk correction
+
+Canonical GitHub: `kursadsalis-tech/AG-Crypto-Analyst`, base
+`56f85d11a757732bfbf34307ebf39aa3b23fb814` on `main` (PR #102 is MERGED).
+Branch: `codex/candidate-learning-risk-recovery`.
+This checkpoint supersedes the stale PR #102 instructions below. Those entries
+are preserved as historical evidence, not current canary/merge instructions.
+
+Source-proven causes: historical mean chooses one direction per pattern;
+execution suspension removes that direction without a recent-evidence recovery
+path. Exploration eligibility used observational edge even after execution
+calibration turned negative. Selection dropped core rejection causes. Raw flow
+sign also treated reversal entry evidence as thesis opposition and could count
+brief/reused observations toward early exits.
+
+User-provided live observations (not independently re-read in this change):
+last 20 positions were all LONG, 18 closed (17 losses, one win), two cancelled;
+the only visible SHORT pattern and continuous price/structure patterns were
+suspended. Remaining event-linked patterns were LONG and required contemporary
+causal events. This explains the reported direction collapse/starvation chain;
+it is not an all-history profitability claim.
+
+Changes: preserve full historical patterns/calibration and add cost-positive,
+post-execution closed-observation recovery with reduced PAPER exposure; reject
+non-positive calibrated edge; persist core/downstream reason and LONG/SHORT
+stage counts; require material, independent persistent contradiction for flow
+invalidation, interpreted against immutable entry pattern. Stops/liquidation
+remain immediate. Risk coverage is already dynamic; no risk authority change.
+A new symbol can await the documented 15-minute risk refresh or lack valid
+same-exchange history, and remains fail-closed with a separate audit reason.
+
+No historical DB records were deleted/rewritten, no VM runtime changed, and no
+real-order authority was added. PAPER_ONLY, freshness, immutable thesis, cash,
+asset and portfolio exposure safeguards remain. Development used canonical
+GitHub file APIs and temporary editing/test files, not an old Mac checkout.
+
+Verification and exact review head are recorded in the PR. Targeted regressions
+cover both directions, recovery without blind reactivation/history reset,
+negative-edge rejection, audit causes, noise persistence and immediate stops.
+Live economic/canary performance is not claimed. PR MUST remain unmerged.
+
+Next action requiring the user: authorize one bounded PAPER_ONLY canary of the
+reviewed PR head on `agca-runtime`, GCP `project-6a717580-e37d-48f6-832`,
+`us-east1-b`, canonical `/home/kursadsalis/AG-Crypto-Analyst-cloud`, with explicit
+rollback and no parallel lifecycle authority. No deployment occurred here.
+
+---
+
 # 2026-09-30 — PR #102 REPORTS I/O correction
 
 Exact `f72daf098dd42b60e138d8a066b503b43fa96800` canary sonucu:

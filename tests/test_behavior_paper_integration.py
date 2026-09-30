@@ -175,7 +175,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         row = self.con.execute("""SELECT forecast_id,policy_version,strategy_id,
             decision_source,decision_reference_id FROM paper_agent_positions""").fetchone()
         self.assertEqual(row[0], -7)
-        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V4_EXECUTION_CALIBRATED")
+        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V5_RECOVERY")
         self.assertEqual(row[2:], ("BEHAVIOR_CORE_V4", "MARKET_BEHAVIOR_CORE", 7))
         notional = self.con.execute("SELECT notional FROM paper_agent_positions").fetchone()[0]
         self.assertAlmostEqual(notional, 50.0)
