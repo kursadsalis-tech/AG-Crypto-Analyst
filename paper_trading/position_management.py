@@ -359,10 +359,13 @@ def initialize_open_positions(con, now):
                     100.0 * (technical_stop - float(entry_price))
                     / float(entry_price)
                 )
+            # The 0.5% minimum belongs to plan construction at worst entry.
+            # A better fill may tighten the exact frozen stop below that floor;
+            # post-fill safety still requires a positive distance capped at 5%.
             if (
                 not valid_stop_geometry
                 or not math.isfinite(actual_stop_pct)
-                or not 0.5 <= actual_stop_pct <= 5.0
+                or not 0 < actual_stop_pct <= 5.0
             ):
                 blocked.append((int(position_id), "TECHNICAL_STOP_GEOMETRY_INVALID_AT_FILL"))
                 continue

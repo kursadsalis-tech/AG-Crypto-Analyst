@@ -126,8 +126,12 @@ def health_failures(unit, health, state, expected_sha, now):
         detail = health.get("error_detail") or health.get("error") or health.get("status", "MISSING")
         failures.append(f"HEALTH_NOT_READY:{str(detail)[:400]}")
     for field, expected in spec.versions.items():
-        if health.get(field) != expected:
-            failures.append(f"VERSION_MISMATCH:{field}")
+        actual = health.get(field)
+        if actual != expected:
+            # STARTING is published before workers finish loading their contracts.
+            # Missing versions stay unready; an explicitly wrong version is fatal.
+            pending = health.get("status") == "STARTING" and actual is None
+            failures.append(f"{'VERSION_PENDING' if pending else 'VERSION_MISMATCH'}:{field}")
     if health.get("execution_mode") != "PAPER_ONLY":
         failures.append("PAPER_ONLY_MISSING")
     authority = "real_order_allowed" if unit == "agca-paper-realtime-worker.service" else "may_send_real_orders"

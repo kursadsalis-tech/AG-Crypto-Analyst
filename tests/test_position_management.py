@@ -254,6 +254,112 @@ class PositionManagementTests(unittest.TestCase):
             ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
         )
 
+    def set_frozen_technical_stop(self, direction, entry_price, stop_price,
+                                 entry_low=99.8, entry_high=100.2,
+                                 planned_stop_pct=1.0):
+        plan = {
+            "version": "TECHNICAL_TRADE_PLAN_V3_ORDERED_TARGETS",
+            "symbol": "BTCUSDT", "direction": direction,
+            "execution_market_type": "USD_M_PERPETUAL",
+            "source_reference_price": entry_price,
+            "entry": {"anchor": entry_price, "low": entry_low, "high": entry_high},
+            "risk": {"invalidation_price": stop_price,
+                     "stop_distance_pct": planned_stop_pct},
+            "targets": {
+                "tp1_price": entry_price * (1.01 if direction == "LONG" else .99),
+                "tp2_price": entry_price * (1.02 if direction == "LONG" else .98),
+            },
+        }
+        thesis = {
+            "technical_trade_plan": plan,
+            "execution_risk": {"planned_stop_distance_pct": planned_stop_pct},
+        }
+        plan_json, thesis_json = json.dumps(plan), json.dumps(thesis)
+        self.con.execute("""CREATE TABLE IF NOT EXISTS paper_agent_decision_theses(
+            position_id INTEGER PRIMARY KEY, thesis_json TEXT)""")
+        self.con.execute(
+            "INSERT OR REPLACE INTO paper_agent_decision_theses VALUES(1,?)",
+            (thesis_json,),
+        )
+        self.con.execute("""UPDATE paper_agent_positions
+            SET direction=?,entry_price=?,technical_basis_ratio=1,
+                market_type='USD_M_PERPETUAL',technical_execution_plan_json=?
+            WHERE position_id=1""", (direction, entry_price, plan_json))
+        return plan, plan_json, thesis_json
+
+    def assert_better_fill_preserves_tighter_frozen_stop(
+        self, direction, entry_price, stop_price, entry_low, entry_high,
+    ):
+        worst_entry = entry_high if direction == "LONG" else entry_low
+        planned_stop_pct = 100.0 * abs(worst_entry - stop_price) / worst_entry
+        self.assertGreaterEqual(planned_stop_pct, .5)
+        self.assertLessEqual(planned_stop_pct, 5.0)
+        actual_stop_pct = 100.0 * abs(entry_price - stop_price) / entry_price
+        self.assertGreater(actual_stop_pct, 0)
+        self.assertLess(actual_stop_pct, .5)
+        plan, plan_json, thesis_json = self.set_frozen_technical_stop(
+            direction, entry_price, stop_price, entry_low, entry_high,
+            planned_stop_pct,
+        )
+
+        result = initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+
+        self.assertEqual(result, {"initialized": 1, "blocked": []})
+        self.assertEqual(self.con.execute("""SELECT current_stop_price,
+            stop_distance_pct,tp1_price,tp2_price
+            FROM paper_position_management WHERE position_id=1""").fetchone(), (
+                stop_price, actual_stop_pct,
+                plan["targets"]["tp1_price"], plan["targets"]["tp2_price"],
+            ))
+        self.assertEqual(self.con.execute("""SELECT technical_execution_plan_json,
+            thesis_json FROM paper_agent_positions
+            JOIN paper_agent_decision_theses USING(position_id)
+            WHERE position_id=1""").fetchone(), (plan_json, thesis_json))
+        self.assertEqual(self.con.execute(
+            "SELECT real_order_allowed FROM paper_position_events"
+        ).fetchone()[0], 0)
+
+    def test_long_better_fill_preserves_subminimum_frozen_stop(self):
+        self.assert_better_fill_preserves_tighter_frozen_stop(
+            "LONG", 100.35, 100.0, 100.1, 100.6,
+        )
+
+    def test_short_better_fill_preserves_subminimum_frozen_stop(self):
+        self.assert_better_fill_preserves_tighter_frozen_stop(
+            "SHORT", 0.26421, 0.2651342857142857,
+            0.2638105714285714, 0.26456942857142857,
+        )
+
+    def test_frozen_stop_rejects_unsafe_actual_fill_distance(self):
+        for direction, wrong_side, over_max in (("LONG", 101.0, 94.99),
+                                                ("SHORT", 99.0, 105.01)):
+            for stop_price in (wrong_side, over_max, 100.0, 0.0, -1.0,
+                               float("nan"), float("inf"), -float("inf")):
+                with self.subTest(direction=direction, stop_price=stop_price):
+                    self.set_frozen_technical_stop(direction, 100.0, stop_price)
+                    result = initialize_open_positions(
+                        self.con, ENTRY + timedelta(seconds=1),
+                    )
+                    self.assertEqual(result, {"initialized": 0, "blocked": [
+                        (1, "TECHNICAL_STOP_GEOMETRY_INVALID_AT_FILL"),
+                    ]})
+                    self.assertEqual(self.con.execute(
+                        "SELECT COUNT(*) FROM paper_position_management"
+                    ).fetchone()[0], 0)
+
+    def test_frozen_stop_accepts_exact_five_percent_actual_distance(self):
+        for direction, stop_price in (("LONG", 95.0), ("SHORT", 105.0)):
+            with self.subTest(direction=direction):
+                self.con.execute("DELETE FROM paper_position_management")
+                self.set_frozen_technical_stop(direction, 100.0, stop_price)
+                result = initialize_open_positions(
+                    self.con, ENTRY + timedelta(seconds=1),
+                )
+                self.assertEqual(result, {"initialized": 1, "blocked": []})
+                self.assertEqual(self.con.execute("""SELECT current_stop_price,
+                    stop_distance_pct FROM paper_position_management""").fetchone(),
+                    (stop_price, 5.0))
+
     def test_frozen_technical_plan_initializes_without_entry_risk_snapshot(self):
         self.con.execute("""
             CREATE TABLE paper_agent_decision_theses(

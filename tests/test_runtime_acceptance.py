@@ -124,6 +124,81 @@ class RuntimeAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.run_acceptance(health_reader=old_then_current)["status"], "ACCEPTED")
         self.assertEqual(self.clock.elapsed, 15)
 
+    def starting_health(self, path):
+        health = self.health(path)
+        return {field: ("STARTING" if field == "status" else health[field])
+                for field in ("status", "at", "process_source", "health_contract_version")}
+
+    def test_current_pid_starting_waits_for_versions_and_full_readiness(self):
+        for pending in ("absent", "null"):
+            with self.subTest(pending=pending):
+                self.clock = FakeClock()
+                def starting_then_ready(path):
+                    if self.clock.elapsed >= 5:
+                        return self.health(path)
+                    health = self.starting_health(path)
+                    if pending == "null":
+                        _, spec = self.spec_by_file[Path(path).name]
+                        health.update({field: None for field in spec.versions if field not in health})
+                    return health
+                result = self.run_acceptance(health_reader=starting_then_ready)
+                self.assertEqual(result["status"], "ACCEPTED")
+                self.assertEqual(result["sample_count"], 4)
+                self.assertEqual(result["stable_window_seconds"], 10)
+                self.assertEqual(self.clock.elapsed, 15)
+
+    def test_starting_with_explicit_wrong_version_fails_fast(self):
+        for field in acceptance.SERVICES["agca-paper-realtime-worker.service"].versions:
+            for value in ("OLD", ""):
+                with self.subTest(field=field, value=value):
+                    self.clock = FakeClock()
+                    def invalid(path):
+                        health = self.starting_health(path)
+                        health[field] = value
+                        return health
+                    with self.assertRaisesRegex(acceptance.AcceptanceError, "VERSION_MISMATCH:" + field):
+                        self.run_acceptance(health_reader=invalid)
+                    self.assertEqual(self.clock.elapsed, 0)
+
+    def test_current_pid_starting_times_out_without_full_health(self):
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "RUNTIME_READINESS_TIMEOUT:.*HEALTH_NOT_READY:STARTING"):
+            self.run_acceptance(health_reader=self.starting_health)
+        self.assertEqual(self.clock.elapsed, 20)
+
+    def test_starting_never_defers_wrong_sha_or_dirty_source(self):
+        for field, value, failure in (("git_sha", "b" * 40, "PROCESS_SHA_MISMATCH"),
+                                      ("git_dirty", True, "PROCESS_SOURCE_NOT_CLEAN")):
+            with self.subTest(field=field):
+                self.clock = FakeClock()
+                def invalid(path):
+                    health = self.starting_health(path)
+                    health["process_source"][field] = value
+                    return health
+                with self.assertRaisesRegex(acceptance.AcceptanceError, failure):
+                    self.run_acceptance(health_reader=invalid)
+                self.assertEqual(self.clock.elapsed, 0)
+
+    def test_failure_status_with_missing_versions_still_fails_fast(self):
+        for status in ("FAILED", "ERROR", "STARTUP_FAILED"):
+            with self.subTest(status=status):
+                self.clock = FakeClock()
+                def failed(path):
+                    health = self.starting_health(path)
+                    health.update(status=status, error_detail="startup failed")
+                    return health
+                with self.assertRaisesRegex(acceptance.AcceptanceError, "startup failed"):
+                    self.run_acceptance(health_reader=failed)
+                self.assertEqual(self.clock.elapsed, 0)
+
+    def test_ready_health_with_missing_version_still_fails_fast(self):
+        def incomplete(path):
+            health = self.health(path)
+            del health["core_version"]
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "VERSION_MISMATCH:core_version"):
+            self.run_acceptance(health_reader=incomplete)
+        self.assertEqual(self.clock.elapsed, 0)
+
     def test_startup_failure_reports_actual_error_without_waiting(self):
         def failed(path):
             health = self.health(path)
