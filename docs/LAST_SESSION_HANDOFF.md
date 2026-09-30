@@ -1,3 +1,22 @@
+# 2026-09-30 — PR #102 REPORTS I/O correction
+
+Exact `f72daf098dd42b60e138d8a066b503b43fa96800` canary sonucu:
+- cold 503: 0.750 s
+- generation 0 / attempts 1 / failures 0
+- RUNTIME_VISIBILITY aşaması geçildi
+- REPORTS SAMPLE 5–9: D state, `folio_wait_bit_common`
+- REPORTS phase elapsed: 0.247 → 2.265 s
+- worker diff boş; realtime/observer/technical restart olmadı
+- rollback production paneline temiz döndü
+
+Düzeltme: report_json arşiv blob'larını overview hot path'inden çıkar;
+son 30 raporu yalnız report_date referansı olarak gösterir. Closed positions
+global exit_time sort'u yerine persisted position_id DESC ile bounded okunur.
+Runtime authority recent-event evidence son 10 event'e indirilir. DB migration
+yok. Yeni CI geçmeden canary çalıştırma; PR #102 merge edilmemeli.
+
+---
+
 # 2026-09-30 — PR #102 RUNTIME_VISIBILITY scan correction
 
 Exact `4e9cb31520d076e25332b697a2ea37362d4bdd1f` canary health-ready olduktan

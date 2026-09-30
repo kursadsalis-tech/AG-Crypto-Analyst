@@ -1,3 +1,25 @@
+# REPORTS / closed-position hot-path düzeltmesi — 2026-09-30
+
+Exact `f72daf098dd42b60e138d8a066b503b43fa96800` canary'sinde önceki
+`RUNTIME_VISIBILITY` full-history taraması aşılmış olsa da refresh
+`REPORTS` aşamasında I/O beklemesine girdi. SAMPLE 5–9 boyunca thread
+`D` state ve `wchan=folio_wait_bit_common` kaldı; phase elapsed
+0.247 s'den 2.265 s'ye ilerlerken snapshot generation hâlâ 0'dı.
+
+Panel hot path'i artık `paper_agent_daily_reports.report_json` blob'larını
+okumaz. Son 30 rapor yalnız `report_date` primary-key referansları olarak
+gösterilir ve detay `HOT_PATH_DIŞI` diye etiketlenir. Böylece arşiv raporu,
+2 saniyelik canlı snapshot yenilemesini bloklayamaz.
+
+Aynı audit'te sıradaki `CLOSED_POSITIONS` sorgusunun global `exit_time`
+sort'u da kaldırıldı. Son 100 kapanmış pozisyon persisted `position_id DESC`
+sırasıyla bounded okunur; production DB migration yoktur. Runtime authority
+kanıt kuyruğu da 50 yerine son 10 persisted event ile bounded tutulur ve alan
+adı bunu açıkça belirtir. All-history gerçek-emir doğrulaması hot path dışında
+kalmaya devam eder.
+
+---
+
 # RUNTIME_VISIBILITY hot-path düzeltmesi — 2026-09-30
 
 Exact `4e9cb31520d076e25332b697a2ea37362d4bdd1f` canary'sinde refresh

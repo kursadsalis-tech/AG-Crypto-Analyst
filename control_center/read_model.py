@@ -282,27 +282,29 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
         ).fetchone()
         if has_reports:
             columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
-            if {"report_date", "created_at", "report_json"}.issubset(columns):
-                for report_date, created_at, report_json in con.execute(
-                    """SELECT report_date,created_at,report_json
+            if "report_date" in columns:
+                # The JSON report bodies are archival evidence and may live on
+                # overflow pages.  Do not page them into the 2-second live
+                # overview hot path.  The primary-key date index can satisfy
+                # this bounded reference list without reading report_json.
+                for (report_date,) in con.execute(
+                    """SELECT report_date
                        FROM paper_agent_daily_reports
-                       ORDER BY report_date DESC,created_at DESC LIMIT 30"""
+                       ORDER BY report_date DESC LIMIT 30"""
                 ).fetchall():
                     reports.append({
                         "report_date": report_date,
-                        "created_at": created_at,
-                        "report": _safe_json_object(report_json),
+                        "created_at": None,
+                        "report": {"detail_status": "HOT_PATH_DIŞI"},
                     })
         progress("CLOSED_POSITIONS")
         closed_rows = con.execute(
             """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
-                      exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
-               FROM (
-                   SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
-                          exit_time,exit_price,quantity,net_pnl,close_reason,
-                          entry_fee + exit_fee AS total_fees
-                   FROM paper_agent_positions WHERE status='CLOSED'
-               ) ORDER BY exit_time DESC,position_id DESC LIMIT 100"""
+                      exit_time,exit_price,quantity,net_pnl,close_reason,
+                      entry_fee + exit_fee AS total_fees
+               FROM paper_agent_positions NOT INDEXED
+               WHERE status='CLOSED'
+               ORDER BY position_id DESC LIMIT 100"""
         ).fetchall()
     finally:
         con.close()

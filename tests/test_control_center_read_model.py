@@ -342,11 +342,23 @@ class ControlCenterReadModelTests(unittest.TestCase):
             con.close()
 
             authority = result["Yetki ve çalışan kaynak"]
-            self.assertEqual(authority["Son 50 eventte gerçek emir"], 0)
+            self.assertEqual(authority["Son 10 eventte gerçek emir"], 0)
             self.assertEqual(authority["Tam geçmiş gerçek emir taraması"], "HOT_PATH_DIŞI")
             sql = "\n".join(traced).upper()
             self.assertNotIn("COUNT(*) FROM PAPER_POSITION_EVENTS", sql)
-            self.assertIn("ORDER BY EVENT_ID DESC LIMIT 50", sql)
+            self.assertIn("ORDER BY EVENT_ID DESC LIMIT 10", sql)
+
+
+    def test_panel_hot_path_does_not_read_report_json_or_sort_closed_by_exit_time(self):
+        source = Path(__import__("control_center.read_model", fromlist=["x"]).__file__).read_text()
+        reports = source[source.index('progress("REPORTS")'):source.index('progress("CLOSED_POSITIONS")')]
+        closed = source[source.index('progress("CLOSED_POSITIONS")'):source.index('progress("PROJECTION")')]
+        self.assertNotIn("SELECT report_date,created_at,report_json", reports)
+        self.assertIn("SELECT report_date", reports)
+        self.assertIn("ORDER BY report_date DESC LIMIT 30", reports)
+        self.assertIn("paper_agent_positions NOT INDEXED", closed)
+        self.assertIn("ORDER BY position_id DESC LIMIT 100", closed)
+        self.assertNotIn("ORDER BY exit_time", closed)
 
 
     def test_detects_silent_work_stall_with_live_worker_and_market(self):

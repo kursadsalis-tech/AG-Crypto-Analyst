@@ -41,7 +41,7 @@ def runtime_visibility(con, health, brain, now):
     # attestation belongs to an explicit offline/maintenance check.
     recent_execution_flags = rows(
         con, "paper_position_events", ["event_id", "real_order_allowed"],
-        "event_id", limit=50,
+        "event_id", limit=10,
     )
     recent_real_order_events = (
         sum(1 for row in recent_execution_flags if row["real_order_allowed"] != 0)
@@ -80,7 +80,7 @@ def runtime_visibility(con, health, brain, now):
             # Backward-compatible field: all-history count is intentionally not
             # computed in the panel hot path, so never imply a zero count.
             "Gerçek emir eventleri": None,
-            "Son 50 eventte gerçek emir": recent_real_order_events,
+            "Son 10 eventte gerçek emir": recent_real_order_events,
             "Tam geçmiş gerçek emir taraması": "HOT_PATH_DIŞI",
         },
         "Bekleyen pozisyonlar": rows(con, "paper_agent_positions",
