@@ -60,7 +60,145 @@ class PositionManagementTests(unittest.TestCase):
             market_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
             quote_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
             liquidity_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
+            trade_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
         )
+
+    def set_flow_thesis(self, pattern, direction="LONG"):
+        self.con.execute("""UPDATE paper_agent_positions SET direction=?,
+            independent_signal_count=1,signal_sources_json='["MARKET_BEHAVIOR"]'
+            WHERE position_id=1""", (direction,))
+        self.con.execute("""CREATE TABLE IF NOT EXISTS paper_agent_decision_theses(
+            position_id INTEGER PRIMARY KEY,thesis_json TEXT)""")
+        self.con.execute("INSERT OR REPLACE INTO paper_agent_decision_theses VALUES(1,?)", (
+            json.dumps({"evidence_used": {"learned_pattern": {
+                "flow_pattern": pattern, "direction": direction,
+            }}}),
+        ))
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+
+    def test_weak_flow_noise_and_absorption_do_not_invalidate_continuation(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in range(2, 23):
+            book, taker = (-.03, -.02) if seconds % 2 else (-.9, .8)
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=book, taker=taker),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_short_material_burst_and_neutral_gap_reset_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds, opposing in ((2, True), (3, True), (4, True), (5, False),
+                                  (7, True), (12, True), (12.1, False), (17, True)):
+            strength = -.8 if opposing else -.01
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=strength, taker=strength),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 1)
+
+    def assert_persistent_continuation_failure_closes(self, direction):
+        self.set_flow_thesis("FLOW_POS" if direction == "LONG" else "FLOW_NEG", direction)
+        original_thesis = self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0]
+        strength = -.8 if direction == "LONG" else .8
+        for seconds in (2, 7, 12):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=strength, taker=strength),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "POSITION_CLOSED" if seconds == 12 else "HOLD")
+        self.assertEqual(result["reason"], "THESIS_INVALIDATED")
+        evidence = json.loads(self.con.execute("""SELECT evidence_json
+            FROM paper_position_events WHERE event_type='POSITION_CLOSED'""").fetchone()[0])
+        confirmation = evidence["position_decision"]["flow_confirmation"]
+        self.assertEqual(confirmation["status"], "MATERIAL_OPPOSITION_CONFIRMED")
+        self.assertEqual(confirmation["confirmations_required"], 3)
+        self.assertEqual(evidence["position_decision"]["opposing_events_after"], 3)
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM paper_position_events WHERE real_order_allowed!=0"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0], original_thesis)
+
+    def test_persistent_material_long_continuation_failure_closes(self):
+        self.assert_persistent_continuation_failure_closes("LONG")
+
+    def test_persistent_material_short_continuation_failure_closes(self):
+        self.assert_persistent_continuation_failure_closes("SHORT")
+
+    def test_reversal_entry_flow_does_not_disprove_its_own_thesis(self):
+        self.set_flow_thesis("FLOW_NEG")
+        for seconds in (2, 7, 12):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=-.9, taker=-.9),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        stopped = process_market_state(
+            self.con, self.live(98, 12.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=12.1), self.rules,
+        )
+        self.assertEqual((stopped["status"], stopped["reason"]),
+                         ("POSITION_CLOSED", "PROTECTIVE_STOP"))
+
+    def test_stale_or_reused_trade_evidence_cannot_accumulate_confirmations(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in (2, 3, 7, 12):
+            live = self.live(100, seconds, book=-.9, taker=-.9)
+            live.trade_timestamp_ms = int((ENTRY + timedelta(seconds=2)).timestamp()*1000)
+            result = process_market_state(
+                self.con, live, ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_missing_flow_and_separated_bursts_do_not_accumulate(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in (2, 7, 30):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=-.9, taker=-.9),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 1)
+        live = self.live(100, 30.1, book=None, taker=-.9)
+        process_market_state(self.con, live, ENTRY + timedelta(seconds=30.1), self.rules)
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_protective_stop_does_not_wait_for_flow_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        result = process_market_state(
+            self.con, self.live(98, 1.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=1.1), self.rules,
+        )
+        self.assertEqual((result["status"], result["reason"]),
+                         ("POSITION_CLOSED", "PROTECTIVE_STOP"))
+
+    def test_liquidation_does_not_wait_for_flow_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        self.con.execute("""UPDATE paper_agent_positions SET leverage=5,
+            margin_allocated=200,liquidation_price=80 WHERE position_id=1""")
+        result = process_market_state(
+            self.con, self.live(79, 1.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=1.1), self.rules,
+        )
+        self.assertEqual((result["status"], result["reason"]),
+                         ("POSITION_CLOSED", "PAPER_5X_LIQUIDATION"))
 
     def test_initializes_stop_from_entry_risk_snapshot(self):
         result = initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))

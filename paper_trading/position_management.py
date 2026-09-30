@@ -12,11 +12,85 @@ from paper_trading.execution_contract import ExecutionFill, ExecutionDecision, M
 from paper_trading.futures_costs import (
     FuturesCostError, directional_funding_payment, liquidation_breached,
 )
-from paper_trading.position_policy import Decision, PositionState, evaluate, initialize
+from paper_trading.position_policy import (
+    THESIS_BREAK_EVENTS, Decision, PositionState, evaluate, initialize,
+)
 from analysis import technical_trade_plan
 
 
-VERSION = "PAPER_POSITION_MANAGER_V1"
+VERSION = "PAPER_POSITION_MANAGER_V2_CONFIRMED_FLOW"
+FLOW_OPPOSITION_THRESHOLD = 0.20
+FLOW_CONFIRMATION_SECONDS = 5.0
+FLOW_EVIDENCE_MAX_AGE_MS = 2_000
+
+
+def _flow_confirmation(live, direction, observed_at, market_at,
+                       opposing_events, last_thesis_at):
+    """Confirm material continuation failure, never merely a sign near zero.
+
+    Confirmation samples must have new depth AND trade evidence. Their spacing
+    measures persistence of contradictory evidence, not position age. Missing,
+    neutral or supportive evidence breaks the sequence; price stops are evaluated
+    independently on every event, including during this confirmation window.
+    """
+    evidence = {
+        "opposition_threshold": FLOW_OPPOSITION_THRESHOLD,
+        "confirmation_interval_seconds": FLOW_CONFIRMATION_SECONDS,
+        "confirmations_required": THESIS_BREAK_EVENTS,
+        "trade_timestamp_ms": live.trade_timestamp_ms,
+        "liquidity_timestamp_ms": live.liquidity_timestamp_ms,
+    }
+    observed_ms = observed_at.timestamp() * 1000
+    stamps = (live.trade_timestamp_ms, live.liquidity_timestamp_ms)
+    values = (live.book_imbalance, live.taker_imbalance)
+    valid = all(
+        isinstance(value, (int, float)) and math.isfinite(value)
+        and -1.0 <= value <= 1.0 for value in values
+    ) and all(
+        isinstance(stamp, (int, float)) and math.isfinite(stamp)
+        and 0 <= observed_ms - stamp <= FLOW_EVIDENCE_MAX_AGE_MS
+        for stamp in stamps
+    )
+    if not valid:
+        evidence["status"] = "MISSING_OR_STALE_FLOW_EVIDENCE"
+        return None, 0, None, evidence
+    sign = 1 if direction == "LONG" else -1
+    opposing = all(sign * value <= -FLOW_OPPOSITION_THRESHOLD for value in values)
+    if not opposing:
+        evidence["status"] = "NO_MATERIAL_JOINT_OPPOSITION"
+        return True, 0, None, evidence
+    previous = parse(last_thesis_at) if last_thesis_at and opposing_events else None
+    if previous is not None and (
+        market_at - previous
+    ).total_seconds() > 2 * FLOW_CONFIRMATION_SECONDS:
+        # Widely separated bursts are not sustained contradictory evidence.
+        opposing_events, previous, last_thesis_at = 0, None, None
+    if previous is not None and (
+        (market_at - previous).total_seconds() < FLOW_CONFIRMATION_SECONDS
+        or min(stamps) <= previous.timestamp() * 1000
+    ):
+        evidence["status"] = "AWAITING_INDEPENDENT_FLOW_CONFIRMATION"
+        return None, opposing_events, last_thesis_at, evidence
+    evidence["status"] = "MATERIAL_OPPOSITION_CONFIRMED"
+    return False, opposing_events, iso(market_at), evidence
+
+
+def _entry_flow_pattern(con, position_id):
+    """Read the immutable setup; unknown legacy setups have no sign thesis."""
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='paper_agent_decision_theses'"
+    ).fetchone():
+        return None
+    row = con.execute(
+        "SELECT thesis_json FROM paper_agent_decision_theses WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    try:
+        thesis = json.loads(row[0]) if row else {}
+        return thesis["evidence_used"]["learned_pattern"]["flow_pattern"]
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def iso(value):
@@ -447,13 +521,25 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     flow_is_entire_thesis = (
         int(signal_count or 0) == 1 and signal_sources == {"MARKET_BEHAVIOR"}
     )
-    raw_thesis = live.thesis_supported(direction) if flow_is_entire_thesis else None
-    thesis_due = (
-        last_thesis_at is None
-        or (market_at - parse(last_thesis_at)).total_seconds() >= 1.0
+    entry_flow_pattern = (
+        _entry_flow_pattern(con, position_id) if flow_is_entire_thesis else None
     )
-    thesis_signal = raw_thesis if thesis_due else None
-    next_thesis_at = iso(market_at) if thesis_due and raw_thesis is not None else last_thesis_at
+    # Reversal/absorption setups deliberately enter against one or both flow
+    # signs. Those original signs cannot by themselves invalidate that thesis.
+    # Such setups retain their frozen structural stop and maximum timeout.
+    flow_invalidation_applicable = flow_is_entire_thesis and (
+        (direction == "LONG" and entry_flow_pattern == "FLOW_POS")
+        or (direction == "SHORT" and entry_flow_pattern == "FLOW_NEG")
+    )
+    thesis_signal, confirmed_opposing, next_thesis_at = None, 0, None
+    confirmation_evidence = {"status": "FLOW_INVALIDATION_NOT_DEFINED_FOR_SETUP"}
+    if flow_invalidation_applicable:
+        (thesis_signal, confirmed_opposing, next_thesis_at,
+         confirmation_evidence) = _flow_confirmation(
+            live, direction, observed_at, market_at,
+            int(opposing_events), last_thesis_at,
+        )
+    confirmation_evidence["entry_flow_pattern"] = entry_flow_pattern
     state = PositionState(
         direction=direction, entry_price=float(entry_price),
         remaining_fraction=float(remaining_qty) / float(original_qty),
@@ -462,7 +548,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         tp1_price=(float(tp1_price) if tp1_price is not None else None),
         tp2_price=(float(tp2_price) if tp2_price is not None else None),
         tp1_done=bool(tp1_done), tp2_done=bool(tp2_done),
-        opposing_events=int(opposing_events),
+        opposing_events=confirmed_opposing,
     )
     decision = evaluate(
         state, float(live.last_price), thesis_supported=thesis_signal,
@@ -488,7 +574,8 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         "position_decision": {
             "action": decision.action, "reason": decision.reason,
             "thesis_supported": thesis_signal,
-            "thesis_signal_applicable": flow_is_entire_thesis,
+            "thesis_signal_applicable": flow_invalidation_applicable,
+            "flow_confirmation": confirmation_evidence,
             "opposing_events_before": int(opposing_events),
             "opposing_events_after": int(decision.opposing_events),
             "protective_stop": float(stop_price),
