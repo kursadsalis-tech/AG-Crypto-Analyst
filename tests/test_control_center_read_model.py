@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from control_center.read_model import overview
+from control_center.telemetry import runtime_visibility
 
 
 class ControlCenterReadModelTests(unittest.TestCase):
@@ -241,6 +242,123 @@ class ControlCenterReadModelTests(unittest.TestCase):
             self.assertFalse(result["system"]["worker_healthy"])
             self.assertIsNone(result["system"]["heartbeat_age_seconds"])
             self.assertEqual(result["learning"]["evidence"], {})
+
+
+    def test_activity_uses_last_persisted_primary_key_not_global_timestamp_sort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "runtime.db"
+            state = Path(tmp) / "market.json"
+            health = Path(tmp) / "health.json"
+            now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
+            con = sqlite3.connect(db)
+            con.executescript("""
+                CREATE TABLE paper_agent_portfolio(
+                    portfolio_id INTEGER PRIMARY KEY, initial_capital REAL,
+                    cash REAL, realized_pnl REAL, total_fees REAL);
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY, symbol TEXT, market_type TEXT,
+                    direction TEXT, entry_time TEXT, entry_price REAL, quantity REAL,
+                    notional REAL, leverage REAL, selection_reason TEXT, status TEXT,
+                    decision_source TEXT, decision_reference_id INTEGER,
+                    selected_at TEXT, exit_time TEXT, exit_price REAL, net_pnl REAL,
+                    close_reason TEXT, entry_fee REAL DEFAULT 0, exit_fee REAL DEFAULT 0);
+                CREATE TABLE paper_position_management(
+                    position_id INTEGER PRIMARY KEY, stop_distance_pct REAL,
+                    current_stop_price REAL, tp1_done INTEGER, tp2_done INTEGER,
+                    remaining_quantity REAL);
+                CREATE TABLE paper_behavior_selection_runs(
+                    run_id INTEGER PRIMARY KEY, created_at TEXT);
+                INSERT INTO paper_agent_portfolio VALUES(1,10000,10000,0,0);
+                INSERT INTO paper_behavior_selection_runs VALUES
+                    (1,'2026-09-21T14:59:00+00:00'),
+                    (2,'2026-09-21T14:50:00+00:00');
+            """)
+            con.commit()
+            con.close()
+            state.write_text(json.dumps({
+                "at": now.isoformat(), "execution_mode": "PAPER_ONLY",
+                "real_order_allowed": False, "live_market": [],
+            }))
+            health.write_text(json.dumps({
+                "execution_mode": "PAPER_ONLY", "real_order_allowed": False,
+                "status": "CONNECTED", "at": now.isoformat(), "action": "HOLD",
+            }))
+            result = overview(db, state, health, now=now)
+            stages = {row["name"]: row for row in result["activity"]["stages"]}
+            self.assertEqual(
+                stages["fırsat taraması"]["last_at"],
+                "2026-09-21T14:50:00+00:00",
+            )
+
+    def test_runtime_visibility_uses_bounded_execution_audit_tail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 9, 21, 15, 0, 0, tzinfo=timezone.utc)
+            for name in (
+                "technical-kline-health.json",
+                "market-behavior-health.json",
+                "trade-learning-health.json",
+            ):
+                (root / name).write_text(json.dumps({"at": now.isoformat()}))
+
+            con = sqlite3.connect(":memory:")
+            con.executescript("""
+                CREATE TABLE paper_position_events(
+                    event_id INTEGER PRIMARY KEY,
+                    position_id INTEGER,
+                    observed_at TEXT,
+                    event_type TEXT,
+                    reason TEXT,
+                    stop_before REAL,
+                    stop_after REAL,
+                    real_order_allowed INTEGER);
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY,
+                    symbol TEXT,
+                    direction TEXT,
+                    entry_price REAL,
+                    selection_reason TEXT,
+                    status TEXT);
+            """)
+            con.executemany(
+                "INSERT INTO paper_position_events VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        i, 1, now.isoformat(), "HOLD", "TEST", None, None,
+                        1 if i == 1 else 0,
+                    )
+                    for i in range(1, 61)
+                ],
+            )
+            traced = []
+            con.set_trace_callback(traced.append)
+            with patch.dict("os.environ", {"AGCA_STATE_DIR": str(root)}):
+                result = runtime_visibility(
+                    con,
+                    {"execution_mode": "PAPER_ONLY", "real_order_allowed": False},
+                    {},
+                    now,
+                )
+            con.close()
+
+            authority = result["Yetki ve çalışan kaynak"]
+            self.assertEqual(authority["Son 10 eventte gerçek emir"], 0)
+            self.assertEqual(authority["Tam geçmiş gerçek emir taraması"], "HOT_PATH_DIŞI")
+            sql = "\n".join(traced).upper()
+            self.assertNotIn("COUNT(*) FROM PAPER_POSITION_EVENTS", sql)
+            self.assertIn("ORDER BY EVENT_ID DESC LIMIT 10", sql)
+
+
+    def test_panel_hot_path_does_not_read_report_json_or_sort_closed_by_exit_time(self):
+        source = Path(__import__("control_center.read_model", fromlist=["x"]).__file__).read_text()
+        reports = source[source.index('progress("REPORTS")'):source.index('progress("CLOSED_POSITIONS")')]
+        closed = source[source.index('progress("CLOSED_POSITIONS")'):source.index('progress("PROJECTION")')]
+        self.assertNotIn("SELECT report_date,created_at,report_json", reports)
+        self.assertIn("SELECT report_date", reports)
+        self.assertIn("ORDER BY report_date DESC LIMIT 30", reports)
+        self.assertIn("paper_agent_positions NOT INDEXED", closed)
+        self.assertIn("ORDER BY position_id DESC LIMIT 100", closed)
+        self.assertNotIn("ORDER BY exit_time", closed)
 
 
     def test_detects_silent_work_stall_with_live_worker_and_market(self):

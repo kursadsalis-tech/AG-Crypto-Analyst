@@ -1,3 +1,169 @@
+# 2026-09-30 — PR #102 REPORTS I/O correction
+
+Exact `f72daf098dd42b60e138d8a066b503b43fa96800` canary sonucu:
+- cold 503: 0.750 s
+- generation 0 / attempts 1 / failures 0
+- RUNTIME_VISIBILITY aşaması geçildi
+- REPORTS SAMPLE 5–9: D state, `folio_wait_bit_common`
+- REPORTS phase elapsed: 0.247 → 2.265 s
+- worker diff boş; realtime/observer/technical restart olmadı
+- rollback production paneline temiz döndü
+
+Düzeltme: report_json arşiv blob'larını overview hot path'inden çıkar;
+son 30 raporu yalnız report_date referansı olarak gösterir. Closed positions
+global exit_time sort'u yerine persisted position_id DESC ile bounded okunur.
+Runtime authority recent-event evidence son 10 event'e indirilir. DB migration
+yok. Yeni CI geçmeden canary çalıştırma; PR #102 merge edilmemeli.
+
+---
+
+# 2026-09-30 — PR #102 RUNTIME_VISIBILITY scan correction
+
+Exact `4e9cb31520d076e25332b697a2ea37362d4bdd1f` canary health-ready olduktan
+sonra acceptance başladı. Cold 503 0.513 s döndü. Refresh generation=0 iken:
+- SAMPLE 1: INPUTS, health 0.002 s, thread R
+- SAMPLE 2: RUNTIME_VISIBILITY, health 0.735 s, thread D,
+  `wchan=folio_wait_bit_common`, thread CPU ~17.3 ms, runqueue wait ~985.7 ms
+
+Root cause code-level olarak `runtime_visibility` içindeki all-history
+`COUNT(*) ... real_order_allowed != 0` sorgusuna indirildi. Bu sorgu her
+snapshot'ta büyük evidence payload'lı event tablosunu tarıyordu.
+
+Düzeltme all-history taramayı hot path'ten çıkarır ve son 50 event'i rowid/PK
+üzerinden bounded okur. UI bunu yalnız son-50 kanıtı olarak etiketler; all-time
+kanıt için `HOT_PATH_DIŞI` beyanı vardır. Production DB schema migration yok.
+Realtime/observer/technical worker'lara dokunma. Yeni CI geçmeden canary
+çalıştırma; PR #102 merge edilmemeli.
+---
+
+# 2026-09-30 — PR #102 ACTIVITY primary-key seek correction
+
+Exact `7cb2a92b09f8ad1b978dcfd3f0293d40e2a40b73` index/migration checkpoint'i
+offline CI'da 151 integration + 586 broad regression geçti, ancak production
+migration 60 saniyede tamamlanmadı (`EXIT=124`). Migration prosesi kalmadı,
+dört hedef indexin tamamı yoktu; transaction commit edilmedi. Aynı migration
+tekrar denenmeyecek.
+
+Read-only production benchmark'ı global timestamp sort yerine son
+`INTEGER PRIMARY KEY` satırını okumanın selection 4.70 ms, positions 0.06 ms,
+events 0.05 ms, learning 0.05 ms olduğunu gösterdi. Positions/events/learning
+timestamp sonuçları önceki global MAX(timestamp) sonuçlarıyla aynıydı; selection
+canlı tarama nedeniyle arada yeni run satırları aldı.
+
+Bu checkpoint timestamp indexlerini ve migration yolunu tamamen geri çıkarır.
+`control_center.read_model` ACTIVITY görünürlüğünü
+`ORDER BY <canonical integer primary key> DESC LIMIT 1` ile son persisted audit
+satırından üretir. Bunun için production DB yazısı gerekmez. Regression testi
+global timestamp sort ile primary-key persisted-order semantiğini kasıtlı olarak
+ayırt eder.
+
+PR #102 merge edilmemeli; exact yeni head CI geçtikten sonra yalnız panel için
+izole canary yapılmalı. Realtime/observer/technical worker'lara dokunma. Başarılı
+canary de önce rollback edilip kanıt incelenmeden merge kararı verme.
+
+---
+
+
+# 2026-09-29 — PR #102 başarısız panel canary revizyonu
+
+Branch: `codex/panel-single-flight-cache`; parent/başarısız canary head:
+`7c77d4f90c08c6cb56c1a00fb6ebc7a0ad076f4e`.
+Canonical main: `b878c17553f8d53ae1e92aa858b50d1d0fc945e9`.
+Checkout: `/workspace/scratch/d2b5aca05bec/AG-Crypto-Analyst`.
+Checkpoint: `Diagnose panel refresh stalls and restore neutral scheduling`.
+PR: https://github.com/kursadsalis-tech/AG-Crypto-Analyst/pull/102 — **MERGE ETME**.
+
+Önceki çalışma bulundu: aynı branch ve exact 7c77 commit üzerinden devam edildi;
+yeni baştan cache uygulanmadı. Kullanıcı canary'nin yalnız panel üzerinde
+çalıştığını, generation=0 ile 69.512 s takıldığını bildirdi. 10 s CPU örneği:
+usage +606552 µs, throttle +4 / +361544 µs. %50 cap altında düşük CPU tüketimi
+tek başına hard quota açıklamasını desteklemiyor. Nice/weight kaynaklı scheduler
+beklemesi güçlü aday; production I/O/SQLite lock ve ancestor quota dışlanmadı.
+
+Yerel kontrollü deney (50k kapalı pozisyon, 12 snapshot/satır): doğrudan Nice0
+0.9260 s wall / 0.9259 s CPU; thread Nice0 1.0055 / 1.0053. Tek aynı-CPU rakibi
+varken thread Nice0 2.2432 / 1.1235; Nice10 11.0067 / 1.0736. Payload'lar aynı,
+DB değişmedi. CPUWeight cgroup A/B burada yapılmadı; bu production minimum veya
+kesin VM kök nedeni kanıtı değildir.
+
+Tamamlanan revizyon: panel Nice=0/CPUWeight=100; hard CPUQuota=50% ve MemoryMax=256M
+korundu. Cache compute hâlâ kilit dışında, tek uçuş; sabit aşama/elapsed/native
+TID/checkpoint CPU telemetry eklendi. Snapshot read_model checkpoint'leri SQL'i
+ve readonly sözleşmeyi değiştirmez. UI aşamayı gösterir. STALE/UNAVAILABLE,
+feedback diagnostic-only, PAPER_ONLY ve single authority değişmez. Worker kodu,
+unit'leri, priority değerleri ve eski dirty checkout/açık PR'lar değişmedi.
+
+`docs/PANEL_SNAPSHOT_CACHE.md` önceki 120 s kabul ve merge-sonrası talimatlarının
+yerine unmerged exact-head worktree, yalnız runtime panel drop-in'i, iki refresh,
+8 s readiness sınırı, 25 s probe dış sınırı ve her sonuçta otomatik rollback
+planını içerir. `scripts/panel_cache_acceptance.py` GET-only; phase, /proc TID
+schedstat/state/wchan ve leaf+ancestor cgroup örneklerini kaydeder. Worker
+identity ve quote/lag gate'leri vardır. Kısa smoke, uzun yükte p95/minimum kaynak
+ispatı değildir. Bir sonraki karar rapora bağlıdır; kör kota artışı yapma.
+
+Doğrulama: 16 cache/HTTP/UI testi geçti. Full offline suite **580/580**, bir kez,
+11.949 s (Python 3.12); iki probe testi buna dahil. CI integration listesine
+probe testleri eklendi. Canary Bash syntax kontrol edildi; komutlar canlıda
+çalıştırılmadı. CI ve final head SHA PR gövdesinde tutulur; yerel başarı CI veya
+canlı kabul olarak sunulmaz.
+
+Dış durum: kullanıcı production'ı eski cloud checkout / %25 / Nice0 / explicit
+CPUWeight yok unit'ine başarıyla döndürdü; 127.0.0.1:8787 READ_ONLY health başarılı.
+Bu çalışma VM deployment/restart yapmadı. PR açık kalmalı. Bekleyen iş yeni
+head'in kısa canlı kabulüdür; worker'ları yeniden başlatma. Repo hygiene ayrı
+TODO; bu görevde temizlik yok. Aşağıdaki önceki Nice10/weight20 önerisi ve uzun
+kabul planı yalnız tarihsel kayıttır, geçerli talimat değildir.
+
+---
+
+# 2026-09-28 — Panel single-flight cache continuation
+
+Current branch: `codex/panel-single-flight-cache`.
+Canonical base: `b878c17553f8d53ae1e92aa858b50d1d0fc945e9` (merged #101).
+Checkpoint: `Share read-only panel snapshots with explicit stale telemetry`.
+Work checkout: `/workspace/scratch/d2b5aca05bec/AG-Crypto-Analyst`.
+Repository: `kursadsalis-tech/AG-Crypto-Analyst`; the GitHub PR branch is durable.
+
+Recovery: previous Work thread `01a0e7c0-b473-7381-b181-b23ece755c6b`
+did not expose a recoverable local checkout/worktree/patch. The historical Mac
+path is inaccessible here. Checked all 103 published branch names, current refs,
+recent commits and seven open historical PRs; no cache work was published.
+Reused the merged panel code on exact canonical main and implemented only the
+missing cache/UI/resource correction. Mac dirty work and old PRs were untouched;
+repo hygiene remains a separate TODO. This is not a project restart.
+
+Completed: one nonblocking, request-driven snapshot computation per panel
+server; 2 s completion TTL; immutable encoded payload shared by all clients;
+503 while cold; explicit STALE fallback and bounded retry after any failed
+compute/encoding; monotonic ages, wall/thread CPU duration, saturating counters,
+cache liveness telemetry and UI expiry/recovery labels. Mismatch POST remains
+diagnostic-only. No changes to realtime, observer, technical workers or their
+services; PAPER_ONLY and one trade authority remain intact.
+
+Resource proposal: retain a hard cap at 50%, add CPUWeight=20 and Nice=10;
+keep MemoryMax=256M and existing filesystem restrictions. Production minimum
+is not claimed: only the supplied 25% failure evidence exists. Review the
+bounded two-client acceptance and worker-latency gates before live acceptance.
+
+Verification on Python 3.12: 52 focused tests, 141 PAPER integration tests and
+576 full regression tests passed (full suite 13.546 s). Fourteen new cache/HTTP/
+UI tests cover exact single-flight, fast reuse, STALE/error recovery, retry
+backoff, liveness, readonly SQLite and mismatch authority. Existing injected
+remote-store errors/spot fallback and ResourceWarning output are test output;
+no production DB was used. CI is required on the final PR head; its current
+status and exact SHA are recorded on the PR, not inferred from these local runs.
+
+External state: PR for review only, MUST remain UNMERGED. No VM access,
+deployment, worker restart, DB/policy mutation or real order occurred. User's
+production evidence is reproduced with attribution in
+`docs/PANEL_SNAPSHOT_CACHE.md`, which contains exact isolated panel-only install,
+120 s two-client/30 s idle acceptance, process identity checks and rollback.
+This supersedes earlier claims below that #101 is still open or that realtime
+needs restarting for this panel task. Remaining: PR CI/review, then separately
+authorized live panel acceptance. Do not use the general worker deploy script.
+
+---
+
 # 2026-09-28 — PR #101 mismatch quote-evidence correction
 
 Branch `codex/panel-observability-audit`, parent `1503f4e182a3cfb71582b4089ab2513d7be4fd11`.

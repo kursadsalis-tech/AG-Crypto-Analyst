@@ -33,6 +33,20 @@ def runtime_visibility(con, health, brain, now):
     contract = observer.get("collection_contract") or {}
     radar_stamp = technical.get("broad_radar_snapshot_timestamp_ms")
     radar_age = now.timestamp() * 1000 - radar_stamp if isinstance(radar_stamp, (float, int)) else None
+
+    # Never certify all historical execution events from the panel hot path.
+    # The evidence_json payload makes a table scan expensive on the production
+    # database even when the logical row count is modest.  Keep the operator
+    # projection bounded to the most recent audit tail; all-time authority
+    # attestation belongs to an explicit offline/maintenance check.
+    recent_execution_flags = rows(
+        con, "paper_position_events", ["event_id", "real_order_allowed"],
+        "event_id", limit=10,
+    )
+    recent_real_order_events = (
+        sum(1 for row in recent_execution_flags if row["real_order_allowed"] != 0)
+        if recent_execution_flags is not None else None
+    )
     return {
         "Geniş radar": {
             "Sembol sayısı": technical.get("broad_radar_instrument_count"),
@@ -63,8 +77,11 @@ def runtime_visibility(con, health, brain, now):
             "Beyan edilen gerçek emir izni": health.get("real_order_allowed"),
             "Çalışan kaynak": health.get("process_runtime_source"),
             "Tek yürütücü sözleşmesi": "runtime.paper_realtime_worker (repo contract; not process census)",
-            "Gerçek emir eventleri": (con.execute("SELECT COUNT(*) FROM paper_position_events WHERE real_order_allowed != 0").fetchone()[0]
-                if "real_order_allowed" in {r[1] for r in con.execute("PRAGMA table_info(paper_position_events)")} else None),
+            # Backward-compatible field: all-history count is intentionally not
+            # computed in the panel hot path, so never imply a zero count.
+            "Gerçek emir eventleri": None,
+            "Son 10 eventte gerçek emir": recent_real_order_events,
+            "Tam geçmiş gerçek emir taraması": "HOT_PATH_DIŞI",
         },
         "Bekleyen pozisyonlar": rows(con, "paper_agent_positions",
             ["position_id", "symbol", "direction", "entry_price", "selection_reason"], "position_id", "status='PENDING_ENTRY'"),

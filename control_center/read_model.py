@@ -166,8 +166,10 @@ def _live_pnl(direction, entry_price, quantity, mark):
 
 
 def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
-             health_path=HEALTH_PATH, now=None):
+             health_path=HEALTH_PATH, now=None, *, checkpoint=None):
     """Return a read-only, human-facing snapshot of canonical PAPER state."""
+    progress = checkpoint if checkpoint is not None else lambda phase: None
+    progress("INPUTS")
     now = now or _utcnow()
     market = load_market_state(market_state_path)
     health = load_health(health_path)
@@ -175,19 +177,24 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
     brain_timeline = load_brain_timeline()
     feedback = load_operator_feedback()
     states = _state_index(market)
+    progress("DB_CONNECT")
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         con.execute("PRAGMA query_only=ON")
+        progress("RUNTIME_VISIBILITY")
         visibility = runtime_visibility(con, health, brain, now)
+        progress("SCHEMA")
         management_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_position_management)")}
         position_columns = {x[1] for x in con.execute("PRAGMA table_info(paper_agent_positions)")}
         extras = [f"m.{name}" if name in management_columns else "NULL" for name in
                   ("remaining_cost_basis", "tp1_price", "tp2_price", "best_price")]
         extras.append("p.margin_allocated" if "margin_allocated" in position_columns else "NULL")
+        progress("PORTFOLIO")
         portfolio = con.execute(
             """SELECT initial_capital,cash,realized_pnl,total_fees
                FROM paper_agent_portfolio WHERE portfolio_id=1"""
         ).fetchone()
+        progress("OPEN_POSITIONS")
         rows = con.execute(
             f"""SELECT p.position_id,p.symbol,p.market_type,p.direction,p.entry_time,
                       p.entry_price,p.quantity,p.notional,p.leverage,p.selection_reason,
@@ -198,12 +205,16 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                LEFT JOIN paper_position_management m USING(position_id)
                WHERE p.status='OPEN' ORDER BY p.position_id"""
         ).fetchall()
+        progress("ACTIVITY")
         activity = {}
-        for table, time_column, label in (
-            ("paper_behavior_selection_runs", "created_at", "fırsat taraması"),
-            ("paper_agent_positions", "selected_at", "işlem seçimi"),
-            ("paper_position_events", "observed_at", "pozisyon yönetimi"),
-            ("paper_agent_trade_learning_reviews", "created_at", "öğrenme incelemesi"),
+        # These tables are append-only audit streams with INTEGER PRIMARY KEY
+        # identifiers. The panel needs the last persisted activity, not a
+        # global timestamp sort across large tables.
+        for table, id_column, time_column, label in (
+            ("paper_behavior_selection_runs", "run_id", "created_at", "fırsat taraması"),
+            ("paper_agent_positions", "position_id", "selected_at", "işlem seçimi"),
+            ("paper_position_events", "event_id", "observed_at", "pozisyon yönetimi"),
+            ("paper_agent_trade_learning_reviews", "review_id", "created_at", "öğrenme incelemesi"),
         ):
             exists = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -211,13 +222,14 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
             if not exists:
                 continue
             columns = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
-            if time_column not in columns:
+            if id_column not in columns or time_column not in columns:
                 continue
             row = con.execute(
-                f"SELECT {time_column} FROM {table} WHERE {time_column} IS NOT NULL "
-                f"ORDER BY {time_column} DESC LIMIT 1"
+                f"SELECT {time_column} FROM {table} "
+                f"ORDER BY {id_column} DESC LIMIT 1"
             ).fetchone()
             activity[label] = row[0] if row else None
+        progress("LEARNING")
         learning_row = None
         has_learning = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_trade_learning_reviews'"
@@ -229,6 +241,7 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                    FROM paper_agent_trade_learning_reviews
                    ORDER BY review_id DESC LIMIT 1"""
             ).fetchone()
+        progress("SELECTION")
         selection = None
         has_selection = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_behavior_selection_runs'"
@@ -262,36 +275,41 @@ def overview(db_path=DB_NAME, market_state_path=MARKET_STATE_PATH,
                         "reason_counts": _safe_json_object(selection_row[7]),
                     }
 
+        progress("REPORTS")
         reports = []
         has_reports = con.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_agent_daily_reports'"
         ).fetchone()
         if has_reports:
             columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_daily_reports)")}
-            if {"report_date", "created_at", "report_json"}.issubset(columns):
-                for report_date, created_at, report_json in con.execute(
-                    """SELECT report_date,created_at,report_json
+            if "report_date" in columns:
+                # The JSON report bodies are archival evidence and may live on
+                # overflow pages.  Do not page them into the 2-second live
+                # overview hot path.  The primary-key date index can satisfy
+                # this bounded reference list without reading report_json.
+                for (report_date,) in con.execute(
+                    """SELECT report_date
                        FROM paper_agent_daily_reports
-                       ORDER BY report_date DESC,created_at DESC LIMIT 30"""
+                       ORDER BY report_date DESC LIMIT 30"""
                 ).fetchall():
                     reports.append({
                         "report_date": report_date,
-                        "created_at": created_at,
-                        "report": _safe_json_object(report_json),
+                        "created_at": None,
+                        "report": {"detail_status": "HOT_PATH_DIŞI"},
                     })
+        progress("CLOSED_POSITIONS")
         closed_rows = con.execute(
             """SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
-                      exit_time,exit_price,quantity,net_pnl,close_reason,total_fees
-               FROM (
-                   SELECT position_id,symbol,market_type,direction,entry_time,entry_price,
-                          exit_time,exit_price,quantity,net_pnl,close_reason,
-                          entry_fee + exit_fee AS total_fees
-                   FROM paper_agent_positions WHERE status='CLOSED'
-               ) ORDER BY exit_time DESC,position_id DESC LIMIT 100"""
+                      exit_time,exit_price,quantity,net_pnl,close_reason,
+                      entry_fee + exit_fee AS total_fees
+               FROM paper_agent_positions NOT INDEXED
+               WHERE status='CLOSED'
+               ORDER BY position_id DESC LIMIT 100"""
         ).fetchall()
     finally:
         con.close()
 
+    progress("PROJECTION")
     market_rows = []
     for state in market.get("live_market", []):
         freshness = _freshness_seconds(state, now)
