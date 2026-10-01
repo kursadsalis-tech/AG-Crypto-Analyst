@@ -343,9 +343,10 @@ def accept_runtime(expected_sha, health_dir, *, window_seconds=60, ready_timeout
         sleep(min(poll_seconds, window_seconds - elapsed))
 
 
-def wait_for_cache(database_path, expected_sha, *, health_dir="/var/lib/agca", **kwargs):
+def wait_for_cache(database_path, expected_sha, *, health_dir="/var/lib/agca",
+                   window_seconds=0, **kwargs):
     result = accept_runtime(expected_sha, health_dir, units=("agca-behavior-learning-worker.service",),
-                            database_path=database_path, window_seconds=0, **kwargs)
+                            database_path=database_path, window_seconds=window_seconds, **kwargs)
     return {**result, "phase": "cache"}
 
 
@@ -377,6 +378,7 @@ def main(argv=None):
             result = metadata_preflight(args.health_dir, spot_path=args.spot_cache, usdm_path=args.usdm_cache)
         elif args.phase == "cache":
             result = wait_for_cache(args.database_path, args.expected_sha, health_dir=args.health_dir,
+                                    window_seconds=args.window_seconds,
                                     ready_timeout=args.ready_timeout, max_ready_seconds=args.max_ready_seconds,
                                     poll_seconds=args.poll_seconds)
         else:
@@ -387,7 +389,7 @@ def main(argv=None):
             result = accept_runtime(args.expected_sha, args.health_dir,
                                     units=args.service if args.phase == "producer" else None,
                                     database_path=args.database_path,
-                                    window_seconds=0 if args.phase == "producer" else args.window_seconds,
+                                    window_seconds=args.window_seconds,
                                     ready_timeout=args.ready_timeout, max_ready_seconds=args.max_ready_seconds,
                                     poll_seconds=args.poll_seconds)
             result["phase"] = args.phase
