@@ -65,6 +65,19 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
         )
         self.assertIn("last_persist_duration_ms", source)
 
+    def test_retention_prune_is_separate_from_minute_persistence(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "runtime/technical_kline_worker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("async def retention_prune_loop(", source)
+        self.assertIn("await asyncio.to_thread(prune_expired, DB_PATH)", source)
+        persist_block = source[
+            source.index("async def persist_pending("):
+            source.index("async def retention_prune_loop(")
+        ]
+        self.assertNotIn("prune_expired", persist_block)
+
     def test_universe_state_rejects_empty_live_refresh(self):
         state = worker.UniverseState(
             ("BTCUSDT",), now_ms=1000, retention_seconds=60
