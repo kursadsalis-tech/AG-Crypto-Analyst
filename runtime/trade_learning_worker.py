@@ -108,8 +108,72 @@ def _database_locked(exc):
     return is_sqlite_busy(exc)
 
 
+def ensure_input_revision_schema():
+    """Track learnable position changes without rescanning closed history.
+
+    The first successful learning pass remains authoritative for pre-existing
+    rows.  After that, a tiny singleton revision is incremented whenever an
+    evidence-eligible CLOSED position is inserted, deleted, or updated.  This
+    preserves detection of late funding/economic corrections while keeping
+    the recurring input check O(1).
+    """
+    con = local_connection()
+    try:
+        con.executescript("""
+            CREATE TABLE IF NOT EXISTS trade_learning_input_revision (
+                singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
+                revision INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO trade_learning_input_revision(
+                singleton_id,revision
+            ) VALUES(1,0);
+        """)
+        has_positions = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='paper_agent_positions'"
+        ).fetchone()
+        if has_positions:
+            columns = {row[1] for row in con.execute(
+                "PRAGMA table_info(paper_agent_positions)"
+            )}
+            if {"status", "evidence_eligible"}.issubset(columns):
+                con.executescript("""
+                    CREATE TRIGGER IF NOT EXISTS trade_learning_position_insert
+                    AFTER INSERT ON paper_agent_positions
+                    WHEN NEW.status='CLOSED'
+                      AND COALESCE(NEW.evidence_eligible,0)=1
+                    BEGIN
+                        UPDATE trade_learning_input_revision
+                        SET revision=revision+1 WHERE singleton_id=1;
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS trade_learning_position_update
+                    AFTER UPDATE ON paper_agent_positions
+                    WHEN (OLD.status='CLOSED'
+                          AND COALESCE(OLD.evidence_eligible,0)=1)
+                      OR (NEW.status='CLOSED'
+                          AND COALESCE(NEW.evidence_eligible,0)=1)
+                    BEGIN
+                        UPDATE trade_learning_input_revision
+                        SET revision=revision+1 WHERE singleton_id=1;
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS trade_learning_position_delete
+                    AFTER DELETE ON paper_agent_positions
+                    WHEN OLD.status='CLOSED'
+                      AND COALESCE(OLD.evidence_eligible,0)=1
+                    BEGIN
+                        UPDATE trade_learning_input_revision
+                        SET revision=revision+1 WHERE singleton_id=1;
+                    END;
+                """)
+        con.commit()
+    finally:
+        con.close()
+
+
 def learning_input_key():
-    """Read only learning inputs; unchanged history needs no new full review."""
+    """Read only O(1) change markers; never rescan closed position payloads."""
     con = local_connection()
     try:
         tables = {row[0] for row in con.execute(
@@ -122,24 +186,18 @@ def learning_input_key():
                       "external_trader_entry_contexts"):
             inputs[table] = (con.execute(f"SELECT MAX(rowid) FROM {table}").fetchone()[0]
                              if table in tables else None)
-        if "paper_agent_positions" in tables:
-            columns = {row[1] for row in con.execute("PRAGMA table_info(paper_agent_positions)")}
-            fields = [name for name in (
-                "position_id", "exit_time", "net_pnl", "gross_pnl", "notional",
-                "entry_fee", "exit_fee", "entry_spread_cost", "exit_spread_cost",
-                "entry_slippage_cost", "exit_slippage_cost", "funding_cost",
-                "funding_source", "liquidated", "close_reason", "margin_allocated",
-                "leverage", "risk_tier", "validation_cohort",
-            ) if name in columns]
-            if {"status", "evidence_eligible", "position_id"}.issubset(columns):
-                inputs["closed_positions"] = con.execute(
-                    "SELECT " + ",".join(fields) + " FROM paper_agent_positions "
-                    "WHERE evidence_eligible=1 AND status='CLOSED' ORDER BY position_id"
-                ).fetchall()
-        positions = inputs.pop("closed_positions", [])
+        revision = 0
+        if "trade_learning_input_revision" in tables:
+            row = con.execute(
+                "SELECT revision FROM trade_learning_input_revision "
+                "WHERE singleton_id=1"
+            ).fetchone()
+            revision = int(row[0]) if row else 0
         return {
-            "external": hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest(),
-            "positions": hashlib.sha256(json.dumps(positions, sort_keys=True).encode()).hexdigest(),
+            "external": hashlib.sha256(
+                json.dumps(inputs, sort_keys=True).encode()
+            ).hexdigest(),
+            "positions": hashlib.sha256(str(revision).encode()).hexdigest(),
         }
     finally:
         con.close()
@@ -226,6 +284,10 @@ def run_cycle(attempts=4, *, initialize=True, refresh_external=True):
 def _main():
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: trade learning accepts PAPER_ONLY exclusively")
+
+    # Bootstrap the O(1) change marker before the first input check.  This is
+    # tiny schema-only work; it does not scan historical position payloads.
+    ensure_input_revision_schema()
 
     initialized = False
     last_input_key = None
