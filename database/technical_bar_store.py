@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 TABLE = "technical_minute_bars"
 DEFAULT_RETENTION_DAYS = 3
-WRITE_BATCH_SIZE = 16
+WRITE_BATCH_SIZE = 1
 PRUNE_BATCH_SIZE = 4
 PRUNE_LIMIT = 512
 PRUNE_YIELD_SECONDS = 0.05
@@ -206,7 +206,7 @@ def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_c
             )
             if offset + WRITE_BATCH_SIZE < len(prepared):
                 # Give waiting realtime/background writers an opportunity.
-                time.sleep(0.01)
+                time.sleep(0.05)
         started = time.monotonic()
         count = (connection.execute(
             f"SELECT COUNT(*) FROM {TABLE}"
