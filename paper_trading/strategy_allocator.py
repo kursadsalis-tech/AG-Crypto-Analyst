@@ -43,8 +43,9 @@ def ensure_tables(con):
     """)
 
 
-def sync_strategies(con, now):
-    ensure_tables(con)
+def sync_strategies(con, now, *, ensure=True):
+    if ensure:
+        ensure_tables(con)
     stamp = _iso(now)
     con.execute("""
         INSERT OR IGNORE INTO paper_agent_strategy_allocations(
@@ -67,9 +68,11 @@ def sync_strategies(con, now):
         """, (strategy_id, stamp, stamp, "LEARNED_DIRECTION_FILTER", rule))
 
 
-def rebalance(con, now):
+def rebalance(con, now, *, ensure=True):
     """Reward net-after-cost performance while preserving bounded exploration."""
-    sync_strategies(con, now)
+    if ensure:
+        ensure_tables(con)
+    sync_strategies(con, now, ensure=False)
     con.commit()
     strategies = con.execute("""
         SELECT strategy_id,rule_json FROM paper_agent_strategy_allocations
