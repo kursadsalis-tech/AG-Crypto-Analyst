@@ -93,6 +93,10 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
         self.assertIn(expected, technical)
         self.assertIn(expected, realtime)
         self.assertIn(
+            "Environment=AGCA_TECHNICAL_RETENTION_PRUNE_SECONDS=60",
+            technical,
+        )
+        self.assertIn(
             'TECHNICAL_DB_PATH = os.getenv("AGCA_TECHNICAL_DATABASE_PATH", DB_PATH)',
             (
                 root / "runtime/technical_kline_worker.py"
