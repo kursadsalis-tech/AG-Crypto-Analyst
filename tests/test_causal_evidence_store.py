@@ -1,4 +1,5 @@
 import sqlite3
+from database.sqlite_policy import connect_local
 import unittest
 import tempfile
 from pathlib import Path
@@ -45,13 +46,13 @@ class CausalEvidenceStoreTests(unittest.TestCase):
                 self.con.commit()
                 self.con.backup(target)
             statements = []
-            original = sqlite3.connect
+            original = connect_local
             def traced(*args, **kwargs):
                 con = original(*args, **kwargs)
                 con.set_trace_callback(statements.append)
                 return con
             end = int(datetime(2026, 8, 30, 10, 1, tzinfo=timezone.utc).timestamp()*1000)
-            with patch("database.causal_evidence_store.sqlite3.connect", side_effect=traced):
+            with patch("database.causal_evidence_store.connect_local", side_effect=traced):
                 result = evidence_for_closed_minute(path, end)
             self.assertEqual(result["event_count"], 3)
             self.assertFalse(any(sql.lstrip().upper().startswith(("CREATE", "ALTER", "INSERT", "UPDATE", "DELETE")) for sql in statements))

@@ -3,6 +3,9 @@ Description=AGCA continuous Binance technical kline collector
 Wants=network-online.target
 After=network-online.target
 
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
 [Service]
 Type=simple
 User=kursadsalis
@@ -12,11 +15,13 @@ EnvironmentFile=-/etc/agca/agca.env
 Environment=PYTHONUNBUFFERED=1
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
 Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+Environment=AGCA_TECHNICAL_DATABASE_PATH=/var/lib/agca/technical_data.db
 Environment=AGCA_REMOTE_MIRROR_INLINE=0
 Environment=AGCA_BINANCE_WS_OPEN_TIMEOUT_SECONDS=10
+Environment=AGCA_TECHNICAL_RETENTION_PRUNE_SECONDS=60
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.technical_kline_worker
 Restart=always
-RestartSec=5
+RestartSec=30
 TimeoutStopSec=20
 Nice=10
 MemoryMax=256M

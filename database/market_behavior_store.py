@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from database.sqlite_policy import connect_local, is_sqlite_busy
 import time
 from datetime import datetime, timezone
 
@@ -101,8 +102,8 @@ def _schema_ready(connection):
 
 def bootstrap_schema(database_path):
     """Install local-only observer schema outside the repeated minute hot path."""
-    connection = sqlite3.connect(database_path, timeout=30)
-    connection.execute("PRAGMA busy_timeout=30000")
+    connection = connect_local(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=250")
     try:
         ensure_table(connection)
         # Import here to keep table constants available without a module cycle.
@@ -116,8 +117,8 @@ def bootstrap_schema(database_path):
 def _writer_connection(database_path):
     # These tables are explicitly local-only. RuntimeConnection construction
     # performs remote-outbox/trigger DDL and must not run on every minute cycle.
-    connection = sqlite3.connect(database_path, timeout=30)
-    connection.execute("PRAGMA busy_timeout=30000")
+    connection = connect_local(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=250")
     return connection
 
 
@@ -144,6 +145,9 @@ class _TimedConnection:
                 time.monotonic() - started
             ) * 1000.0
 
+    def commit(self):
+        return self.connection.commit()
+
     def __enter__(self):
         self.connection.__enter__()
         return self
@@ -160,10 +164,7 @@ class _TimedConnection:
 
 
 def _database_locked(exc):
-    return (
-        isinstance(exc, sqlite3.OperationalError)
-        and "database is locked" in str(exc).lower()
-    )
+    return is_sqlite_busy(exc)
 
 
 def _persist_closed_minute_once(
@@ -247,17 +248,12 @@ def _persist_closed_minute_once(
                 created_at,
             ))
         deleted = connection.execute(
-            f"DELETE FROM {TABLE} WHERE minute_end_timestamp_ms < ?", (cutoff,)
+            f"DELETE FROM {TABLE} WHERE rowid IN (SELECT rowid FROM {TABLE} WHERE minute_end_timestamp_ms < ? LIMIT 1000)", (cutoff,)
         ).rowcount
         external_deleted = connection.execute(
-            f"DELETE FROM {EXTERNAL_EVIDENCE_TABLE} WHERE minute_end_timestamp_ms < ?",
+            f"DELETE FROM {EXTERNAL_EVIDENCE_TABLE} WHERE rowid IN (SELECT rowid FROM {EXTERNAL_EVIDENCE_TABLE} WHERE minute_end_timestamp_ms < ? LIMIT 1000)",
             (cutoff,),
         ).rowcount
-        count = (connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
-                 if include_counts else None)
-        external_count = (connection.execute(
-            f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
-        ).fetchone()[0] if include_counts else None)
         # Forward-outcome settlement is intentionally background work.
         # Commit the current behavior minute promptly so realtime decisions do
         # not wait on historical outcome joins/counts or a second writer phase.
@@ -265,6 +261,13 @@ def _persist_closed_minute_once(
             queue_closed_minute_for_settlement,
         )
         queue_closed_minute_for_settlement(connection, minute_end)
+        connection.commit()
+        # Historical counts must not retain the minute writer transaction.
+        count = (connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+                 if include_counts else None)
+        external_count = (connection.execute(
+            f"SELECT COUNT(*) FROM {EXTERNAL_EVIDENCE_TABLE}"
+        ).fetchone()[0] if include_counts else None)
     return {"upserted": len(report.get("rows", [])), "pruned": deleted,
             "row_count": count, "retention_days": int(retention_days),
             "historical_counts_computed": bool(include_counts),
@@ -288,7 +291,7 @@ def persist_closed_minute(
     # Fresh/test databases may need a one-time bootstrap. Existing production
     # databases take only the sqlite_master/table_info read path here, so the
     # recurring observer never repeats schema DDL.
-    probe = sqlite3.connect(database_path, timeout=5)
+    probe = connect_local(database_path, timeout=5)
     try:
         ready = _schema_ready(probe)
     finally:

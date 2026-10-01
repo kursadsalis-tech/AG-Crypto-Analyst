@@ -53,13 +53,13 @@ class BehaviorLearningWorkerContentionTests(unittest.TestCase):
     def test_learning_connection_is_plain_local_sqlite(self):
         fake = mock.MagicMock(spec=sqlite3.Connection)
         with mock.patch.object(
-            worker.sqlite3, "connect", return_value=fake
+            worker, "connect_local", return_value=fake
         ) as connect_mock:
             result = worker.local_connection()
 
         self.assertIs(result, fake)
-        connect_mock.assert_called_once_with(worker.DB_PATH, timeout=5)
-        fake.execute.assert_called_once_with("PRAGMA busy_timeout=5000")
+        connect_mock.assert_called_once_with(worker.DB_PATH, timeout=0.25)
+        fake.execute.assert_called_once_with("PRAGMA busy_timeout=250")
 
 
 if __name__ == "__main__":

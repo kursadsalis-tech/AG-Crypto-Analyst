@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import math
+import os
+import sqlite3
 import statistics
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from analysis import realtime_technical_context
 from database.technical_bar_store import load_recent
@@ -18,6 +22,22 @@ MAX_ENTRY_PLAN_AGE_SECONDS = 180
 MAX_SPOT_USDM_BASIS_DEVIATION_PCT = 5.0
 STRUCTURE_REFRESH_SECONDS = 120
 _PLAN_CACHE = {}
+
+
+@contextmanager
+def _technical_reader(canonical_connection):
+    """Read technical bars from the dedicated local cache when configured."""
+    path = str(os.getenv("AGCA_TECHNICAL_DATABASE_PATH") or "").strip()
+    if not path:
+        yield canonical_connection
+        return
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=0.25)
+    connection.execute("PRAGMA query_only=ON")
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _iso(value):
@@ -247,16 +267,35 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     if direction not in {"LONG", "SHORT"}:
         raise ValueError("invalid technical-plan direction")
 
-    latest = con.execute("""
-        SELECT MAX(close_time_ms) FROM technical_minute_bars
-        WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
-          AND close_time_ms<=?
-    """, (symbol, int(now.timestamp() * 1000))).fetchone()[0]
-    if latest is None:
-        raise ValueError("technical minute bar cache unavailable")
-    latest_age = now.timestamp() - float(latest) / 1000.0
-    if latest_age < -1.0 or latest_age > MAX_BAR_AGE_SECONDS:
-        raise ValueError("technical minute bar cache is stale")
+    now_ms = int(now.timestamp() * 1000)
+    with _technical_reader(con) as technical_con:
+        latest = technical_con.execute("""
+            SELECT MAX(close_time_ms) FROM technical_minute_bars
+            WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
+              AND close_time_ms<=?
+        """, (symbol, now_ms)).fetchone()[0]
+        if latest is None:
+            raise ValueError("technical minute bar cache unavailable")
+        latest_age = now.timestamp() - float(latest) / 1000.0
+        if latest_age < -1.0 or latest_age > MAX_BAR_AGE_SECONDS:
+            raise ValueError("technical minute bar cache is stale")
+
+        # Reject an incomplete warm-up from the required tail before reading a
+        # whole day of history on every candidate scan. The eligibility
+        # condition is identical; only eligible candidates incur deeper reads.
+        required_tail = contiguous_tail(load_recent(
+            technical_con, symbol, limit=MIN_ONE_MINUTE_BARS,
+            before_ms=now_ms,
+        ))
+        if len(required_tail) < MIN_ONE_MINUTE_BARS:
+            raise ValueError(
+                "insufficient contiguous exact USD-M technical bars "
+                f"({len(required_tail)}/{MIN_ONE_MINUTE_BARS})"
+            )
+        rows = load_recent(
+            technical_con, symbol, limit=1440, before_ms=now_ms
+        )
+
     higher = realtime_technical_context.load_latest(con, symbol, now=now)
     if higher is None:
         raise ValueError("fresh higher-timeframe technical context unavailable")
@@ -270,21 +309,6 @@ def build_for_candidate(con, candidate, *, now=None, market_type):
     if cached is not None:
         return cached
 
-    # Reject an incomplete warm-up from the required tail before reading a
-    # whole day of history on every candidate scan. The eligibility condition
-    # is identical; only eligible candidates incur structural-history work.
-    required_tail = contiguous_tail(load_recent(
-        con, symbol, limit=MIN_ONE_MINUTE_BARS,
-        before_ms=int(now.timestamp() * 1000),
-    ))
-    if len(required_tail) < MIN_ONE_MINUTE_BARS:
-        raise ValueError(
-            "insufficient contiguous exact USD-M technical bars "
-            f"({len(required_tail)}/{MIN_ONE_MINUTE_BARS})"
-        )
-    rows = load_recent(
-        con, symbol, limit=1440, before_ms=int(now.timestamp() * 1000)
-    )
     one = contiguous_tail(rows)
     if len(one) < MIN_ONE_MINUTE_BARS:
         raise ValueError("technical bar tail changed during plan construction")
@@ -580,12 +604,13 @@ def replan_reason(con, plan, now=None):
     if not plan_is_fresh(plan, now):
         return "PLAN_OR_MARKET_DATA_STALE"
 
-    row = con.execute("""
-        SELECT close_time_ms,close FROM technical_minute_bars
-        WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
-          AND close_time_ms<=?
-        ORDER BY close_time_ms DESC LIMIT 1
-    """, (symbol, int(now.timestamp() * 1000))).fetchone()
+    with _technical_reader(con) as technical_con:
+        row = technical_con.execute("""
+            SELECT close_time_ms,close FROM technical_minute_bars
+            WHERE symbol=? AND market_type='USD_M_PERPETUAL' AND provider='BINANCE'
+              AND close_time_ms<=?
+            ORDER BY close_time_ms DESC LIMIT 1
+        """, (symbol, int(now.timestamp() * 1000))).fetchone()
     if not row:
         return "LOCAL_TECHNICAL_DATA_UNAVAILABLE"
     latest_cutoff, latest_close = int(row[0]), float(row[1])
@@ -618,7 +643,7 @@ def replan_reason(con, plan, now=None):
 
 
 def rebuild_for_pending(con, plan, *, now=None, market_type=None):
-    """Rebuild a pending execution plan from current local canonical evidence."""
+    """Rebuild a pending plan from local technical and canonical context."""
     now = now or datetime.now(timezone.utc)
     trigger = plan.get("trigger") or {}
     candidate = {

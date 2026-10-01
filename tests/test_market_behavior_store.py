@@ -1,4 +1,5 @@
 import sqlite3
+from database.sqlite_policy import connect_local
 import tempfile
 import threading
 import time
@@ -108,19 +109,15 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             path = Path(tmp) / "behavior.db"
             bootstrap_schema(path)
             statements = []
-            original = sqlite3.connect
-
-            class TracedConnection(sqlite3.Connection):
-                pass
+            original = connect_local
 
             def traced_connect(*args, **kwargs):
-                kwargs["factory"] = TracedConnection
                 con = original(*args, **kwargs)
                 con.set_trace_callback(statements.append)
                 return con
 
             with unittest.mock.patch(
-                "database.market_behavior_store.sqlite3.connect",
+                "database.market_behavior_store.connect_local",
                 side_effect=traced_connect,
             ):
                 persist_closed_minute(path, report(120_000))
@@ -136,7 +133,7 @@ class MarketBehaviorStoreTests(unittest.TestCase):
             / "database/market_behavior_store.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn("from database.runtime_store import connect", source)
-        self.assertIn("sqlite3.connect(database_path", source)
+        self.assertIn("connect_local(database_path", source)
 
     def test_persist_closed_minute_waits_through_transient_writer_lock(self):
         with tempfile.TemporaryDirectory() as tmp:

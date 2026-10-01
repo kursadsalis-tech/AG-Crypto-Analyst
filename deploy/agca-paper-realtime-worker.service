@@ -3,6 +3,9 @@ Description=AGCA real-time PAPER position manager
 Wants=network-online.target
 After=network-online.target
 
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
 [Service]
 Type=simple
 User=kursadsalis
@@ -13,11 +16,12 @@ EnvironmentFile=-/etc/agca/remote-database.env
 Environment=PYTHONUNBUFFERED=1
 Environment=AGCA_EXECUTION_MODE=PAPER_ONLY
 Environment=AGCA_DATABASE_PATH=/var/lib/agca/crypto_data.db
+Environment=AGCA_TECHNICAL_DATABASE_PATH=/var/lib/agca/technical_data.db
 Environment=AGCA_REMOTE_MIRROR_INLINE=0
 Environment=AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED=1
 ExecStart=/home/kursadsalis/AG-Crypto-Analyst-cloud/.venv/bin/python -m runtime.paper_realtime_worker
 Restart=always
-RestartSec=5
+RestartSec=30
 TimeoutStopSec=20
 UMask=0077
 

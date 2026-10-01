@@ -3,10 +3,10 @@ import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from paper_trading.execution_contract import ExecutionRules
+from paper_trading.execution_contract import ExecutionRules, ExecutionDecision, ExecutionFill
 from paper_trading.position_management import (
     ensure_tables, initialize_open_positions, process_market_state,
-    reconcile_pending_funding,
+    reconcile_pending_funding, record_execution, resolve_position_rules, adopt_legacy_open_rules,
 )
 from paper_trading.realtime_market import LiveState
 
@@ -60,7 +60,145 @@ class PositionManagementTests(unittest.TestCase):
             market_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
             quote_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
             liquidity_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
+            trade_timestamp_ms=int((ENTRY + timedelta(seconds=seconds)).timestamp()*1000),
         )
+
+    def set_flow_thesis(self, pattern, direction="LONG"):
+        self.con.execute("""UPDATE paper_agent_positions SET direction=?,
+            independent_signal_count=1,signal_sources_json='["MARKET_BEHAVIOR"]'
+            WHERE position_id=1""", (direction,))
+        self.con.execute("""CREATE TABLE IF NOT EXISTS paper_agent_decision_theses(
+            position_id INTEGER PRIMARY KEY,thesis_json TEXT)""")
+        self.con.execute("INSERT OR REPLACE INTO paper_agent_decision_theses VALUES(1,?)", (
+            json.dumps({"evidence_used": {"learned_pattern": {
+                "flow_pattern": pattern, "direction": direction,
+            }}}),
+        ))
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+
+    def test_weak_flow_noise_and_absorption_do_not_invalidate_continuation(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in range(2, 23):
+            book, taker = (-.03, -.02) if seconds % 2 else (-.9, .8)
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=book, taker=taker),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_short_material_burst_and_neutral_gap_reset_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds, opposing in ((2, True), (3, True), (4, True), (5, False),
+                                  (7, True), (12, True), (12.1, False), (17, True)):
+            strength = -.8 if opposing else -.01
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=strength, taker=strength),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 1)
+
+    def assert_persistent_continuation_failure_closes(self, direction):
+        self.set_flow_thesis("FLOW_POS" if direction == "LONG" else "FLOW_NEG", direction)
+        original_thesis = self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0]
+        strength = -.8 if direction == "LONG" else .8
+        for seconds in (2, 7, 12):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=strength, taker=strength),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "POSITION_CLOSED" if seconds == 12 else "HOLD")
+        self.assertEqual(result["reason"], "THESIS_INVALIDATED")
+        evidence = json.loads(self.con.execute("""SELECT evidence_json
+            FROM paper_position_events WHERE event_type='POSITION_CLOSED'""").fetchone()[0])
+        confirmation = evidence["position_decision"]["flow_confirmation"]
+        self.assertEqual(confirmation["status"], "MATERIAL_OPPOSITION_CONFIRMED")
+        self.assertEqual(confirmation["confirmations_required"], 3)
+        self.assertEqual(evidence["position_decision"]["opposing_events_after"], 3)
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM paper_position_events WHERE real_order_allowed!=0"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.con.execute(
+            "SELECT thesis_json FROM paper_agent_decision_theses"
+        ).fetchone()[0], original_thesis)
+
+    def test_persistent_material_long_continuation_failure_closes(self):
+        self.assert_persistent_continuation_failure_closes("LONG")
+
+    def test_persistent_material_short_continuation_failure_closes(self):
+        self.assert_persistent_continuation_failure_closes("SHORT")
+
+    def test_reversal_entry_flow_does_not_disprove_its_own_thesis(self):
+        self.set_flow_thesis("FLOW_NEG")
+        for seconds in (2, 7, 12):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=-.9, taker=-.9),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        stopped = process_market_state(
+            self.con, self.live(98, 12.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=12.1), self.rules,
+        )
+        self.assertEqual((stopped["status"], stopped["reason"]),
+                         ("POSITION_CLOSED", "PROTECTIVE_STOP"))
+
+    def test_stale_or_reused_trade_evidence_cannot_accumulate_confirmations(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in (2, 3, 7, 12):
+            live = self.live(100, seconds, book=-.9, taker=-.9)
+            live.trade_timestamp_ms = int((ENTRY + timedelta(seconds=2)).timestamp()*1000)
+            result = process_market_state(
+                self.con, live, ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_missing_flow_and_separated_bursts_do_not_accumulate(self):
+        self.set_flow_thesis("FLOW_POS")
+        for seconds in (2, 7, 30):
+            result = process_market_state(
+                self.con, self.live(100, seconds, book=-.9, taker=-.9),
+                ENTRY + timedelta(seconds=seconds), self.rules,
+            )
+            self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 1)
+        live = self.live(100, 30.1, book=None, taker=-.9)
+        process_market_state(self.con, live, ENTRY + timedelta(seconds=30.1), self.rules)
+        self.assertEqual(self.con.execute(
+            "SELECT opposing_events FROM paper_position_management"
+        ).fetchone()[0], 0)
+
+    def test_protective_stop_does_not_wait_for_flow_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        result = process_market_state(
+            self.con, self.live(98, 1.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=1.1), self.rules,
+        )
+        self.assertEqual((result["status"], result["reason"]),
+                         ("POSITION_CLOSED", "PROTECTIVE_STOP"))
+
+    def test_liquidation_does_not_wait_for_flow_confirmation(self):
+        self.set_flow_thesis("FLOW_POS")
+        self.con.execute("""UPDATE paper_agent_positions SET leverage=5,
+            margin_allocated=200,liquidation_price=80 WHERE position_id=1""")
+        result = process_market_state(
+            self.con, self.live(79, 1.1, book=-.9, taker=-.9),
+            ENTRY + timedelta(seconds=1.1), self.rules,
+        )
+        self.assertEqual((result["status"], result["reason"]),
+                         ("POSITION_CLOSED", "PAPER_5X_LIQUIDATION"))
 
     def test_initializes_stop_from_entry_risk_snapshot(self):
         result = initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
@@ -115,6 +253,112 @@ class PositionManagementTests(unittest.TestCase):
             (reduced["status"], reduced["reason"]),
             ("POSITION_REDUCED", "TAKE_PROFIT_TECHNICAL_1"),
         )
+
+    def set_frozen_technical_stop(self, direction, entry_price, stop_price,
+                                 entry_low=99.8, entry_high=100.2,
+                                 planned_stop_pct=1.0):
+        plan = {
+            "version": "TECHNICAL_TRADE_PLAN_V3_ORDERED_TARGETS",
+            "symbol": "BTCUSDT", "direction": direction,
+            "execution_market_type": "USD_M_PERPETUAL",
+            "source_reference_price": entry_price,
+            "entry": {"anchor": entry_price, "low": entry_low, "high": entry_high},
+            "risk": {"invalidation_price": stop_price,
+                     "stop_distance_pct": planned_stop_pct},
+            "targets": {
+                "tp1_price": entry_price * (1.01 if direction == "LONG" else .99),
+                "tp2_price": entry_price * (1.02 if direction == "LONG" else .98),
+            },
+        }
+        thesis = {
+            "technical_trade_plan": plan,
+            "execution_risk": {"planned_stop_distance_pct": planned_stop_pct},
+        }
+        plan_json, thesis_json = json.dumps(plan), json.dumps(thesis)
+        self.con.execute("""CREATE TABLE IF NOT EXISTS paper_agent_decision_theses(
+            position_id INTEGER PRIMARY KEY, thesis_json TEXT)""")
+        self.con.execute(
+            "INSERT OR REPLACE INTO paper_agent_decision_theses VALUES(1,?)",
+            (thesis_json,),
+        )
+        self.con.execute("""UPDATE paper_agent_positions
+            SET direction=?,entry_price=?,technical_basis_ratio=1,
+                market_type='USD_M_PERPETUAL',technical_execution_plan_json=?
+            WHERE position_id=1""", (direction, entry_price, plan_json))
+        return plan, plan_json, thesis_json
+
+    def assert_better_fill_preserves_tighter_frozen_stop(
+        self, direction, entry_price, stop_price, entry_low, entry_high,
+    ):
+        worst_entry = entry_high if direction == "LONG" else entry_low
+        planned_stop_pct = 100.0 * abs(worst_entry - stop_price) / worst_entry
+        self.assertGreaterEqual(planned_stop_pct, .5)
+        self.assertLessEqual(planned_stop_pct, 5.0)
+        actual_stop_pct = 100.0 * abs(entry_price - stop_price) / entry_price
+        self.assertGreater(actual_stop_pct, 0)
+        self.assertLess(actual_stop_pct, .5)
+        plan, plan_json, thesis_json = self.set_frozen_technical_stop(
+            direction, entry_price, stop_price, entry_low, entry_high,
+            planned_stop_pct,
+        )
+
+        result = initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+
+        self.assertEqual(result, {"initialized": 1, "blocked": []})
+        self.assertEqual(self.con.execute("""SELECT current_stop_price,
+            stop_distance_pct,tp1_price,tp2_price
+            FROM paper_position_management WHERE position_id=1""").fetchone(), (
+                stop_price, actual_stop_pct,
+                plan["targets"]["tp1_price"], plan["targets"]["tp2_price"],
+            ))
+        self.assertEqual(self.con.execute("""SELECT technical_execution_plan_json,
+            thesis_json FROM paper_agent_positions
+            JOIN paper_agent_decision_theses USING(position_id)
+            WHERE position_id=1""").fetchone(), (plan_json, thesis_json))
+        self.assertEqual(self.con.execute(
+            "SELECT real_order_allowed FROM paper_position_events"
+        ).fetchone()[0], 0)
+
+    def test_long_better_fill_preserves_subminimum_frozen_stop(self):
+        self.assert_better_fill_preserves_tighter_frozen_stop(
+            "LONG", 100.35, 100.0, 100.1, 100.6,
+        )
+
+    def test_short_better_fill_preserves_subminimum_frozen_stop(self):
+        self.assert_better_fill_preserves_tighter_frozen_stop(
+            "SHORT", 0.26421, 0.2651342857142857,
+            0.2638105714285714, 0.26456942857142857,
+        )
+
+    def test_frozen_stop_rejects_unsafe_actual_fill_distance(self):
+        for direction, wrong_side, over_max in (("LONG", 101.0, 94.99),
+                                                ("SHORT", 99.0, 105.01)):
+            for stop_price in (wrong_side, over_max, 100.0, 0.0, -1.0,
+                               float("nan"), float("inf"), -float("inf")):
+                with self.subTest(direction=direction, stop_price=stop_price):
+                    self.set_frozen_technical_stop(direction, 100.0, stop_price)
+                    result = initialize_open_positions(
+                        self.con, ENTRY + timedelta(seconds=1),
+                    )
+                    self.assertEqual(result, {"initialized": 0, "blocked": [
+                        (1, "TECHNICAL_STOP_GEOMETRY_INVALID_AT_FILL"),
+                    ]})
+                    self.assertEqual(self.con.execute(
+                        "SELECT COUNT(*) FROM paper_position_management"
+                    ).fetchone()[0], 0)
+
+    def test_frozen_stop_accepts_exact_five_percent_actual_distance(self):
+        for direction, stop_price in (("LONG", 95.0), ("SHORT", 105.0)):
+            with self.subTest(direction=direction):
+                self.con.execute("DELETE FROM paper_position_management")
+                self.set_frozen_technical_stop(direction, 100.0, stop_price)
+                result = initialize_open_positions(
+                    self.con, ENTRY + timedelta(seconds=1),
+                )
+                self.assertEqual(result, {"initialized": 1, "blocked": []})
+                self.assertEqual(self.con.execute("""SELECT current_stop_price,
+                    stop_distance_pct FROM paper_position_management""").fetchone(),
+                    (stop_price, 5.0))
 
     def test_frozen_technical_plan_initializes_without_entry_risk_snapshot(self):
         self.con.execute("""
@@ -317,18 +561,18 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(result["status"], "DUPLICATE_OR_OLD_EVENT")
         self.assertEqual(before, after)
 
-    def test_below_minimum_profit_slice_tightens_stop_without_fake_fill(self):
+    def test_reduce_only_profit_slice_is_exempt_from_open_notional_minimum(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         strict = ExecutionRules(quantity_step=.001, price_tick=.01, min_notional=500,
                                 require_liquidity=True)
         result = process_market_state(
             self.con, self.live(102, 2), ENTRY + timedelta(seconds=2), strict,
         )
-        self.assertEqual(result, {"status": "UPDATE_STOP",
-                                 "reason": "TAKE_PROFIT_1R_BELOW_MIN_NOTIONAL"})
+        self.assertEqual(result["status"], "POSITION_REDUCED")
+        self.assertEqual(result["reason"], "TAKE_PROFIT_1R")
         self.assertEqual(self.con.execute(
             "SELECT remaining_quantity FROM paper_position_management"
-        ).fetchone()[0], 10)
+        ).fetchone()[0], 7.5)
 
     def test_missing_risk_snapshot_is_visible_and_does_not_invent_stop(self):
         self.con.execute("DELETE FROM asset_risk_snapshots")
@@ -369,6 +613,97 @@ class PositionManagementTests(unittest.TestCase):
         self.assertEqual(self.con.execute("""SELECT COUNT(*)
             FROM paper_funding_reconciliation_segments""").fetchone()[0], 0)
 
+    def freeze_entry(self, market="USD_M_PERPETUAL", rules=None, direction="LONG"):
+        rules = rules or self.rules
+        record_execution(
+            self.con, 1, ENTRY, "ENTRY", "BTCUSDT",
+            "BUY" if direction == "LONG" else "SELL", market,
+            ExecutionDecision("FILLED", "PAPER_FILL", ExecutionFill(100, 10, 1, 0, 0, False)),
+            rules=rules, maintenance_margin_rate=.005,
+        )
+        self.con.commit()
+
+    def assert_frozen_stop_survives_metadata_outage(self, market, direction):
+        self.con.execute("UPDATE paper_agent_positions SET market_type=?,direction=? WHERE position_id=1",
+                         (market, direction))
+        self.freeze_entry(market, direction=direction)
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        live = self.live(98 if direction == "LONG" else 102, 2)
+        live.market_type = market
+        result = process_market_state(self.con, live, ENTRY + timedelta(seconds=2), None)
+        self.assertEqual(result["status"], "POSITION_CLOSED")
+        self.assertEqual(result["reason"], "PROTECTIVE_STOP")
+        event = json.loads(self.con.execute("SELECT evidence_json FROM paper_position_events WHERE event_type='POSITION_CLOSED'").fetchone()[0])
+        self.assertEqual(event["execution_rules_source"], "FROZEN_ENTRY_RULES")
+
+    def test_usdm_open_short_stop_survives_spot_and_own_metadata_outage(self):
+        self.assert_frozen_stop_survives_metadata_outage("USD_M_PERPETUAL", "SHORT")
+
+    def test_spot_open_stop_survives_usdm_and_own_metadata_outage(self):
+        self.assert_frozen_stop_survives_metadata_outage("SPOT", "LONG")
+
+    def test_frozen_liquidation_fee_survives_live_rule_change_or_outage(self):
+        rules = ExecutionRules(.001, .01, 100, True, .0125)
+        self.freeze_entry(rules=rules)
+        self.con.execute("UPDATE paper_agent_positions SET leverage=5,margin_allocated=200,liquidation_price=80")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        result = process_market_state(self.con, self.live(79, 2), ENTRY + timedelta(seconds=2),
+                                      ExecutionRules(.001, .01, 100, True, .5))
+        self.assertEqual(result["reason"], "PAPER_5X_LIQUIDATION")
+        fee, price = self.con.execute("SELECT liquidation_fee,exit_price FROM paper_agent_positions").fetchone()
+        self.assertAlmostEqual(fee, price * 10 * .0125)
+
+    def test_frozen_entry_evidence_is_immutable(self):
+        self.freeze_entry()
+        for sql in ("UPDATE paper_position_events SET evidence_json='{}' WHERE event_type='ENTRY_FILLED'",
+                    "DELETE FROM paper_position_events WHERE event_type='ENTRY_FILLED'"):
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "IMMUTABLE_ENTRY"):
+                self.con.execute(sql)
+
+    def test_corrupt_frozen_evidence_cannot_fall_back_to_current_rules(self):
+        self.freeze_entry()
+        self.con.execute("DROP TRIGGER immutable_paper_entry_execution_update")
+        self.con.execute("UPDATE paper_position_events SET evidence_sha256=? WHERE event_type='ENTRY_FILLED'", ("0" * 64,))
+        rules, source, error = resolve_position_rules(self.con, 1, "BTCUSDT", "USD_M_PERPETUAL", self.rules)
+        self.assertIsNone(rules)
+        self.assertEqual(error, "FROZEN_RULES_EVIDENCE_HASH_MISMATCH")
+
+    def test_legacy_adoption_preserves_history_then_survives_helper_loss(self):
+        self.set_flow_thesis("FLOW_POS")
+        original_thesis = self.con.execute("SELECT thesis_json FROM paper_agent_decision_theses").fetchone()[0]
+        record_execution(self.con, 1, ENTRY, "ENTRY", "BTCUSDT", "BUY", "USD_M_PERPETUAL",
+                         ExecutionDecision("FILLED", "PAPER_FILL", ExecutionFill(100, 10, 1, 0, 0, False)))
+        original_entry = self.con.execute("SELECT evidence_json FROM paper_position_events WHERE event_type='ENTRY_FILLED'").fetchone()[0]
+        first = process_market_state(self.con, self.live(100, 2), ENTRY + timedelta(seconds=2), self.rules)
+        self.assertEqual(first["status"], "HOLD")
+        adopted = json.loads(self.con.execute("SELECT evidence_json FROM paper_position_events WHERE event_type='LEGACY_EXECUTION_RULES_ADOPTED'").fetchone()[0])
+        self.assertFalse(adopted["historical_fill_rules_available"])
+        closed = process_market_state(self.con, self.live(98, 3), ENTRY + timedelta(seconds=3), None)
+        self.assertEqual(closed["status"], "POSITION_CLOSED")
+        self.assertEqual(self.con.execute("SELECT thesis_json FROM paper_agent_decision_theses").fetchone()[0], original_thesis)
+        self.assertEqual(self.con.execute("SELECT evidence_json FROM paper_position_events WHERE event_type='ENTRY_FILLED'").fetchone()[0], original_entry)
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "IMMUTABLE_ENTRY"):
+            self.con.execute("DELETE FROM paper_position_events WHERE event_type='LEGACY_EXECUTION_RULES_ADOPTED'")
+
+    def test_legacy_without_available_route_does_not_invent_frozen_rules(self):
+        result = adopt_legacy_open_rules(self.con, {}, ENTRY)
+        self.assertEqual(result, {"adopted": [], "blocked": [(1, "LEGACY_POSITION_METADATA_UNAVAILABLE")]})
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM paper_position_events").fetchone()[0], 0)
+
+    def test_legacy_hold_cannot_report_rules_healthy_when_unavailable(self):
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        result = process_market_state(self.con, self.live(100, 2), ENTRY + timedelta(seconds=2), None)
+        self.assertEqual(result["status"], "HOLD")
+        self.assertEqual(result["rules_error"], "EXCHANGE_RULES_UNAVAILABLE")
+
+    def test_frozen_reduce_only_dust_closes_below_entry_minimum(self):
+        self.con.execute("UPDATE paper_agent_positions SET quantity=.01,notional=1,margin_allocated=1,entry_fee=.001")
+        self.freeze_entry(rules=ExecutionRules(.001, .01, 100, True))
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        result = process_market_state(self.con, self.live(98, 2), ENTRY + timedelta(seconds=2), None)
+        self.assertEqual(result["status"], "POSITION_CLOSED")
+        self.assertEqual(result["quantity"], .01)
+
     def test_rejected_exit_is_throttled_and_creates_no_funding_segment(self):
         initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
         illiquid = self.live(98, 2)
@@ -406,6 +741,48 @@ class PositionManagementTests(unittest.TestCase):
         self.assertAlmostEqual(self.con.execute(
             "SELECT funding_cost FROM paper_agent_positions"
         ).fetchone()[0], .5)
+
+    def test_short_fractional_profit_target_keeps_step_alignment_then_closes_remainder(self):
+        self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',
+            quantity=1.333,notional=133.3,margin_allocated=133.3,entry_fee=.06665""")
+        self.freeze_entry(direction="SHORT")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        reduced = process_market_state(self.con, self.live(98, 2), ENTRY + timedelta(seconds=2), None)
+        self.assertEqual(reduced["status"], "POSITION_REDUCED")
+        self.assertEqual(reduced["quantity"], .333)
+        self.assertEqual(self.con.execute("SELECT remaining_quantity FROM paper_position_management").fetchone()[0], 1.0)
+        closed = process_market_state(self.con, self.live(101, 3), ENTRY + timedelta(seconds=3), None)
+        self.assertEqual(closed["status"], "POSITION_CLOSED")
+        self.assertEqual(closed["quantity"], 1.0)
+        self.assertEqual(self.con.execute("SELECT remaining_quantity FROM paper_position_management").fetchone()[0], 0.0)
+        executed = self.con.execute("SELECT SUM(fill_quantity) FROM paper_position_events WHERE event_type IN ('POSITION_REDUCED','POSITION_CLOSED')").fetchone()[0]
+        self.assertAlmostEqual(executed, 1.333)
+
+    def test_step_aligned_short_exit_still_respects_visible_quantity(self):
+        self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',
+            quantity=1.333,notional=133.3,margin_allocated=133.3""")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        live = self.live(98, 2)
+        live.ask_quote_volume = .2 * live.best_ask
+        result = process_market_state(self.con, live, ENTRY + timedelta(seconds=2), self.rules)
+        self.assertEqual(result["status"], "POSITION_REDUCED")
+        self.assertLessEqual(result["quantity"], .2)
+        self.assertAlmostEqual(result["quantity"] / self.rules.quantity_step,
+                               round(result["quantity"] / self.rules.quantity_step))
+        self.assertGreaterEqual(self.con.execute("SELECT remaining_quantity FROM paper_position_management").fetchone()[0], 1.133)
+
+    def test_true_legacy_off_step_dust_is_never_invented_or_marked_closed(self):
+        self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',
+            quantity=1.33325,notional=133.325,margin_allocated=133.325""")
+        initialize_open_positions(self.con, ENTRY + timedelta(seconds=1))
+        reduced = process_market_state(self.con, self.live(103, 2), ENTRY + timedelta(seconds=2), self.rules)
+        self.assertEqual(reduced["status"], "POSITION_REDUCED")
+        self.assertEqual(reduced["quantity"], 1.333)
+        self.assertAlmostEqual(self.con.execute("SELECT remaining_quantity FROM paper_position_management").fetchone()[0], .00025)
+        self.assertEqual(self.con.execute("SELECT status FROM paper_agent_positions").fetchone()[0], "OPEN")
+        result = process_market_state(self.con, self.live(103, 3), ENTRY + timedelta(seconds=3), self.rules)
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertAlmostEqual(self.con.execute("SELECT remaining_quantity FROM paper_position_management").fetchone()[0], .00025)
 
     def test_short_timeout_closes_one_exact_quantity_step(self):
         self.con.execute("""UPDATE paper_agent_positions SET direction='SHORT',

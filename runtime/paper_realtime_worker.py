@@ -12,17 +12,21 @@ import tempfile
 import time
 import threading
 from collections import deque
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 from database.runtime_store import connect
+from database.sqlite_policy import connect_local, is_sqlite_busy
 from paper_trading.crypto_profit_agent import (
     DB_NAME, FORWARD_COHORT, cancel_expired_pending_entries, ensure_tables,
     fill_pending_from_live_state, select_new_positions,
 )
-from paper_trading.exchange_metadata import ExchangeMetadataError, load_cache, rules_for
+from paper_trading.exchange_metadata import ExchangeMetadataError, FROZEN_RULES_CONTRACT_VERSION, load_market_caches, rules_for
 from paper_trading.execution_contract import MarketSnapshot
+from runtime.process_identity import PROCESS_SOURCE
+from risk_manager.local_symbol_risk import refresh_local_symbol_risk, bootstrap_schema as bootstrap_local_risk
 from paper_trading.futures_costs import fetch_funding_history_via_postgres
 from paper_trading.governance import validate_agent_authority
 from paper_trading import behavior_decision_core, position_management, realtime_market
@@ -45,11 +49,14 @@ BRAIN_TIMELINE_PATH = Path(os.getenv(
 ))
 
 
+HEALTH_CONTRACT_VERSION = "AGCA_REALTIME_HEALTH_V2_ISOLATED_PATHS"
+
+
 def now():
     return datetime.now(timezone.utc)
 
 
-def _local_sqlite_connection(timeout_seconds=30.0):
+def _local_sqlite_connection(timeout_seconds=0.05, *, priority="background"):
     """Plain local SQLite connection for already-initialized realtime hot paths.
 
     The canonical startup connection installs schemas/outbox triggers once.
@@ -59,12 +66,10 @@ def _local_sqlite_connection(timeout_seconds=30.0):
     connection, so local execution remains authoritative and async mirroring is
     preserved.
     """
-    timeout_seconds = max(0.1, float(timeout_seconds))
-    db = sqlite3.connect(DB_NAME, timeout=timeout_seconds)
-    db.execute(
-        f"PRAGMA busy_timeout={max(100, int(timeout_seconds * 1000))}"
-    )
-    return db
+    # Single bounded wait; execution never replays a failed/stale tick. The
+    # SQLite coordinator yields background admission to protective management.
+    return connect_local(DB_NAME, timeout=min(0.25, max(0.001, float(timeout_seconds))),
+                         priority=priority)
 
 
 def worker_process_source_state(repo_path=None):
@@ -233,35 +238,181 @@ def subscription_symbols(con, observed_at=None):
     return tuple(sorted(active | monitored))
 
 
+def metadata_cache_paths():
+    return {
+        "USD_M_PERPETUAL": os.getenv("AGCA_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-usdm.json"),
+        "SPOT": os.getenv("AGCA_SPOT_EXCHANGE_METADATA_CACHE", "/var/lib/agca/exchange-info-spot.json"),
+    }
+
+
+def load_runtime_metadata():
+    return load_market_caches(metadata_cache_paths(), max_age_seconds=float(
+        os.getenv("AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200")))
+
+
+@contextmanager
+def isolate_entry_failure(con):
+    """An entry-only failure cannot skip an existing position's protective tick."""
+    result = {}
+    try:
+        yield result
+    except Exception as exc:
+        con.rollback()
+        if isinstance(exc, sqlite3.Error):
+            raise  # Classified by the enclosing SQLite path boundary.
+        result.update(error=type(exc).__name__, error_detail=str(exc)[:240],
+                      last_error_at=now().isoformat())
+
+
+def sqlite_path(con, path, key, states, operation):
+    """One bounded attempt; rollback contention and resume only on fresh work.
+
+    No operation is replayed here: manager/fill commits and durable event keys
+    remain the authority after an interrupted tick. Fatal SQLite errors remain
+    visible and fail closed instead of masquerading as retryable contention.
+    """
+    previous = states.get(key, {})
+    at = now().isoformat()
+    try:
+        result = operation()
+    except sqlite3.Error as exc:
+        con.rollback()
+        busy = is_sqlite_busy(exc)
+        states[key] = {
+            "status": "DEGRADED" if busy else "FAILED", "path": path,
+            "error": "SQLITE_BUSY" if busy else type(exc).__name__,
+            "error_detail": str(exc)[:240], "last_error_at": at,
+            "last_success_at": previous.get("last_success_at"),
+            "sqlite_errorcode": getattr(exc, "sqlite_errorcode", None),
+            "sqlite_errorname": getattr(exc, "sqlite_errorname", None),
+            "busy_count": int(previous.get("busy_count", 0)) + int(busy),
+            "continuation": "NEXT_FRESH_TICK" if busy else "FAIL_CLOSED",
+        }
+        if not busy:
+            raise
+        return dict(states[key])
+    states[key] = {
+        "status": "READY", "path": path, "error": None,
+        "last_success_at": at, "last_error_at": previous.get("last_error_at"),
+        "busy_count": int(previous.get("busy_count", 0)),
+    }
+    return result
+
+
+def fresh_execution_state(state, wall_clock_ms):
+    stamp = state.market_timestamp_ms
+    return (stamp is not None and -500 <= wall_clock_ms - stamp
+            <= realtime_market.MAX_EVENT_AGE_MS)
+
+
+def protective_tick(con, state, observed_at, metadata, *, market_snapshots,
+                    manager_states, entry_errors, latest_state=None):
+    """Protect existing OPEN exposure before any entry work, in separate commits."""
+    key = f"{state.symbol}:{state.market_type}"
+    if not fresh_execution_state(state, int(now().timestamp() * 1000)):
+        return {"status": "STALE_TICK_SKIPPED"}
+    route = metadata.get(state.market_type) if isinstance(metadata, dict) else None
+    try:
+        rule = rules_for(route, state.symbol) if route is not None else None
+    except ExchangeMetadataError:
+        rule = None
+    previous_manager = manager_states.get(key, {})
+    result = sqlite_path(con, "OPEN_POSITION_MANAGEMENT", key, manager_states,
+                         lambda: position_management.process_market_state(
+                             con, state, observed_at, rule))
+    manager_failed = (result.get("error") or result.get("rules_error")
+                      or result.get("status") in {"BLOCKED", "NO_PRICE"})
+    if manager_failed:
+        manager_states[key].update(status="DEGRADED", error=(result.get("error")
+            or result.get("rules_error") or result.get("reason", result.get("status"))),
+            last_success_at=previous_manager.get("last_success_at"),
+            last_error_at=now().isoformat())
+        # While protective writes are blocked, adding exposure has no priority.
+        return result
+    if latest_state is not None:
+        state, observed_at = latest_state()
+    if not fresh_execution_state(state, int(now().timestamp() * 1000)):
+        return result
+
+    def pending_entry():
+        with isolate_entry_failure(con) as entry_result:
+            # Fill accounting, immutable fill event and manager initialization
+            # commit atomically. There can be no committed unmanaged new OPEN.
+            filled, cancelled = fill_pending_from_live_state(
+                con, observed_at, state, metadata,
+                market_snapshots=market_snapshots(observed_at), commit=False)
+            if filled:
+                position_management.initialize_open_positions(con, observed_at, commit=False)
+                unmanaged = con.execute("""SELECT 1 FROM paper_agent_positions p
+                    LEFT JOIN paper_position_management m USING(position_id)
+                    WHERE p.symbol=? AND p.market_type=? AND p.status='OPEN'
+                    AND m.position_id IS NULL LIMIT 1""",
+                    (state.symbol, state.market_type)).fetchone()
+                if unmanaged:
+                    raise ValueError("NEW_OPEN_MANAGER_INITIALIZATION_BLOCKED")
+            con.commit()
+        return entry_result
+
+    entry_result = sqlite_path(con, "PENDING_FILL", key, entry_errors, pending_entry)
+    if entry_result:
+        entry_errors[key].update(entry_result)
+    else:
+        entry_errors.pop(key, None)
+    return result
+
+
 async def run():
-    process_runtime_source = worker_process_source_state()
+    source = {**worker_process_source_state(), "pid": os.getpid(),
+              "process_started_at": PROCESS_SOURCE["process_started_at"]}
+    write_health("STARTING", process_source=source, process_runtime_source=source,
+                 health_contract_version=HEALTH_CONTRACT_VERSION)
+    try:
+        await _run(source)
+    except Exception as exc:
+        # This outer boundary includes authority, metadata and SQLite startup,
+        # before the heartbeat exists. Never leave an old STOPPED file behind.
+        write_health("FAILED", error=type(exc).__name__, error_detail=str(exc)[:500],
+                     last_error_at=now().isoformat(), process_source=source,
+                     process_runtime_source=source, health_contract_version=HEALTH_CONTRACT_VERSION,
+                     ENTRY_PATH={"status": "UNAVAILABLE"},
+                     OPEN_POSITION_MANAGEMENT={"status": "UNAVAILABLE"})
+        raise
+
+
+async def _run(process_runtime_source):
     validate_agent_authority(
         execution_mode=os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY"),
         policy_version="PAPER_OPPORTUNITY_POLICY_V3_IMMEDIATE_EXECUTION",
         initial_capital=float(os.getenv("AGCA_PAPER_INITIAL_USDT", "10000")),
     )
-    max_metadata_age = float(os.getenv(
-        "AGCA_EXCHANGE_METADATA_MAX_AGE_SECONDS", "7200"
-    ))
-    metadata = {
-        "USD_M_PERPETUAL": load_cache(
-            os.getenv(
-                "AGCA_EXCHANGE_METADATA_CACHE",
-                "/var/lib/agca/exchange-info-usdm.json",
-            ),
-            "USD_M_PERPETUAL", max_age_seconds=max_metadata_age,
-        ),
-        "SPOT": load_cache(
-            os.getenv(
-                "AGCA_SPOT_EXCHANGE_METADATA_CACHE",
-                "/var/lib/agca/exchange-info-spot.json",
-            ),
-            "SPOT", max_age_seconds=max_metadata_age,
-        ),
-    }
-    con = connect(DB_NAME, timeout=30)
-    ensure_tables(con)
-    position_management.ensure_tables(con)
+    metadata, metadata_health = load_runtime_metadata()
+    def bootstrap():
+        db = connect(DB_NAME, timeout=0.25)
+        try:
+            ensure_tables(db)
+            position_management.ensure_tables(db)
+            adoption = position_management.adopt_legacy_open_rules(db, metadata, now())
+            position_management.initialize_open_positions(db, now())
+            db.commit()
+            bootstrap_local_risk(DB_NAME)
+            return adoption
+        finally:
+            db.close()
+
+    # Startup contention is a pending readiness state, never a process death.
+    # Every attempt runs away from the event loop and closes/rolls back its DB.
+    while True:
+        try:
+            legacy_rules_adoption = await asyncio.to_thread(bootstrap)
+            break
+        except sqlite3.Error as exc:
+            if not is_sqlite_busy(exc):
+                raise
+            write_health("STARTING", error="SQLITE_BUSY", phase="SQLITE_BOOTSTRAP",
+                         process_source=process_runtime_source,
+                         process_runtime_source=process_runtime_source,
+                         health_contract_version=HEALTH_CONTRACT_VERSION)
+            await asyncio.sleep(0.25)
     decision_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="agca-paper-execution"
     )
@@ -292,6 +443,12 @@ async def run():
     decision_wakeup = asyncio.Event()
     symbol_cache_lock = threading.Lock()
     cached_symbols = ()
+    cached_open_symbols = ()
+    cached_unmanaged_symbols = ()
+    entry_errors = {}
+    manager_states = {}
+    background_paths = {}
+    local_risk_health = {"status": "STARTING"}
     last_scan_started_at = None
     last_scan_completed_at = None
     last_scan_duration_ms = None
@@ -349,9 +506,17 @@ async def run():
         loop.add_signal_handler(name, stop_event.set)
 
     def load_symbols(db):
-        observed_at = now()
-        cancel_expired_pending_entries(db, observed_at)
-        position_management.initialize_open_positions(db, observed_at)
+        nonlocal cached_open_symbols, cached_unmanaged_symbols
+        # Subscription refresh is read-only. Lifecycle writers cannot race it
+        # into a long transaction or leave partial OPEN initialization behind.
+        cached_open_symbols = tuple(db.execute(
+            "SELECT symbol,market_type FROM paper_agent_positions WHERE status='OPEN'"
+        ).fetchall())
+        cached_unmanaged_symbols = tuple(db.execute(
+            "SELECT p.symbol,p.market_type FROM paper_agent_positions p "
+            "LEFT JOIN paper_position_management m USING(position_id) "
+            "WHERE p.status='OPEN' AND m.position_id IS NULL"
+        ).fetchall())
         return subscription_symbols(db)
 
     def symbols():
@@ -432,7 +597,43 @@ async def run():
                 "technical_plan_errors": last_scan_diagnostics.get("technical_plan_errors", []),
             },
         })
-        details["process_runtime_source"] = process_runtime_source
+        unavailable_routes = [market for market, item in metadata_health.items()
+                              if item.get("status") != "READY"]
+        open_stale = stale_quote_symbols(cached_open_symbols, live_states, wall_clock_ms,
+                                           max_age_ms=realtime_market.MAX_EVENT_AGE_MS)
+        manager_errors = {key: value for key, value in manager_states.items()
+                          if value.get("error") and tuple(key.split(":")) in cached_open_symbols}
+        entry_error = last_scan_error or last_scan_diagnostics.get("core_status")
+        cache_blocked = bool(entry_error and any(word in str(entry_error) for word in ("CACHE", "ERROR", "BLOCKED")))
+        details.update({
+            "health_contract_version": HEALTH_CONTRACT_VERSION,
+            "core_version": behavior_decision_core.VERSION,
+            "cache_contract_version": behavior_decision_core.PATTERN_CACHE_CONTRACT_VERSION,
+            "execution_rules_contract_version": FROZEN_RULES_CONTRACT_VERSION,
+            "position_manager_version": position_management.VERSION,
+            "process_source": process_runtime_source,
+            "process_runtime_source": process_runtime_source,
+            "metadata_routes": metadata_health,
+            "local_symbol_risk": local_risk_health,
+            "sqlite_background_paths": dict(background_paths),
+            "ENTRY_PATH": {
+                "status": ("DEGRADED" if unavailable_routes or last_scan_error or cache_blocked or entry_errors else
+                           "STARTING" if last_scan_completed_at is None else "READY"),
+                "unavailable_routes": unavailable_routes,
+                "last_success_at": last_scan_completed_at if not last_scan_error else None,
+                "error": entry_error, "execution_errors": dict(entry_errors),
+            },
+            "OPEN_POSITION_MANAGEMENT": {
+                "status": ("IDLE" if not cached_open_symbols else
+                           "DEGRADED" if open_stale or manager_errors or cached_unmanaged_symbols else
+                           "STARTING" if any(f"{symbol}:{market}" not in manager_states
+                                             for symbol, market in cached_open_symbols) else "READY"),
+                "open_routes": cached_open_symbols, "stale_routes": open_stale,
+                "startup_legacy_rules_adoption": legacy_rules_adoption,
+                "uninitialized_open_routes": cached_unmanaged_symbols,
+                "errors": manager_errors, "states": dict(manager_states),
+            },
+        })
         write_health(status, **details)
 
     def universe_connection():
@@ -447,7 +648,11 @@ async def run():
 
     def refresh_symbol_cache_once():
         nonlocal cached_symbols
-        refreshed = load_symbols(universe_connection())
+        db = universe_connection()
+        refreshed = sqlite_path(db, "SYMBOL_CACHE", "all", background_paths,
+                                lambda: load_symbols(db))
+        if isinstance(refreshed, dict) and refreshed.get("error"):
+            return refreshed
         with symbol_cache_lock:
             cached_symbols = refreshed
         return refreshed
@@ -459,10 +664,9 @@ async def run():
                     universe_executor, refresh_symbol_cache_once
                 )
             except Exception as exc:
-                emit_health(
-                    "DEGRADED",
-                    error=f"SYMBOL_UNIVERSE_REFRESH_{type(exc).__name__}",
-                )
+                emit_health("DEGRADED", error=f"SYMBOL_UNIVERSE_REFRESH_{type(exc).__name__}")
+                if isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc):
+                    raise
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
@@ -477,7 +681,7 @@ async def run():
         db = getattr(decision_local, "connection", None)
         if db is None:
             # Runtime schema is initialized once before concurrent tasks start.
-            db = _local_sqlite_connection(30)
+            db = _local_sqlite_connection(0.05, priority="realtime")
             decision_local.connection = db
         return db
 
@@ -508,10 +712,7 @@ async def run():
         scan_local.connection = None
 
     def scan_sqlite_busy(exc):
-        return (
-            isinstance(exc, sqlite3.OperationalError)
-            and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
-        )
+        return is_sqlite_busy(exc)
 
     def latest_any_execution_state():
         with latest_execution_lock:
@@ -522,18 +723,9 @@ async def run():
                 key=lambda item: item[1],
             )
 
-    def scan_once():
-        """Discover/select opportunities without ever blocking execution ticks."""
-        nonlocal last_scan_started_at, last_scan_completed_at
-        nonlocal last_scan_duration_ms, last_scan_error
-        nonlocal last_scan_error_detail, last_scan_sqlite_error_name
-        nonlocal last_scan_sqlite_error_code, last_scan_diagnostics
-        observed_at = now()
-        started = loop.time()
-        # Freeze exact-market quotes at the scan's decision time. A later tick
-        # cannot be retroactively treated as known at this selection timestamp.
+    def execution_market_snapshots(observed_at):
         with latest_execution_lock:
-            market_snapshots = {
+            return {
                 key: MarketSnapshot(
                     reference_price=state.last_price or 0.0,
                     available_quote_volume=state.visible_quote_volume,
@@ -545,6 +737,18 @@ async def run():
                 )
                 for key, (state, _) in latest_execution_states.items()
             }
+
+    def scan_once():
+        """Discover/select opportunities without ever blocking execution ticks."""
+        nonlocal last_scan_started_at, last_scan_completed_at
+        nonlocal last_scan_duration_ms, last_scan_error
+        nonlocal last_scan_error_detail, last_scan_sqlite_error_name
+        nonlocal last_scan_sqlite_error_code, last_scan_diagnostics
+        observed_at = now()
+        started = loop.time()
+        # Freeze exact-market quotes at the scan's decision time. A later tick
+        # cannot be retroactively treated as known at this selection timestamp.
+        market_snapshots = execution_market_snapshots(observed_at)
         last_scan_started_at = observed_at.isoformat()
         last_scan_error = None
         last_scan_error_detail = None
@@ -582,6 +786,8 @@ async def run():
             if selected is None:
                 raise RuntimeError("scan retry loop exited without result")
         except Exception as exc:
+            if work_con is not None:
+                work_con.rollback()
             last_scan_error = type(exc).__name__
             last_scan_error_detail = str(exc)[:240]
             last_scan_sqlite_error_name = getattr(
@@ -659,6 +865,8 @@ async def run():
                         exc, "sqlite_errorcode", None
                     ),
                 )
+                if isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc):
+                    raise
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
@@ -701,42 +909,15 @@ async def run():
             execution_observed_ms / 1000, tz=timezone.utc
         )
 
-        live_filled, live_cancelled = fill_pending_from_live_state(
-            work_con, execution_at, execution_state, metadata
-        )
-        if live_filled or live_cancelled:
-            position_management.initialize_open_positions(
-                work_con, execution_at
-            )
+        def fresh_state():
+            latest, stamp = latest_execution_state(state, observed_ms)
+            return latest, datetime.fromtimestamp(stamp / 1000, tz=timezone.utc)
 
-        market_metadata = (
-            metadata.get(execution_state.market_type)
-            if isinstance(metadata, dict) else None
-        )
-        try:
-            rule = (
-                rules_for(market_metadata, execution_state.symbol)
-                if market_metadata is not None else None
-            )
-        except ExchangeMetadataError:
-            # A newly listed/delisted/temporarily missing symbol rule is a
-            # per-symbol execution-data failure, not a reason to kill the
-            # canonical realtime worker. Fail closed for this symbol and keep
-            # processing every other live execution obligation.
-            rule = None
-        if rule is None:
-            position_management.process_market_state(
-                work_con, execution_state, execution_at, None
-            )
-            emit_health(
-                "DEGRADED",
-                error="LIVE_SYMBOL_RULES_UNAVAILABLE",
-                symbol=execution_state.symbol,
-            )
-            return
-
-        result = position_management.process_market_state(
-            work_con, execution_state, execution_at, rule
+        result = protective_tick(
+            work_con, execution_state, execution_at, metadata,
+            market_snapshots=execution_market_snapshots,
+            manager_states=manager_states, entry_errors=entry_errors,
+            latest_state=fresh_state,
         )
         if result.get("status") not in {
             "HOLD", "NO_PRICE", "NO_OPEN_POSITION", "DUPLICATE_OR_OLD_EVENT"
@@ -784,7 +965,13 @@ async def run():
                     continue
             if not pending_decision_order:
                 continue
-            key = pending_decision_order.popleft()
+            protected = next((item for item in pending_decision_order
+                              if item in cached_open_symbols), None)
+            if protected is None:
+                key = pending_decision_order.popleft()
+            else:
+                key = protected
+                pending_decision_order.remove(key)
             pending_decision_keys.discard(key)
             item = pending_decision_states.pop(key, None)
             if item is None:
@@ -798,24 +985,33 @@ async def run():
                 > realtime_market.MAX_EVENT_AGE_MS
             ):
                 continue
-            await loop.run_in_executor(
-                decision_executor, process_state, state, observed_ms
-            )
+            try:
+                await loop.run_in_executor(
+                    decision_executor, process_state, state, observed_ms
+                )
+            except sqlite3.Error as exc:
+                if not is_sqlite_busy(exc):
+                    raise
+                manager_states[f"{state.symbol}:{state.market_type}"] = {
+                    "status": "DEGRADED", "error": "SQLITE_BUSY",
+                    "path": "DECISION_CONNECTION", "last_error_at": now().isoformat(),
+                    "continuation": "NEXT_FRESH_TICK",
+                }
+                emit_health("DEGRADED", error="SQLITE_BUSY", symbol=state.symbol)
 
     def maintenance_once():
-        # Startup already initialized schema and remote-mirror triggers.
-        # Repeating RuntimeConnection construction here every minute would run
-        # local DDL and can contend with realtime writers.
-        maintenance_con = _local_sqlite_connection(30)
+        # Each position's funding ledger commits after its remote lookup;
+        # cancellation is independent and never shares a protection transaction.
+        maintenance_con = _local_sqlite_connection(0.05)
         try:
-            reconciled = position_management.reconcile_pending_funding(
-                maintenance_con,
-                lambda **kwargs: fetch_funding_history_via_postgres(
-                    database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""), **kwargs,
-                ),
-                now(),
-            )
-            return reconciled
+            sqlite_path(maintenance_con, "PENDING_EXPIRY", "expiry", background_paths,
+                        lambda: cancel_expired_pending_entries(maintenance_con, now()))
+            return sqlite_path(maintenance_con, "FUNDING", "funding", background_paths,
+                lambda: position_management.reconcile_pending_funding(
+                    maintenance_con,
+                    lambda **kwargs: fetch_funding_history_via_postgres(
+                        database_url=os.getenv("AGCA_REMOTE_DATABASE_URL", ""), **kwargs),
+                    now()))
         finally:
             maintenance_con.close()
 
@@ -825,8 +1021,43 @@ async def run():
                 await asyncio.to_thread(maintenance_once)
             except Exception as exc:
                 emit_health("DEGRADED", error=f"FUNDING_RECONCILIATION_{type(exc).__name__}")
+                if isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc):
+                    raise
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
+
+    async def refresh_entry_support():
+        nonlocal metadata, metadata_health, local_risk_health
+        while not stop_event.is_set():
+            # Local files/SQLite only; separate from both decision executors.
+            # Helper errors degrade entries and cannot terminate OPEN management.
+            try:
+                available, route_health = await asyncio.to_thread(load_runtime_metadata)
+                metadata, metadata_health = available, route_health
+            except Exception as exc:
+                metadata = {}
+                metadata_health = {market: {"status": "UNAVAILABLE", "error": type(exc).__name__}
+                                   for market in metadata_cache_paths()}
+            try:
+                previous_risk_health = local_risk_health
+                local_risk_health = await asyncio.to_thread(refresh_local_symbol_risk, DB_NAME, now=now())
+                risk_success = local_risk_health.get("status") == "READY"
+                local_risk_health.update({
+                    "last_success_at": now().isoformat() if risk_success else previous_risk_health.get("last_success_at"),
+                    "last_error_at": previous_risk_health.get("last_error_at") if risk_success else now().isoformat(),
+                })
+            except Exception as exc:
+                fatal = isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc)
+                local_risk_health = {"status": "FAILED" if fatal else "DEGRADED",
+                                     "error": type(exc).__name__, "error_detail": str(exc)[:240],
+                                     "fatal_error": fatal, "last_error_at": now().isoformat()}
+                if fatal:
+                    emit_health("FAILED", error="LOCAL_RISK_FATAL_DATABASE_ERROR")
+                    raise
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=15)
             except asyncio.TimeoutError:
                 pass
 
@@ -840,8 +1071,9 @@ async def run():
             except asyncio.TimeoutError:
                 pass
 
-    with symbol_cache_lock:
-        cached_symbols = load_symbols(con)
+    # Read-only subscription refresh will publish its first successful snapshot
+    # through the same isolated background path as subsequent refreshes.
+    await loop.run_in_executor(universe_executor, refresh_symbol_cache_once)
     emit_health(
         "STARTING", active_symbols=symbols(),
     )
@@ -855,6 +1087,7 @@ async def run():
             refresh_symbol_cache(),
             maintenance(),
             heartbeat(),
+            refresh_entry_support(),
         )
     finally:
         def close_decision_connection():
@@ -886,7 +1119,6 @@ async def run():
             decision_executor.shutdown(wait=True)
             scan_executor.shutdown(wait=True)
             universe_executor.shutdown(wait=True)
-            con.close()
             emit_health("STOPPED")
 
 

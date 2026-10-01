@@ -458,6 +458,7 @@ async def collect_minute_snapshots(
     closed_bar_sink=None,
     observe_until_ms=None,
     before_sampling=None,
+    progress_callback=None,
     timings=None,
 ):
     """Collect deep evidence and exact closed 1m bars over one observer minute."""
@@ -620,6 +621,8 @@ async def collect_minute_snapshots(
             raise ConnectionError("Binance required channels not connected after hydration")
         if not any(has_required_evidence(state) for state in states.values()):
             raise ConnectionError("Binance no complete instrument evidence after hydration")
+        if progress_callback is not None:
+            progress_callback("REQUIRED_CHANNELS_HYDRATED")
         while True:
             minute_end_ms = (
                 await while_receiving(before_sampling()) if before_sampling is not None else None
@@ -638,6 +641,8 @@ async def collect_minute_snapshots(
                     states, collected_ms,
                     connectivity["public"], connectivity["market"],
                 ))
+                if progress_callback is not None:
+                    progress_callback("MARKET_SAMPLE_COMPLETED")
                 # Preserve cadence after a delayed wake; never manufacture a
                 # burst of catch-up observations from the same instant.
                 next_sample = sampled_at + float(cadence_seconds)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.sqlite_policy import is_sqlite_busy
 import time
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
@@ -75,7 +76,7 @@ def save_state(con, status, message, success_at=None):
 def runtime_connection():
     """Use the same bounded SQLite writer wait as the risk snapshot path."""
     con = runtime_connect(DB_NAME, timeout=30)
-    con.execute("PRAGMA busy_timeout=30000")
+    con.execute("PRAGMA busy_timeout=250")
     return con
 
 
@@ -91,7 +92,7 @@ def persist_state(status, message, success_at=None, *, attempts=3):
             return
         except sqlite3.OperationalError as exc:
             if (
-                "database is locked" not in str(exc).lower()
+                not is_sqlite_busy(exc)
                 or attempt >= attempts
             ):
                 raise

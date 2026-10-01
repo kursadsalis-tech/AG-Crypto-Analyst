@@ -49,10 +49,53 @@ if [[ "${AGCA_DEPLOY_REEXEC:-0}" != "1" ]]; then
   exec env AGCA_DEPLOY_REEXEC=1 bash "$DEPLOY/deploy/install_gce_free_worker.sh"
 fi
 
+EXPECTED_SHA=$(git rev-parse HEAD)
+if [[ -n "${AGCA_EXPECTED_DEPLOY_SHA:-}" && "$EXPECTED_SHA" != "$AGCA_EXPECTED_DEPLOY_SHA" ]]; then
+  echo "Refusing deployment: checkout does not match AGCA_EXPECTED_DEPLOY_SHA" >&2
+  exit 7
+fi
+
 if [[ ! -x .venv/bin/python ]]; then
   python3.12 -m venv .venv
 fi
 .venv/bin/pip install --no-cache-dir -r requirements-runtime.txt -r requirements-forecast-v3.txt
+
+# Read-only preflight runs before any service stop/restart or schema change.
+# Both routes must be ready for initial acceptance; a running manager remains
+# independently available if a helper later degrades.
+.venv/bin/python -m scripts.runtime_acceptance metadata \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR"
+
+# Prevent scheduled writer activations while producer processes are replaced.
+# An already-running oneshot is allowed to finish: never kill a DB transaction.
+active_timers=(
+  agca-paper-realtime-health-monitor.timer
+  agca-exchange-metadata-refresh.timer
+  agca-risk-refresh.timer
+  agca-exact-macro-observer.timer
+  agca-remote-mirror-drain.timer
+  agca-cloud-attestation.timer
+)
+for timer in "${active_timers[@]}"; do
+  sudo systemctl stop "$timer"
+done
+drain_deadline=$((SECONDS + 360))
+for timer in "${active_timers[@]}"; do
+  service="${timer%.timer}.service"
+  while systemctl is-active --quiet "$service"; do
+    if (( SECONDS >= drain_deadline )); then
+      echo "Refusing deployment: scheduled writer did not drain: $service" >&2
+      exit 8
+    fi
+    sleep 2
+  done
+done
+# Keep the protective realtime authority alive until all replacements are ready.
+# Stopping background workers serially avoids overlapping cold-start writers.
+for service in agca-behavior-learning-worker.service agca-technical-kline-worker.service \
+  agca-market-behavior-observer.service agca-trade-learning-worker.service; do
+  sudo systemctl stop "$service"
+done
 
 sudo install -d -o kursadsalis -g kursadsalis -m 700 "$DATA_DIR"
 
@@ -135,48 +178,75 @@ sudo systemctl daemon-reload
 sudo systemctl disable --now agca-observer-health-monitor.timer 2>/dev/null || true
 sudo systemctl disable --now agca-sqlite-integrity-check.timer 2>/dev/null || true
 
-active_timers=(
-  agca-paper-realtime-health-monitor.timer
-  agca-exchange-metadata-refresh.timer
-  agca-risk-refresh.timer
-  agca-exact-macro-observer.timer
-  agca-remote-mirror-drain.timer
-  agca-cloud-attestation.timer
-)
+# Begin staged producer restart.
+# Each synchronous acceptance must return before
+# the next writer starts; failure deliberately leaves later workers untouched.
+# Historical behavior learning is outside the realtime decision hot path.
+# Publish a compatible cache from the reviewed process before replacing its
+# consumer; failures stop installation before the realtime worker is restarted.
+sudo systemctl enable agca-behavior-learning-worker.service
+sudo systemctl restart agca-behavior-learning-worker.service
+.venv/bin/python -m scripts.runtime_acceptance cache \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
+
+# Exact closed 1m technical bars have one independent websocket owner.
+sudo systemctl enable agca-technical-kline-worker.service
+sudo systemctl restart agca-technical-kline-worker.service
+.venv/bin/python -m scripts.runtime_acceptance producer \
+  --service agca-technical-kline-worker.service \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
+
+# Keep the observer process alive across minute publications.
+sudo systemctl enable agca-market-behavior-observer.service
+sudo systemctl restart agca-market-behavior-observer.service
+.venv/bin/python -m scripts.runtime_acceptance producer \
+  --service agca-market-behavior-observer.service \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 30 --ready-timeout 120 --max-ready-seconds 1800
+
+# Post-trade learning remains a background specialist without order authority.
+sudo systemctl enable agca-trade-learning-worker.service
+sudo systemctl restart agca-trade-learning-worker.service
+.venv/bin/python -m scripts.runtime_acceptance producer \
+  --service agca-trade-learning-worker.service \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
+
+# Resume scheduled support work only after every producer passed readiness.
+# Start each oneshot synchronously before enabling its timer, avoiding the
+# overdue Persistent=true timers all launching their first write together.
 for timer in "${active_timers[@]}"; do
+  sudo systemctl start "${timer%.timer}.service"
   sudo systemctl enable --now "$timer"
 done
 
-# Keep the existing observer process alive across minute publications.
-sudo systemctl enable agca-market-behavior-observer.service
-sudo systemctl restart agca-market-behavior-observer.service
+# Earlier producer readiness may have aged during another cold start. Revalidate
+# the complete current-process set and both metadata routes before the consumer.
+.venv/bin/python -m scripts.runtime_acceptance producer \
+  --service agca-behavior-learning-worker.service --service agca-technical-kline-worker.service \
+  --service agca-market-behavior-observer.service --service agca-trade-learning-worker.service \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 30 --ready-timeout 120 --max-ready-seconds 1800
+.venv/bin/python -m scripts.runtime_acceptance metadata \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR"
 
-# Historical behavior learning is intentionally outside the realtime decision
-# hot path. Start its low-priority cache worker before restarting the consumer.
-sudo systemctl enable agca-behavior-learning-worker.service
-sudo systemctl restart agca-behavior-learning-worker.service
-
-# Post-trade learning, experience review and strategy allocation are also
-# background specialist work. They must never block opportunity scans or fills.
-sudo systemctl enable agca-trade-learning-worker.service
-sudo systemctl restart agca-trade-learning-worker.service
-
-# A deployment must replace the running worker process, not only ensure the
-# unit is enabled. enable --now leaves an already-running process on the old
-# checkout/commit, which makes runtime source attestation lie about the deploy.
+# enable --now does not replace an existing process. Restart the sole PAPER
+# lifecycle only after metadata and the producer cache passed preflight.
 sudo systemctl enable agca-paper-realtime-worker.service
 sudo systemctl restart agca-paper-realtime-worker.service
-
-# Exact closed 1m technical bars need one long-lived websocket owner.
-# Keep this data-only collector independent from the rotating oneshot observer.
-sudo systemctl enable agca-technical-kline-worker.service
-sudo systemctl restart agca-technical-kline-worker.service
+# End staged producer restart.
 
 systemctl is-active --quiet agca-paper-realtime-worker.service
 systemctl is-active --quiet agca-technical-kline-worker.service
 systemctl is-active --quiet agca-behavior-learning-worker.service
 systemctl is-active --quiet agca-trade-learning-worker.service
+systemctl is-active --quiet agca-market-behavior-observer.service
+.venv/bin/python -m scripts.runtime_acceptance runtime \
+  --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
+  --window-seconds 60 --ready-timeout 120 --max-ready-seconds 1800 --poll-seconds 5
 test ! -e "$DEPLOY/crypto_data.db"
 echo "COMMIT=$(git rev-parse HEAD)"
 echo "CANONICAL_DB=$DB"
-echo "PAPER_RUNTIME=ACTIVE"
+echo "PAPER_RUNTIME=ACCEPTED_STABLE_EXACT_SOURCE"

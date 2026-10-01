@@ -64,6 +64,40 @@ def plan(*, risk_compatible=True):
 
 
 class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
+    def test_negative_or_invalid_calibrated_edge_never_reaches_planning(self):
+        for edge in (-0.0372, 0.0, float("nan"), float("inf"), None):
+            for field in ("expected", "calibrated"):
+                with self.subTest(edge=edge, field=field):
+                    row = candidate()
+                    if field == "expected":
+                        row["expected_net_edge_pct"] = edge
+                    else:
+                        row["evidence"]["execution_calibration"]["calibrated_net_edge_pct"] = edge
+                    with patch.object(technical_trade_plan, "build_for_candidate") as build:
+                        result = orchestrator.orchestrate(object(), NOW,
+                            behavior_result={"status": "ACTIONABLE", "candidates": [row]})
+                    build.assert_not_called()
+                    self.assertEqual(result["ready"], [])
+                    reason = "NEGATIVE_EDGE_VETO" if edge in (-0.0372, 0.0) else "INVALID_EDGE_EVIDENCE"
+                    self.assertEqual(result["rejections"], {reason: 1})
+
+    def test_both_directions_reach_paper_execution_geometry(self):
+        for direction, market in (("LONG", "SPOT"), ("SHORT", "USD_M_PERPETUAL")):
+            with self.subTest(direction=direction):
+                row = candidate()
+                row["direction"] = direction
+                row["evidence"]["directional_signals"][0]["direction"] = direction
+                row["evidence"]["execution_calibration"]["calibrated_net_edge_pct"] = 0.25
+                frozen = {**plan(), "direction": direction, "execution_market_type": market}
+                with patch.object(technical_trade_plan, "build_for_candidate", return_value=frozen), patch.object(
+                    realtime_technical_context, "load_latest", return_value=None
+                ):
+                    result = orchestrator.orchestrate(object(), NOW,
+                        behavior_result={"status": "ACTIONABLE", "candidates": [row]})
+                self.assertEqual(len(result["ready"]), 1)
+                self.assertEqual(result["ready"][0].risk_tier.market_type, market)
+                self.assertEqual(result["ready"][0].candidate["direction"], direction)
+
     def test_combines_behavior_technical_risk_and_cost_without_position_authority(self):
         behavior = {
             "status": "ACTIONABLE",
@@ -99,7 +133,7 @@ class SharedPaperCandidateOrchestratorTests(unittest.TestCase):
             ready, equity=10_000.0,
             exposure_cap=6_000.0, available_cash=10_000.0,
         )
-        self.assertAlmostEqual(sized.notional, 50.0)
+        self.assertAlmostEqual(sized.notional, 100.0)
         self.assertGreater(sized.expected_profit_usdt, 0.0)
         self.assertGreater(sized.expected_profit_per_risk, 0.0)
 

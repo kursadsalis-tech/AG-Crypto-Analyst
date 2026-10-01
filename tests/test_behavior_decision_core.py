@@ -566,5 +566,114 @@ class BehaviorDecisionCoreTests(unittest.TestCase):
         self.assertNotIn("paper_behavior_missed_opportunities", REMOTE_RUNTIME_TABLES)
 
 
+    def _seed_losing_continuous_pattern(self, sign=1, count=12, loss=-2):
+        self.add_history(count=30, days=3)
+        self.add_current()
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        self.con.execute("""UPDATE behavior_event_forward_outcomes SET
+            kind='MARKET_STRUCTURE',return_from_pre_event_pct=?""", (sign,))
+        first = core.evaluate(self.con, NOW)["candidates"][0]
+        for index in range(count):
+            self.con.execute("""INSERT INTO paper_agent_positions VALUES(
+                ?,?,'MARKET_BEHAVIOR_CORE','CLOSED',1,?,100,?,?
+            )""", (index + 1, first["decision_id"], loss,
+                    (NOW - timedelta(days=5 + index % 3)).isoformat(),
+                    first["direction"]))
+        return first
+
+    def _add_new_recovery_observations(self, sign):
+        for index in range(5):
+            stamp = NOW - timedelta(hours=6, minutes=index)
+            self.con.execute(
+                "INSERT INTO behavior_event_forward_outcomes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (int(stamp.timestamp() * 1000), f"recovery:{index}",
+                 "BTC-USDT-SWAP", "MARKET_STRUCTURE", 240, sign,
+                 .3, .4, 1.0, (stamp + timedelta(hours=4)).isoformat(),
+                 f"recovery:{index}"))
+        # A new evidence minute is a new immutable decision; never rewrite the
+        # original decision merely because calibration changed.
+        self.con.execute("UPDATE market_behavior_minute_features SET minute_end_timestamp_ms=?",
+                         (int(NOW.timestamp() * 1000),))
+
+    def test_immature_negative_calibrated_edge_is_not_normal_execution(self):
+        self._seed_losing_continuous_pattern(count=2, loss=-10)
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertFalse(result["review"]["patterns"][0]["execution_suspended"])
+        self.assertGreater(result["reason_counts"]["NEGATIVE_EDGE_VETO"], 0)
+
+    def test_suspension_does_not_blindly_flip_or_reactivate(self):
+        self._seed_losing_continuous_pattern()
+        # Existing observations predate the last loss: no genuinely new cohort.
+        self.con.execute("UPDATE paper_agent_positions SET exit_time=? WHERE position_id=1",
+                         ((NOW - timedelta(minutes=1)).isoformat(),))
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+        self.assertGreater(result["reason_counts"]["PATTERN_SUSPENDED"], 0)
+        self.assertEqual(result["direction_counts"]["suspended"]["LONG"], 1)
+
+    def test_fresh_closed_recovery_makes_short_reachable_and_preserves_history(self):
+        first = self._seed_losing_continuous_pattern(sign=1)
+        before = self.con.execute("SELECT evidence_json,evidence_sha256 FROM paper_behavior_decisions").fetchall()
+        self._add_new_recovery_observations(-1)
+        # Keep old history outside the recovery window while retaining its
+        # dominance in the all-time mean.
+        self.con.execute("""UPDATE behavior_event_forward_outcomes SET
+            event_minute_end_timestamp_ms=event_minute_end_timestamp_ms-864000000
+            WHERE independence_unit NOT LIKE 'recovery:%'""")
+        core.refresh_pattern_cache(self.con, NOW)
+        with patch.dict("os.environ", {"AGCA_BEHAVIOR_PATTERN_CACHE_REQUIRED": "1"}):
+            result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["status"], "ACTIONABLE")
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["direction"], "SHORT")
+        self.assertEqual(candidate["experiment_tier"], "RECOVERY_EXPLORATION")
+        self.assertLessEqual(candidate["execution_size_multiplier"], .25)
+        self.assertGreater(candidate["expected_net_edge_pct"], 0)
+        self.assertTrue(result["review"]["patterns"][0]["execution_suspended"])
+        self.assertEqual(result["direction_counts"]["candidates"]["SHORT"], 1)
+        self.assertEqual(self.con.execute("SELECT evidence_json,evidence_sha256 FROM paper_behavior_decisions WHERE decision_id=?",
+                                         (first["decision_id"],)).fetchall(), before)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM paper_agent_positions").fetchone()[0], 12)
+        self.assertEqual(self.con.execute("SELECT MAX(real_order_allowed) FROM paper_behavior_decisions").fetchone()[0], 0)
+        self.assertFalse(candidate["evidence"]["real_orders"])
+
+    def test_fresh_closed_recovery_makes_long_reachable_without_balancing(self):
+        self._seed_losing_continuous_pattern(sign=-1)
+        self._add_new_recovery_observations(1)
+        self.con.execute("""UPDATE behavior_event_forward_outcomes SET
+            event_minute_end_timestamp_ms=event_minute_end_timestamp_ms-864000000
+            WHERE independence_unit NOT LIKE 'recovery:%'""")
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual({x["direction"] for x in result["candidates"]}, {"LONG"})
+        self.assertEqual(result["direction_counts"]["suspended"]["SHORT"], 1)
+
+    def test_unclosed_recovery_outcomes_cannot_release_suspension(self):
+        self._seed_losing_continuous_pattern()
+        self._add_new_recovery_observations(-1)
+        self.con.execute("UPDATE paper_agent_positions SET exit_time=?",
+                         ((NOW - timedelta(hours=8)).isoformat(),))
+        self.con.execute("""UPDATE behavior_event_forward_outcomes SET outcome_available_at=?
+            WHERE independence_unit LIKE 'recovery:%'""", ((NOW + timedelta(hours=1)).isoformat(),))
+        result = core.evaluate(self.con, NOW)
+        self.assertEqual(result["candidates"], [])
+
+    def test_empty_policy_event_absence_and_risk_coverage_have_distinct_audit_causes(self):
+        self.add_current()
+        empty = core.evaluate(self.con, NOW)
+        self.assertEqual(empty["reason_counts"]["NO_LEARNED_PATTERN"], 1)
+        self.add_history(days=1)
+        self.con.execute("DELETE FROM causal_minute_external_evidence")
+        no_event = core.evaluate(self.con, NOW)
+        self.assertGreater(no_event["reason_counts"]["EVIDENCE_EVENT_MISSING"], 0)
+        self.con.execute("UPDATE behavior_event_forward_outcomes SET kind='MARKET_STRUCTURE'")
+        self.con.execute("DELETE FROM asset_risk_snapshots")
+        no_risk = core.evaluate(self.con, NOW)
+        self.assertGreater(no_risk["reason_counts"]["RISK_COVERAGE_MISSING"], 0)
+        saved = json.loads(self.con.execute("SELECT evidence_json FROM paper_behavior_policy_reviews ORDER BY review_id DESC LIMIT 1").fetchone()[0])
+        self.assertEqual(saved["reason_counts"], no_risk["reason_counts"])
+        self.assertNotIn("EVIDENCE_EVENT_MISSING", no_risk["reason_counts"])
+
+
 if __name__ == "__main__":
     unittest.main()

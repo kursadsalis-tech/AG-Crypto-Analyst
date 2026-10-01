@@ -18,8 +18,10 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         scan_block = source[scan_start:scan_end]
 
         self.assertNotIn("select_new_positions(", process_block)
-        self.assertIn("fill_pending_from_live_state(", process_block)
-        self.assertIn("position_management.process_market_state(", process_block)
+        self.assertIn("protective_tick(", process_block)
+        lifecycle = source[source.index("def protective_tick("):source.index("async def run():")]
+        self.assertIn("fill_pending_from_live_state(", lifecycle)
+        self.assertIn("position_management.process_market_state(", lifecycle)
         self.assertIn("select_new_positions(", scan_block)
         self.assertIn(
             'thread_name_prefix="agca-paper-scan"',
@@ -45,7 +47,7 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
             encoding="utf-8"
         )
         startup_end = source.index("    decision_executor = ThreadPoolExecutor(")
-        self.assertIn("ensure_tables(con)", source[:startup_end])
+        self.assertIn("ensure_tables(db)", source[:startup_end])
 
         for name, end_name in (
             ("universe_connection", "refresh_symbol_cache_once"),
@@ -61,7 +63,7 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("def _local_sqlite_connection(", source)
-        self.assertIn("sqlite3.connect(DB_NAME", source)
+        self.assertIn("connect_local(DB_NAME", source)
 
         blocks = (
             ("    def universe_connection():", "    def refresh_symbol_cache_once("),
@@ -80,7 +82,7 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         helper_start = source.index("def _local_sqlite_connection(")
         helper_end = source.index("\n\ndef worker_process_source_state", helper_start)
         helper_block = source[helper_start:helper_end]
-        self.assertIn("PRAGMA busy_timeout=", helper_block)
+        self.assertIn("min(0.25", helper_block)
 
     def test_scan_retries_busy_with_fresh_connection_and_bounded_backoff(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
@@ -130,16 +132,11 @@ class RealtimeExecutionPriorityTests(unittest.TestCase):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(
             encoding="utf-8"
         )
-        process_start = source.index("    def process_state(")
-        process_end = source.index("    async def on_state(", process_start)
-        block = source[process_start:process_end]
-
+        block = source[source.index("def protective_tick("):source.index("async def run():")]
         self.assertIn("except ExchangeMetadataError:", block)
-        self.assertIn('error="LIVE_SYMBOL_RULES_UNAVAILABLE"', block)
-        self.assertIn("metadata.get(execution_state.market_type)", block)
-        self.assertNotIn(
-            "metadata[execution_state.market_type]", block
-        )
+        self.assertIn("con, state, observed_at, rule", block)
+        self.assertIn("metadata.get(state.market_type)", block)
+        self.assertNotIn("metadata[state.market_type]", block)
 
     def test_execution_executor_is_distinct_from_scan_executor(self):
         source = (ROOT / "runtime/paper_realtime_worker.py").read_text(

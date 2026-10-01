@@ -17,6 +17,8 @@ from paper_trading.execution_model import taker_fee_rate
 
 
 DEEP_ANALYSIS_SLOTS = 12
+MIN_PAPER_NOTIONAL_USDT = 100.0
+RECOVERY_MAX_EQUITY_FRACTION = 0.015
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,29 @@ def _call(measure: Callable | None, name: str, function: Callable, *args, **kwar
     if measure is None:
         return function(*args, **kwargs)
     return measure(name, function, *args, **kwargs)
+
+
+def execution_edge_rejection(candidate: dict[str, Any]):
+    """Require cost-positive evidence even for bounded PAPER exploration.
+
+    Check the frozen calibration as well as the ranking field so an adapter
+    cannot accidentally turn a negative calibrated hypothesis into exposure.
+    Missing calibration is compatible with older candidates; missing expected
+    edge is not. Recovery hypotheses must pass the same economic boundary.
+    """
+    edges = [candidate.get("expected_net_edge_pct")]
+    calibration = (candidate.get("evidence") or {}).get("execution_calibration") or {}
+    if "calibrated_net_edge_pct" in calibration:
+        edges.append(calibration["calibrated_net_edge_pct"])
+    try:
+        edges = [float(value) for value in edges]
+    except (TypeError, ValueError):
+        return "INVALID_EDGE_EVIDENCE"
+    if not all(math.isfinite(value) for value in edges):
+        return "INVALID_EDGE_EVIDENCE"
+    if any(value <= 0.0 for value in edges):
+        return "NEGATIVE_EDGE_VETO"
+    return None
 
 
 def orchestrate(
@@ -108,6 +133,10 @@ def orchestrate(
 
     for source in selected:
         candidate = dict(source)
+        edge_rejection = execution_edge_rejection(candidate)
+        if edge_rejection:
+            reject(edge_rejection)
+            continue
         initial_tier = risk_tiering.tier_for(candidate)
         try:
             plan = _call(
@@ -170,21 +199,40 @@ def size_candidate(
     equity: float,
     exposure_cap: float,
     available_cash: float,
+    minimum_target: float = MIN_PAPER_NOTIONAL_USDT,
 ) -> SizedCandidate:
     """Apply the shared PAPER sizing/economic contract to one candidate."""
     candidate = orchestrated.candidate
     tier = orchestrated.risk_tier
     fee_rate = orchestrated.fee_rate
 
+    inputs = (equity, exposure_cap, available_cash, candidate.get("risk_cap_pct"),
+              candidate.get("risk_per_trade_pct"), candidate.get("execution_size_multiplier", 1.0),
+              candidate["technical_plan"].get("quality_multiplier"),
+              tier.leverage, tier.margin_fraction, orchestrated.effective_stop_pct, minimum_target)
+    try:
+        valid = all(math.isfinite(float(value)) and float(value) > 0 for value in inputs)
+        valid = valid and math.isfinite(float(fee_rate)) and fee_rate >= 0
+    except (TypeError, ValueError):
+        valid = False
+    if not valid:
+        return SizedCandidate(0.0, 0.0, 0.0, 0.0)
+    recovery = candidate.get("experiment_tier") == "RECOVERY_EXPLORATION"
+    size_multiplier = float(candidate.get("execution_size_multiplier", 1.0))
+    if recovery:
+        size_multiplier = min(behavior_decision_core.RECOVERY_SIZE_MULTIPLIER,
+                              size_multiplier)
     base_margin = (
         float(equity)
         * float(tier.margin_fraction)
-        * float(candidate.get("execution_size_multiplier", 1.0))
+        * size_multiplier
         * float(candidate["technical_plan"]["quality_multiplier"])
     )
     position_cap = (
         float(equity) * float(candidate["risk_cap_pct"]) / 100.0
     )
+    if recovery:
+        position_cap = min(position_cap, float(equity) * RECOVERY_MAX_EQUITY_FRACTION)
     trade_risk_budget = (
         float(equity)
         * float(candidate.get("risk_per_trade_pct") or 0.0)
@@ -202,13 +250,17 @@ def size_candidate(
         / (1.0 + fee_rate * float(tier.leverage))
     )
     notional = min(
-        base_margin * float(tier.leverage),
+        max(float(minimum_target), base_margin * float(tier.leverage)),
         float(exposure_cap),
         position_cap,
         risk_sized_notional,
         cash_cap,
     )
     notional = max(0.0, float(notional))
+    # A preferred (including quarter recovery) size is soft. All other caps
+    # remain hard: never raise a cap to fund the user's actual OPEN floor.
+    if not math.isfinite(notional) or notional < MIN_PAPER_NOTIONAL_USDT:
+        notional = 0.0
 
     expected_profit_usdt = (
         notional

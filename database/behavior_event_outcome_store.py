@@ -339,11 +339,15 @@ def settle_outcomes_for_closed_minute(connection, closed_minute_end_timestamp_ms
                 liquidation_count, OUTCOME_CONTRACT_VERSION, settled_at,
             ))
             horizon_inserted += max(0, result.rowcount)
+        # Outcome keys are unique and immutable: retries safely finish a
+        # partially settled minute before marking its queue row complete.
+        connection.commit()
         if horizon == 240:
             horizon_inserted += _settle_market_structure_outcome(
                 connection, event_minute, outcome_minute,
                 outcome_available_at, settled_at,
             )
+        connection.commit()
         if horizon_inserted:
             by_horizon[str(horizon)] = horizon_inserted
             inserted += horizon_inserted

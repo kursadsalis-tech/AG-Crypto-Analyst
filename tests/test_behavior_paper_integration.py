@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 import sqlite3
 import unittest
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 from paper_trading import crypto_profit_agent as agent
 from paper_trading.execution_contract import MarketSnapshot, ExecutionRules
+from paper_trading.exchange_metadata import CachedExchangeMetadata, OFFICIAL_ENDPOINTS
 from paper_trading.realtime_market import LiveState
 
 
@@ -30,7 +32,10 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             high REAL, low REAL, close REAL, volume REAL,
             close_time INTEGER, quote_volume REAL
         )""")
-        self.metadata = {"SPOT": object(), "USD_M_PERPETUAL": object()}
+        self.metadata = {market: CachedExchangeMetadata(market, OFFICIAL_ENDPOINTS[market],
+            datetime.now(timezone.utc).isoformat(), "a" * 64,
+            defaultdict(lambda: ExecutionRules(.000001, .000001, 5)))
+            for market in ("SPOT", "USD_M_PERPETUAL")}
         rules_patch = patch.object(agent, "rules_for", return_value=ExecutionRules(.000001, .000001, 5))
         rules_patch.start()
         self.addCleanup(rules_patch.stop)
@@ -175,17 +180,17 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         row = self.con.execute("""SELECT forecast_id,policy_version,strategy_id,
             decision_source,decision_reference_id FROM paper_agent_positions""").fetchone()
         self.assertEqual(row[0], -7)
-        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V4_EXECUTION_CALIBRATED")
+        self.assertEqual(row[1], "PAPER_BEHAVIOR_POLICY_V5_RECOVERY")
         self.assertEqual(row[2:], ("BEHAVIOR_CORE_V4", "MARKET_BEHAVIOR_CORE", 7))
         notional = self.con.execute("SELECT notional FROM paper_agent_positions").fetchone()[0]
-        self.assertAlmostEqual(notional, 50.0)
+        self.assertAlmostEqual(notional, 100.1)
         leverage, margin, tier, market = self.con.execute(
             """SELECT leverage,margin_allocated,risk_tier,market_type
             FROM paper_agent_positions"""
         ).fetchone()
         self.assertEqual(
             (leverage, margin, tier, market),
-            (1.0, 50.0, "PAPER_RISK_TIER_1", "SPOT"),
+            (1.0, 100.1, "PAPER_RISK_TIER_1", "SPOT"),
         )
         thesis = self.con.execute(
             "SELECT decision_source,outcome_known_at_capture FROM paper_agent_decision_theses"
@@ -305,18 +310,15 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
                 agent.select_new_positions(self.con, NOW + timedelta(seconds=10)), 1
             )
 
-    def test_tiny_risk_cap_can_open_small_paper_learning_experiment(self):
+    def test_tiny_risk_cap_cannot_force_the_100_actual_floor(self):
         candidate = self.candidate()
         candidate["risk_cap_pct"] = 0.25
         with patch.object(agent.behavior_decision_core, "evaluate", return_value={
             "status": "ACTIONABLE", "candidates": [candidate], "review": {},
         }):
             selected = agent.select_new_positions(self.con, NOW)
-        self.assertEqual(selected, 1)
-        notional = self.con.execute(
-            "SELECT notional FROM paper_agent_positions"
-        ).fetchone()[0]
-        self.assertAlmostEqual(notional, 25.0)
+        self.assertEqual(selected, 0)
+        self.assertIsNone(self.con.execute("SELECT notional FROM paper_agent_positions").fetchone())
 
     def test_own_execution_feedback_changes_next_experiment_size(self):
         candidate = self.candidate()
@@ -329,7 +331,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         notional, reason = self.con.execute(
             "SELECT notional,selection_reason FROM paper_agent_positions"
         ).fetchone()
-        self.assertAlmostEqual(notional, 40.0)
+        self.assertAlmostEqual(notional, 100.1)
         self.assertIn("execution_size_multiplier=0.800", reason)
 
     def test_signal_count_alone_cannot_manufacture_leverage(self):
@@ -421,7 +423,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
             "SELECT symbol,notional FROM paper_agent_positions"
         ).fetchone()
         self.assertEqual(selected[0], "LARGEUSDT")
-        self.assertAlmostEqual(selected[1], 50.0)
+        self.assertAlmostEqual(selected[1], 100.1)
 
     def test_candidate_ranking_prefers_profit_per_risk_over_raw_profit(self):
         inefficient = self.candidate()
@@ -434,7 +436,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         efficient = self.candidate()
         efficient.update({
             "decision_id": 24, "symbol": "EFFICIENTUSDT",
-            "expected_net_edge_pct": 0.35, "risk_cap_pct": 0.25,
+            "expected_net_edge_pct": 0.35, "risk_cap_pct": 1.5,
             "stop_reference_pct": 0.5,
             "evidence_sha256": "4" * 64,
         })
@@ -758,6 +760,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
 
     def test_pending_entry_replans_locally_without_mutating_selection_thesis(self):
         candidate = self.candidate()
+        candidate["execution_size_multiplier"] = 6.0
         candidate.update({
             "decision_id": 901,
             "symbol": "REPLANUSDT",
@@ -832,6 +835,7 @@ class BehaviorPaperIntegrationTests(unittest.TestCase):
         from risk_manager import risk_manager
 
         candidate = self.candidate()
+        candidate["execution_size_multiplier"] = 6.0
         candidate.update({
             "decision_id": 1901,
             "symbol": "LIFECYCLEUSDT",

@@ -38,3 +38,7 @@ reports/exact_time_catalyst_event_selection.csv
 reports/options_implied_feasibility.json
 reports/options_implied_surface.csv
 reports/unified_forecast_model.pkl
+
+# Stable local writer coordination sidecars (never delete while runtime is live).
+*.agca-writer.lock
+*.agca-realtime.lock

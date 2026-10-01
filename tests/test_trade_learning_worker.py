@@ -30,13 +30,13 @@ class TradeLearningWorkerTests(unittest.TestCase):
     def test_learning_connection_is_plain_local_sqlite(self):
         fake = mock.MagicMock(spec=sqlite3.Connection)
         with mock.patch.object(
-            worker.sqlite3, "connect", return_value=fake
+            worker, "connect_local", return_value=fake
         ) as connect_mock:
             result = worker.local_connection()
 
         self.assertIs(result, fake)
-        connect_mock.assert_called_once_with(worker.DB_NAME, timeout=5)
-        fake.execute.assert_called_once_with("PRAGMA busy_timeout=5000")
+        connect_mock.assert_called_once_with(worker.DB_NAME, timeout=0.25)
+        fake.execute.assert_called_once_with("PRAGMA busy_timeout=250")
 
     def test_input_key_ignores_runtime_churn_but_tracks_final_costs_and_observations(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -50,6 +50,8 @@ class TradeLearningWorkerTests(unittest.TestCase):
                 CREATE TABLE external_trader_trade_observations(observation_id INTEGER PRIMARY KEY);
                 CREATE TABLE heartbeat(at TEXT);
             """)
+            con.commit()
+            worker.ensure_input_revision_schema()
             before = worker.learning_input_key()
             con.execute("INSERT INTO heartbeat VALUES('next')")
             con.commit()
@@ -62,6 +64,14 @@ class TradeLearningWorkerTests(unittest.TestCase):
             con.commit()
             self.assertNotEqual(worker.learning_input_key(), corrected)
             con.close()
+
+    def test_input_key_does_not_rescan_closed_position_payloads(self):
+        source = Path(worker.__file__).read_text(encoding="utf-8")
+        start = source.index("def learning_input_key(")
+        end = source.index("\n\ndef run_cycle_once(", start)
+        block = source[start:end]
+        self.assertNotIn("FROM paper_agent_positions", block)
+        self.assertIn("trade_learning_input_revision", block)
 
     def test_unchanged_inputs_do_not_repeat_full_learning(self):
         with (mock.patch.object(worker, "learning_input_key", return_value={"external": "same", "positions": "same"}),
@@ -124,6 +134,22 @@ class TradeLearningWorkerTests(unittest.TestCase):
         self.assertFalse(result["policy_mutation_allowed"])
         fake.commit.assert_called_once()
         fake.close.assert_called_once()
+
+    def test_live_cycle_uses_prebootstrapped_schema(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "runtime/trade_learning_worker.py"
+        ).read_text(encoding="utf-8")
+        start = source.index("def run_cycle_once(")
+        end = source.index("\n\ndef run_cycle(", start)
+        block = source[start:end]
+        self.assertIn("trade_learning.ensure_tables(con)", block)
+        self.assertIn("controlled_challenger.ensure_tables(con)", block)
+        self.assertIn("external_trader_learning.ensure_tables(con)", block)
+        self.assertIn("strategy_allocator.ensure_tables(con)", block)
+        self.assertIn("refresh_external=refresh_external,\n            ensure=False", block)
+        self.assertIn("progress=_PROGRESS.advance", block)
+        self.assertIn("con, stamp, ensure=False", block)
 
     def test_cycle_does_not_hide_non_lock_error(self):
         with (

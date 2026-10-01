@@ -37,6 +37,16 @@ jobs:
           python -m unittest -v \
             tests.test_experience_memory \
             tests.test_position_management \
+            tests.test_metadata_failure_domain_integration \
+            tests.test_minimum_paper_notional \
+            tests.test_behavior_cache_contract \
+            tests.test_local_symbol_risk \
+            tests.test_global_policy_entry_limits \
+            tests.test_runtime_acceptance \
+            tests.test_realtime_hardening_health \
+            tests.test_realtime_sqlite_failure_domain \
+            tests.test_sqlite_writer_coordination \
+            tests.test_producer_progress_readiness \
             tests.test_executable_quotes \
             tests.test_execution_contract \
             tests.test_execution_market_data \

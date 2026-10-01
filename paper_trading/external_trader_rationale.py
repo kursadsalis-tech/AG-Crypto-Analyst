@@ -242,9 +242,10 @@ def capture_open_trade_context(con, trade, observed_at):
     return {"stored": True, "status": status, "hypothesis_count": len(hypotheses)}
 
 
-def review_available_closed_contexts(con, now=None):
+def review_available_closed_contexts(con, now=None, *, ensure=True):
     """Assess outcomes only against hypotheses frozen while positions were open."""
-    ensure_tables(con)
+    if ensure:
+        ensure_tables(con)
     reviewed_at = _iso(now or datetime.now(timezone.utc))
     rows = con.execute("""
         SELECT c.exchange,c.source_trader_id,c.source_trade_id,c.direction,
@@ -311,6 +312,7 @@ def review_available_closed_contexts(con, now=None):
             json.dumps(assessment, sort_keys=True), digest,
         ))
         inserted += 1
+        con.commit()
     con.commit()
     totals = dict(con.execute("""
         SELECT outcome_class,COUNT(*) FROM external_trader_rationale_reviews
