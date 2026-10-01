@@ -125,6 +125,21 @@ class TradeLearningWorkerTests(unittest.TestCase):
         fake.commit.assert_called_once()
         fake.close.assert_called_once()
 
+    def test_live_cycle_uses_prebootstrapped_schema(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "runtime/trade_learning_worker.py"
+        ).read_text(encoding="utf-8")
+        start = source.index("def run_cycle_once(")
+        end = source.index("\n\ndef run_cycle(", start)
+        block = source[start:end]
+        self.assertIn("trade_learning.ensure_tables(con)", block)
+        self.assertIn("controlled_challenger.ensure_tables(con)", block)
+        self.assertIn("external_trader_learning.ensure_tables(con)", block)
+        self.assertIn("strategy_allocator.ensure_tables(con)", block)
+        self.assertIn("refresh_external=refresh_external,\n            ensure=False", block)
+        self.assertIn("con, stamp, ensure=False", block)
+
     def test_cycle_does_not_hide_non_lock_error(self):
         with (
             mock.patch.object(
