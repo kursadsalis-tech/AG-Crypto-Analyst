@@ -12,6 +12,7 @@ from unittest.mock import patch
 from paper_trading import behavior_decision_core as core
 from paper_trading import exchange_metadata
 from scripts import runtime_acceptance as acceptance
+from runtime import process_identity
 
 
 SHA = "a" * 40
@@ -336,11 +337,13 @@ class RuntimeAcceptanceTests(unittest.TestCase):
             if self.clock.elapsed < 10:
                 raise acceptance.AcceptanceError("CACHE_PREFLIGHT_FAILED:PRODUCER_PROCESS_MISMATCH")
             return {"status": "ACCEPTED"}
-        result = acceptance.wait_for_cache("unused", SHA, health_dir="/test", ready_timeout=20,
+        result = acceptance.wait_for_cache(
+            "unused", SHA, health_dir="/test", window_seconds=5, ready_timeout=20,
             state_reader=self.state, health_reader=self.health, clock=self.clock.monotonic,
-            sleep=self.clock.sleep, now_fn=self.clock.now, cache_check=check)
+            sleep=self.clock.sleep, now_fn=self.clock.now, cache_check=check
+        )
         self.assertEqual(result["status"], "ACCEPTED")
-        self.assertEqual(self.clock.elapsed, 10)
+        self.assertEqual(self.clock.elapsed, 15)
         self.assertEqual(tuple(result["services"]), ("agca-behavior-learning-worker.service",))
 
     def test_producer_wait_never_checks_or_restarts_other_units(self):
@@ -357,6 +360,41 @@ class RuntimeAcceptanceTests(unittest.TestCase):
 
 
 class RuntimePreflightTests(unittest.TestCase):
+    def test_process_identity_retries_timeout_and_uses_fast_clean_probes(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            if cmd[-2:] == ["rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout=SHA + "\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(
+            process_identity.subprocess, "run", side_effect=fake_run
+        ), patch.object(process_identity.time, "sleep") as sleeper:
+            source = process_identity.capture_process_source("/repo")
+
+        self.assertEqual(source["git_sha"], SHA)
+        self.assertFalse(source["git_dirty"])
+        self.assertEqual(len(calls), 4)
+        sleeper.assert_called_once()
+
+    def test_process_identity_marks_tracked_worktree_change_dirty(self):
+        def fake_run(cmd, **_kwargs):
+            if cmd[-2:] == ["rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout=SHA + "\n", stderr="")
+            if cmd[-2:] == ["diff", "--quiet"]:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(process_identity.subprocess, "run", side_effect=fake_run):
+            source = process_identity.capture_process_source("/repo")
+
+        self.assertEqual(source["git_sha"], SHA)
+        self.assertTrue(source["git_dirty"])
+
     def write_cache(self, database, source_sha=SHA, *, dirty=False, version=core.PATTERN_CACHE_CONTRACT_VERSION):
         source = {"git_sha": source_sha, "git_dirty": dirty, "pid": 101,
                   "process_started_at": (NOW - timedelta(minutes=1)).isoformat()}
