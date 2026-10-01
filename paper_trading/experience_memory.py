@@ -53,6 +53,8 @@ def ensure_tables(con):
             net_pnl REAL NOT NULL,
             net_return_pct REAL NOT NULL,
             review_json TEXT NOT NULL,
+            economics_final INTEGER NOT NULL DEFAULT 0,
+            funding_pending INTEGER NOT NULL DEFAULT 0,
             causal_claim INTEGER NOT NULL DEFAULT 0,
             skill_proven INTEGER NOT NULL DEFAULT 0,
             policy_mutation_allowed INTEGER NOT NULL DEFAULT 0
@@ -67,6 +69,48 @@ def ensure_tables(con):
             skill_proven INTEGER NOT NULL DEFAULT 0,
             promotion_allowed INTEGER NOT NULL DEFAULT 0
         );
+    """)
+
+    # Keep funding re-reviews queryable without reparsing every historical
+    # review_json on each learning cycle. Existing rows are backfilled once.
+    review_columns = {row[1] for row in con.execute(
+        "PRAGMA table_info(paper_agent_experience_reviews)"
+    )}
+    needs_backfill = False
+    if "economics_final" not in review_columns:
+        con.execute("""ALTER TABLE paper_agent_experience_reviews
+            ADD COLUMN economics_final INTEGER NOT NULL DEFAULT 0""")
+        needs_backfill = True
+    if "funding_pending" not in review_columns:
+        con.execute("""ALTER TABLE paper_agent_experience_reviews
+            ADD COLUMN funding_pending INTEGER NOT NULL DEFAULT 0""")
+        needs_backfill = True
+    if needs_backfill:
+        con.execute("""
+            UPDATE paper_agent_experience_reviews
+            SET economics_final=CASE
+                    WHEN json_valid(review_json)
+                    THEN COALESCE(
+                        json_extract(
+                            review_json,
+                            '$.evidence_assessment.economics_final'
+                        ), 0
+                    )
+                    ELSE 0
+                END,
+                funding_pending=CASE
+                    WHEN json_valid(review_json)
+                     AND json_extract(
+                         review_json,
+                         '$.evidence_assessment.limitations'
+                     ) LIKE '%FUNDING_PENDING%'
+                    THEN 1 ELSE 0
+                END
+        """)
+    con.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paper_experience_review_recheck
+        ON paper_agent_experience_reviews(position_id)
+        WHERE funding_pending=1 AND economics_final=0
     """)
 
 
@@ -195,9 +239,10 @@ def review_closed_positions(con, now=None):
         "LEFT JOIN paper_position_management m ON m.position_id=p.position_id"
         if manager_exists else ""
     )
-    # Drive this join from frozen theses: legacy positions without a thesis
-    # cannot receive a review and must not force a historical payload scan.
-    rows = con.execute(f"""
+    # Keep the common path narrow: fetch only theses that do not already
+    # have a review. Funding reconciliation rechecks use a tiny partial index,
+    # so historical review_json payloads are never reparsed on every cycle.
+    select_sql = f"""
         SELECT p.position_id,p.net_pnl,p.notional,p.gross_pnl,p.entry_fee,p.exit_fee,
                p.entry_spread_cost,p.entry_slippage_cost,p.exit_spread_cost,
                p.exit_slippage_cost,p.funding_cost,p.liquidated,p.close_reason,
@@ -206,22 +251,27 @@ def review_closed_positions(con, now=None):
                COALESCE({funding_sql},''),{liquidation_sql},
                {manager_select}
         FROM paper_agent_decision_theses t
-        CROSS JOIN paper_agent_positions p ON p.position_id=t.position_id
+        JOIN paper_agent_positions p ON p.position_id=t.position_id
         {manager_join}
-        LEFT JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
+    """
+    missing_rows = con.execute(select_sql + f"""
         WHERE p.status='CLOSED' AND p.net_pnl IS NOT NULL
           {cohort_clause}
-          AND (
-              r.position_id IS NULL
-              OR (
-                  COALESCE({funding_sql},'')!='PENDING_RECONCILIATION'
-                  AND json_valid(r.review_json)
-                  AND json_extract(r.review_json,'$.evidence_assessment.economics_final')=0
-                  AND json_extract(r.review_json,'$.evidence_assessment.limitations') LIKE '%FUNDING_PENDING%'
-              )
+          AND NOT EXISTS (
+              SELECT 1 FROM paper_agent_experience_reviews r
+              WHERE r.position_id=p.position_id
           )
-        ORDER BY p.exit_time,p.position_id
+        ORDER BY t.position_id
     """).fetchall()
+    recheck_rows = con.execute(select_sql + f"""
+        JOIN paper_agent_experience_reviews r ON r.position_id=p.position_id
+        WHERE r.funding_pending=1 AND r.economics_final=0
+          AND p.status='CLOSED' AND p.net_pnl IS NOT NULL
+          {cohort_clause}
+          AND COALESCE({funding_sql},'')!='PENDING_RECONCILIATION'
+        ORDER BY r.position_id
+    """).fetchall()
+    rows = missing_rows + recheck_rows
     created = 0
     for row in rows:
         (position_id, net_pnl, notional, gross_pnl, entry_fee, exit_fee,
@@ -342,9 +392,9 @@ def review_closed_positions(con, now=None):
         con.execute("""
             INSERT INTO paper_agent_experience_reviews(
                 position_id,reviewed_at,memory_version,thesis_sha256,outcome_class,
-                net_pnl,net_return_pct,review_json,causal_claim,skill_proven,
-                policy_mutation_allowed
-            ) VALUES(?,?,?,?,?,?,?,?,0,0,0)
+                net_pnl,net_return_pct,review_json,economics_final,funding_pending,
+                causal_claim,skill_proven,policy_mutation_allowed
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,0,0,0)
             ON CONFLICT(position_id) DO UPDATE SET
                 reviewed_at=excluded.reviewed_at,
                 memory_version=excluded.memory_version,
@@ -353,9 +403,12 @@ def review_closed_positions(con, now=None):
                 net_pnl=excluded.net_pnl,
                 net_return_pct=excluded.net_return_pct,
                 review_json=excluded.review_json,
+                economics_final=excluded.economics_final,
+                funding_pending=excluded.funding_pending,
                 causal_claim=0,skill_proven=0,policy_mutation_allowed=0
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
-              indexed_return_pct, _canonical(review)))
+              indexed_return_pct, _canonical(review), int(economics_final),
+              int(funding_source == "PENDING_RECONCILIATION")))
         created += 1
         # Each immutable closed-position review is independently repeatable.
         # Release writer ownership before reading/analysing the next episode.
