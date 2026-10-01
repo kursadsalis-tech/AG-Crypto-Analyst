@@ -282,6 +282,9 @@ class RuntimeAcceptanceTests(unittest.TestCase):
     def test_stale_authenticated_progress_is_pending_not_invalid(self):
         def stale(path):
             health = self.progressing(path, ready_at=100)
+            health["process_source"]["process_started_at"] = (
+                NOW - timedelta(minutes=20)
+            ).isoformat()
             health["progress"] = {
                 "phase": "SCAN",
                 "sequence": 7,
