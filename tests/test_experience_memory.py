@@ -110,6 +110,49 @@ class ExperienceMemoryTests(unittest.TestCase):
         self.assertEqual(row[:3], (digest, 0, 0))
         self.assertEqual(json.loads(row[3])["attribution"]["skill"], "UNRESOLVED_SINGLE_EPISODE")
 
+    def test_legacy_review_flag_migration_is_bounded(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.executescript("""
+                CREATE TABLE paper_agent_experience_reviews(
+                    position_id INTEGER PRIMARY KEY,
+                    review_json TEXT NOT NULL,
+                    economics_final INTEGER,
+                    funding_pending INTEGER
+                );
+                CREATE TABLE paper_agent_experience_review_migration(
+                    singleton_id INTEGER PRIMARY KEY,
+                    last_position_id INTEGER NOT NULL DEFAULT 0,
+                    complete INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO paper_agent_experience_review_migration
+                VALUES(1,0,0);
+            """)
+            payload = json.dumps({
+                "evidence_assessment": {
+                    "economics_final": False,
+                    "limitations": ["FUNDING_PENDING"],
+                }
+            })
+            con.executemany(
+                "INSERT INTO paper_agent_experience_reviews(position_id,review_json) "
+                "VALUES(?,?)",
+                [(i, payload) for i in range(1, 21)],
+            )
+            self.assertEqual(memory._migrate_review_flags_batch(con, limit=3), 3)
+            migrated = con.execute(
+                "SELECT COUNT(*) FROM paper_agent_experience_reviews "
+                "WHERE funding_pending IS NOT NULL"
+            ).fetchone()[0]
+            state = con.execute(
+                "SELECT last_position_id,complete "
+                "FROM paper_agent_experience_review_migration WHERE singleton_id=1"
+            ).fetchone()
+            self.assertEqual(migrated, 3)
+            self.assertEqual(state, (3, 0))
+        finally:
+            con.close()
+
     def test_pending_funding_recheck_uses_indexed_columns_not_review_json_scan(self):
         self.con.execute(
             "ALTER TABLE paper_agent_positions ADD COLUMN funding_source TEXT"
