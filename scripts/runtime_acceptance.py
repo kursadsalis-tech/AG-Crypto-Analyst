@@ -221,17 +221,33 @@ class ReadinessProgress:
             sequence = progress.get("sequence")
             try:
                 advanced_at = timestamp(progress.get("at"))
-                valid = (type(sequence) is int and sequence >= 0
-                         and bool(progress.get("phase"))
-                         and timestamp(health["process_source"]["process_started_at"]) <= advanced_at
-                         <= timestamp(health.get("at"))
-                         and 0 <= (now - advanced_at).total_seconds() <= SERVICES[unit].fresh_seconds)
+                process_started = timestamp(
+                    health["process_source"]["process_started_at"]
+                )
+                health_at = timestamp(health.get("at"))
+                progress_age = (now - advanced_at).total_seconds()
+                valid = (
+                    type(sequence) is int
+                    and sequence >= 0
+                    and bool(progress.get("phase"))
+                    and process_started <= advanced_at <= health_at
+                    and progress_age >= 0
+                )
             except (KeyError, ValueError, TypeError):
                 valid = False
+                progress_age = None
             if not valid:
                 raise AcceptanceError(f"{unit}:INVALID_PROGRESS_CONTRACT")
-            if sequence < self.sequence or (self.progress_at and advanced_at < self.progress_at):
+            if sequence < self.sequence or (
+                self.progress_at and advanced_at < self.progress_at
+            ):
                 raise AcceptanceError(f"{unit}:PROGRESS_REGRESSED")
+            # Old authenticated work is simply not readiness progress.  It must
+            # not extend the no-progress deadline, but it is not a malformed
+            # producer contract either.  This distinction matters for workers
+            # whose legitimate cycle can exceed the health freshness budget.
+            if progress_age > SERVICES[unit].fresh_seconds:
+                return
             if sequence > self.sequence:
                 self.sequence, self.progress_at = sequence, advanced_at
                 self.last_advance = monotonic_now
