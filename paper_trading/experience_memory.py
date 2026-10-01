@@ -357,6 +357,9 @@ def review_closed_positions(con, now=None):
         """, (position_id, iso(now), MEMORY_VERSION, thesis_sha, outcome, net_pnl,
               indexed_return_pct, _canonical(review)))
         created += 1
+        # Each immutable closed-position review is independently repeatable.
+        # Release writer ownership before reading/analysing the next episode.
+        con.commit()
     con.commit()
     return created
 

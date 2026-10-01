@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from database.sqlite_policy import connect_local, is_sqlite_busy
 import statistics
 import time
 from datetime import datetime, timezone, timedelta
@@ -78,7 +79,7 @@ def latest_policy_limits(con, now=None):
 
 
 def bootstrap_schema(database_path):
-    with sqlite3.connect(database_path, timeout=1.0) as con:
+    with connect_local(database_path, timeout=1.0) as con:
         con.execute(f"""CREATE TABLE IF NOT EXISTS {TABLE}(
             policy_snapshot_id INTEGER NOT NULL,
             symbol TEXT NOT NULL,
@@ -199,7 +200,7 @@ def refresh_local_symbol_risk(database_path, *, now=None, max_symbols=MAX_SYMBOL
               "ready": 0, "vetoed": 0, "errors": {}, "real_order_allowed": False}
     started = time.monotonic()
     deadline = started + max(0.05, min(float(max_seconds), MAX_REFRESH_SECONDS))
-    con = sqlite3.connect(database_path, timeout=0.25)
+    con = connect_local(database_path, timeout=0.25)
     con.execute("PRAGMA busy_timeout=250")
     con.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
     try:
@@ -268,7 +269,10 @@ def refresh_local_symbol_risk(database_path, *, now=None, max_symbols=MAX_SYMBOL
             result["status"] = "PARTIAL"
     except sqlite3.OperationalError as exc:
         con.rollback()
-        result["status"] = "BUDGET_EXHAUSTED" if time.monotonic() >= deadline else "SQLITE_UNAVAILABLE"
+        interrupted = getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT
+        if not is_sqlite_busy(exc) and not (interrupted and time.monotonic() >= deadline):
+            raise
+        result["status"] = "BUDGET_EXHAUSTED" if interrupted else "SQLITE_UNAVAILABLE"
         result["errors"]["LOCAL_STORE"] = str(exc)[:200]
     finally:
         con.close()

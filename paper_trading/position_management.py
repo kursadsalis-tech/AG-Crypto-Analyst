@@ -217,7 +217,7 @@ def ensure_tables(con):
             WHERE margin_allocated IS NULL""")
 
 
-def initialize_open_positions(con, now):
+def initialize_open_positions(con, now, *, commit=True):
     # Schema setup is a caller/startup responsibility.  This function is on the
     # realtime hot path (symbols() is polled by both websocket loops and health
     # callbacks), so running ensure_tables() here would repeatedly execute DDL
@@ -446,7 +446,8 @@ def initialize_open_positions(con, now):
                    "stop_policy_max_pct": 5.0,
                })
         initialized += 1
-    con.commit()
+    if commit:
+        con.commit()
     return {"initialized": initialized, "blocked": blocked}
 
 
@@ -639,15 +640,6 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     rules, rules_source, rules_error = resolve_position_rules(
         con, position_id, live.symbol, market_type, rules,
     )
-    if rules is not None and rules_source == "CURRENT_RULES_LEGACY_POSITION":
-        # A recovered route protects old OPEN positions before a later helper
-        # outage. The explicit legacy event never modifies original fill/thesis.
-        try:
-            rules, rules_source, rules_error = _adopt_legacy_position_rules(
-                con, position_id, live.symbol, market_type, observed_at, rules,
-            )
-        except ExchangeMetadataError as exc:
-            rules, rules_error = None, str(exc)
 
     try:
         signal_sources = set(json.loads(signal_sources_json or "[]"))
@@ -721,6 +713,32 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
             "market_price": float(live.last_price),
         },
     }
+    # A cross-venue executable quote is external work. Acquire it before the
+    # first SQLite write (including legacy adoption/risk-decision audit events),
+    # so a helper delay cannot retain the shared writer lock.
+    prefetched_market, prefetch_error = None, None
+    retry_seconds = max(0.1, float(os.getenv("AGCA_PAPER_EXIT_RETRY_SECONDS", "1")))
+    retry_throttled = (last_exit_attempt_at is not None and
+        (market_at - parse(last_exit_attempt_at)).total_seconds() < retry_seconds)
+    if (decision.action not in {"HOLD", "UPDATE_STOP"} and not retry_throttled
+            and rules is not None and market_type == "USD_M_PERPETUAL"
+            and (live.quote_source or "").startswith("OKX_")):
+        from paper_trading.execution_market_data import fetch_executable_quote
+        try:
+            prefetched_market = fetch_executable_quote(
+                live.symbol, market_type, "SELL" if direction == "LONG" else "BUY")
+        except ValueError:
+            prefetch_error = "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"
+    if rules is not None and rules_source == "CURRENT_RULES_LEGACY_POSITION":
+        # A recovered route protects old OPEN positions before a later helper
+        # outage. The explicit legacy event never modifies original fill/thesis.
+        try:
+            rules, rules_source, rules_error = _adopt_legacy_position_rules(
+                con, position_id, live.symbol, market_type, observed_at, rules,
+            )
+        except ExchangeMetadataError as exc:
+            rules, rules_error = None, str(exc)
+
     # Preserve the decision even when executable liquidity is missing.  A
     # rejected exit is NOT a successful close, but must remain auditable.
     if decision.action == "CLOSE" and (
@@ -776,18 +794,16 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                     (iso(market_at), position_id))
         con.commit()
         return {"status": "BLOCKED", "reason": reason}
-    if market_type == "USD_M_PERPETUAL" and (live.quote_source or "").startswith("OKX_"):
-        from paper_trading.execution_market_data import fetch_executable_quote
-        try:
-            market = fetch_executable_quote(live.symbol, market_type, exit_side)
-        except ValueError:
-            record_execution(con, position_id, observed_at, "EXIT", live.symbol,
-                             exit_side, market_type,
-                             ExecutionDecision("REJECTED", "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"))
-            con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
-                        (iso(market_at), position_id))
-            con.commit()
-            return {"status": "BLOCKED", "reason": "EXECUTABLE_QUOTE_SOURCE_UNAVAILABLE"}
+    if prefetch_error:
+        record_execution(con, position_id, observed_at, "EXIT", live.symbol,
+                         exit_side, market_type,
+                         ExecutionDecision("REJECTED", prefetch_error))
+        con.execute("UPDATE paper_position_management SET last_exit_attempt_at=? WHERE position_id=?",
+                    (iso(market_at), position_id))
+        con.commit()
+        return {"status": "BLOCKED", "reason": prefetch_error}
+    if prefetched_market is not None:
+        market = prefetched_market
     reference, quote_reason = validate_quote(market, exit_side)
     if quote_reason:
         record_execution(con, position_id, observed_at, "EXIT", live.symbol,
@@ -922,11 +938,14 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
         (recovery, net, exit_fee + liquidation_fee))
     con.execute("""UPDATE paper_agent_positions SET exit_fee=exit_fee+?,
         exit_spread_cost=exit_spread_cost+?,exit_slippage_cost=exit_slippage_cost+?,
-        funding_cost=funding_cost+?,gross_pnl=?,net_pnl=?,
+        funding_cost=funding_cost+?,
+        gross_pnl=(SELECT realized_gross_pnl FROM paper_position_management m
+                   WHERE m.position_id=paper_agent_positions.position_id),
+        net_pnl=(SELECT realized_net_pnl FROM paper_position_management m
+                 WHERE m.position_id=paper_agent_positions.position_id),
         liquidation_fee=liquidation_fee+?,liquidated=MAX(liquidated,?)
         WHERE position_id=?""", (
         exit_fee, spread_cost, slippage_cost, funding_part,
-        float(realized_gross) + gross, float(realized_net) + net,
         liquidation_fee, int(forced_liquidation), position_id,
     ))
     evidence.update({"decision_at": iso(observed_at), "quantity": closed_qty,
@@ -980,7 +999,7 @@ def reconcile_pending_funding(con, funding_loader, now):
         except FuturesCostError:
             blocked += len(segments)
             continue
-        total_cost = 0.0
+        total_cost, applied = 0.0, 0
         for segment_id, _, start_at, end_at, direction, quantity in segments:
             start_ms = int(parse(start_at).timestamp() * 1000)
             end_ms = int(parse(end_at).timestamp() * 1000)
@@ -989,10 +1008,13 @@ def reconcile_pending_funding(con, funding_loader, now):
             cost = directional_funding_payment(
                 direction=direction, quantity=float(quantity), events=segment_events,
             ) if segment_events else 0.0
-            total_cost += cost
-            con.execute("""UPDATE paper_funding_reconciliation_segments SET
-                status='RESOLVED',funding_cost=?,resolved_at=? WHERE segment_id=?""",
+            updated = con.execute("""UPDATE paper_funding_reconciliation_segments SET
+                status='RESOLVED',funding_cost=?,resolved_at=?
+                WHERE segment_id=? AND status='PENDING'""",
                 (cost, iso(now), segment_id))
+            if updated.rowcount:
+                total_cost += cost
+                applied += 1
         con.execute("""UPDATE paper_agent_positions SET funding_cost=funding_cost+?,
             net_pnl=net_pnl-? WHERE position_id=?""", (total_cost, total_cost, position_id))
         con.execute("""UPDATE paper_position_management SET
@@ -1010,6 +1032,8 @@ def reconcile_pending_funding(con, funding_loader, now):
             con.execute("""UPDATE paper_agent_positions SET
                 funding_source='BINANCE_USD_M_FUNDING_HISTORY'
                 WHERE position_id=?""", (position_id,))
-        resolved += len(segments)
-    con.commit()
+        # Release this position's writer lock before the next remote lookup.
+        # If a later position contends, committed segments cannot be charged twice.
+        con.commit()
+        resolved += applied
     return {"resolved": resolved, "blocked": blocked}

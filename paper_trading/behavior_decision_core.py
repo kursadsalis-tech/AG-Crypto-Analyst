@@ -347,7 +347,7 @@ def _applies(symbols_json, instrument):
     return not symbols or base in symbols or _symbol(instrument) in symbols
 
 
-def learned_patterns(con, now=None):
+def learned_patterns(con, now=None, *, progress=None):
     """Learn continuation/reversal direction from deduplicated closed outcomes."""
     now = now or datetime.now(timezone.utc)
     outcome_columns = {row[1] for row in con.execute(
@@ -369,8 +369,10 @@ def learned_patterns(con, now=None):
         ORDER BY MIN(event_minute_end_timestamp_ms),independence_unit,kind
     """, (HORIZON_MINUTES, iso(now))).fetchall()
     grouped = defaultdict(list)
-    for (minute_ms, independence_unit, kind, future_return, book, taker,
-         spread, price_move) in rows:
+    for index, (minute_ms, independence_unit, kind, future_return, book, taker,
+         spread, price_move) in enumerate(rows):
+        if progress is not None and index and index % 1000 == 0:
+            progress("BEHAVIOR_ROWS_GROUPED")
         pattern = _flow_pattern(float(book), float(taker))
         if not pattern:
             continue
@@ -419,6 +421,8 @@ def learned_patterns(con, now=None):
     output = {}
     for key, samples in grouped.items():
         pattern = summarize(key, samples)
+        if progress is not None:
+            progress("BEHAVIOR_PATTERN_SUMMARIZED")
         output[key] = pattern
         if pattern["calibrated_net_edge_pct"] > 0:
             continue
@@ -557,7 +561,7 @@ def _patterns_from_json(raw):
     return output
 
 
-def refresh_pattern_cache(con, now=None, missed_limit=2000):
+def refresh_pattern_cache(con, now=None, missed_limit=2000, *, progress=None):
     """Compute historical behavior learning off the realtime decision path."""
     now = now or datetime.now(timezone.utc)
     ensure_tables(con)
@@ -566,7 +570,8 @@ def refresh_pattern_cache(con, now=None, missed_limit=2000):
     # historical aggregation so the learner cannot hold the writer lock for the
     # full scan.
     con.commit()
-    patterns = learned_patterns(con, now)
+    patterns = (learned_patterns(con, now, progress=progress) if progress is not None
+                else learned_patterns(con, now))
     cutoff = con.execute(
         """SELECT MAX(outcome_available_at)
            FROM behavior_event_forward_outcomes

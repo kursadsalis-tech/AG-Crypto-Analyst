@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import signal
+import sqlite3
 import sys
 import tempfile
 import time
@@ -21,6 +22,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.process_identity import WorkerHealthState
+from runtime.worker_progress import WorkProgress
+from database.sqlite_policy import is_sqlite_busy
 
 from data.adaptive_market_scanner import build_attention_route
 from data.live_behavior_evidence_bundle import build_bundle
@@ -38,6 +41,21 @@ from database.causal_evidence_store import evidence_for_closed_minute
 
 HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 _HEALTH_STATE = WorkerHealthState()
+_PROGRESS = WorkProgress(lambda progress: None)
+_LAST_COMPLETION_HEALTHY = False
+
+
+def advance_progress(args, phase):
+    """Only completed collection/processing steps extend the startup budget."""
+    _PROGRESS.advance(phase)
+    path = getattr(args, "health_output", None)
+    if not path:
+        return
+    last = _HEALTH_STATE.last_success_at
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() if last else None
+    ready = _LAST_COMPLETION_HEALTHY and age is not None and 0 <= age <= 180
+    write_health(path, {"status": "HEALTHY" if ready else "RUNNING",
+                       "phase": phase, "progress": _PROGRESS.last_progress}, success=False)
 
 
 def collection_alignment(now_ms, required_span_seconds):
@@ -83,14 +101,20 @@ def write_json_atomic(path, payload):
     os.replace(temporary, output)
 
 
-def write_health(path, payload):
+def write_health(path, payload, *, success=False):
+    global _LAST_COMPLETION_HEALTHY
+    if success:
+        _LAST_COMPLETION_HEALTHY = payload.get("status") == "HEALTHY"
+    elif payload.get("status") in {"DEGRADED", "ERROR", "STARTUP_FAILED"}:
+        _LAST_COMPLETION_HEALTHY = False
     health = _HEALTH_STATE.decorate({
         "health_contract_version": HEALTH_CONTRACT_VERSION,
         "producer_version": "BINANCE_MARKET_BEHAVIOR_PRODUCER_V1",
         "execution_mode": "PAPER_ONLY", "may_send_real_orders": False,
+        "progress": _PROGRESS.last_progress,
         **payload,
-    })
-    health["completed_at"] = health["at"]
+    }, success=success)
+    health["completed_at"] = health["last_success_at"]
     canonical = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
     health["health_sha256"] = hashlib.sha256(canonical).hexdigest()
     write_json_atomic(path, health)
@@ -119,6 +143,7 @@ async def _collect_minute_attempt(route, universe, contract_values, args, timing
             alignment["late_start_recovery"] = True
             await asyncio.sleep(max(0.0, (not_before - now_ms) / 1000.0) + 0.02)
         alignment["alignment_wait_ms"] += round((time.monotonic() - started) * 1000)
+        advance_progress(args, "HYDRATED_WINDOW_ALIGNED")
         return minute_end_ms
 
     def liquidation_close():
@@ -140,6 +165,7 @@ async def _collect_minute_attempt(route, universe, contract_values, args, timing
         closed_bar_sink=None,
         observe_until_ms=None,
         before_sampling=align_hydrated_sampling,
+        progress_callback=lambda phase: advance_progress(args, phase),
         timings=timings,
     ))
     try:
@@ -208,12 +234,14 @@ def run_cycle(args):
         route = json.loads(Path(args.route).read_text(encoding="utf-8"))
         universe = json.loads(Path(args.universe).read_text(encoding="utf-8"))
     route_refresh_ms = round((time.monotonic() - route_started) * 1000.0, 3)
+    advance_progress(args, "ROUTE_RESOLVED")
     contract_values = {row["instrument"]: row.get("contract_value", 1.0)
                        for row in universe.get("selected", [])}
 
     collection_started = time.monotonic()
     bundles, minute_end_ms, alignment = asyncio.run(
         collect_minute(route, universe, contract_values, args, transport_timings))
+    advance_progress(args, "COLLECTION_COMPLETED")
     collection_ms = round(max(
         0.0, (time.monotonic() - collection_started) * 1000.0
         - alignment["alignment_wait_ms"],
@@ -222,9 +250,11 @@ def run_cycle(args):
     close_wait_started = time.monotonic()
     time.sleep(max(0, (minute_end_ms - int(time.time() * 1000)) / 1000 + 0.02))
     close_wait_ms = round((time.monotonic() - close_wait_started) * 1000, 3)
+    advance_progress(args, "MINUTE_CLOSED")
     aggregate_started = time.monotonic()
     result = aggregate_closed_minute(bundles, minute_end_ms)
     aggregate_ms = round((time.monotonic() - aggregate_started) * 1000, 3)
+    advance_progress(args, "AGGREGATION_COMPLETED")
     causal_started = time.monotonic()
     result["market_data_provider"] = "BINANCE"
     result["causal_external_evidence"] = (
@@ -238,6 +268,7 @@ def run_cycle(args):
         }
     )
     causal_ms = round((time.monotonic() - causal_started) * 1000, 3)
+    advance_progress(args, "CAUSAL_EVIDENCE_READ")
     result["collection_contract"] = {
         "samples_requested": args.samples,
         "cadence_seconds": args.cadence_seconds,
@@ -266,6 +297,8 @@ def run_cycle(args):
         persistence_ms = round(
             (time.monotonic() - persistence_started) * 1000.0, 3
         )
+        if int(result["sqlite_persistence"].get("upserted") or 0) > 0:
+            advance_progress(args, "CLOSED_MINUTE_PERSISTED")
     result["transport_timings_ms"] = transport_timings
     result["runtime_timings_ms"] = {
         "route_refresh": route_refresh_ms,
@@ -280,9 +313,13 @@ def run_cycle(args):
     write_json_atomic(args.output, result)
     if args.health_output:
         canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+        persisted = int(result.get("sqlite_persistence", {}).get("upserted") or 0)
+        minute_age = int(time.time() * 1000) - int(result["minute_end_timestamp_ms"])
+        ready = (result["row_count"] > 0 and result["eligible_row_count"] == result["row_count"]
+                 and persisted >= result["row_count"] and 0 <= minute_age <= 180_000)
         health = {
             "health_contract_version": HEALTH_CONTRACT_VERSION,
-            "status": "HEALTHY" if result["eligible_row_count"] == result["row_count"] else "DEGRADED",
+            "status": "HEALTHY" if ready else "DEGRADED",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "execution_mode": "PAPER_ONLY",
             "market_data_provider": "BINANCE",
@@ -320,7 +357,7 @@ def run_cycle(args):
                 .get("forward_outcomes", {}).get("independent_event_count")
             ),
         }
-        write_health(args.health_output, health)
+        write_health(args.health_output, health, success=ready)
     print(json.dumps({
         "row_count": result["row_count"],
         "eligible_row_count": result["eligible_row_count"],
@@ -342,8 +379,12 @@ def run_bounded_cycle(args):
     except (Exception, SystemExit) as exc:
         if getattr(args, "health_output", None):
             write_health(args.health_output, {
-                "status": "ERROR", "error": f"{type(exc).__name__}: {str(exc)[:400]}",
+                "status": "DEGRADED" if is_sqlite_busy(exc) else "ERROR",
+                "error": f"{type(exc).__name__}: {str(exc)[:400]}",
+                "fatal_error": isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc),
             })
+        if is_sqlite_busy(exc):
+            return None  # Continuous mode gathers the next fresh closed minute.
         raise
     finally:
         signal.alarm(0)

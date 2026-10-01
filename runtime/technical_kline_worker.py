@@ -22,6 +22,8 @@ import certifi
 import websockets
 
 from runtime.process_identity import WorkerHealthState
+from runtime.worker_progress import WorkProgress
+from database.sqlite_policy import is_sqlite_busy
 
 from data.binance_live_evidence import MARKET_RAW_BASE, fetch_market_tickers
 from data.binance_market_universe import build_universe
@@ -80,9 +82,13 @@ def _atomic_json_write(path: Path, payload: dict) -> None:
 
 _LAST_PERSISTENCE = {}
 _HEALTH_STATE = WorkerHealthState()
+_PROGRESS = WorkProgress(lambda progress: write_health(
+    "CONNECTED" if _HEALTH_STATE.last_success_at else "RUNNING",
+    progress=progress, phase=progress["phase"], success=False))
+CLOSED_BAR_MAX_AGE_MS = 180_000
 
 
-def write_health(status: str, **details) -> None:
+def write_health(status: str, *, success=False, **details) -> None:
     if "last_persist_duration_ms" in details:
         _LAST_PERSISTENCE.update({
             key: value for key, value in details.items()
@@ -92,9 +98,17 @@ def write_health(status: str, **details) -> None:
     radar_stamp = _LAST_PERSISTENCE.get("broad_radar_snapshot_timestamp_ms")
     radar_age = int(time.time() * 1000) - radar_stamp if radar_stamp is not None else None
     radar_fresh = radar_age is not None and 0 <= radar_age <= broad_market_store.MAX_RADAR_AGE_MS
-    if status == "CONNECTED" and not radar_fresh:
-        status = "DEGRADED"
-        details.setdefault("error", "BROAD_RADAR_STALE_OR_MISSING")
+    bar_stamp = _LAST_PERSISTENCE.get("last_closed_minute_ms")
+    bar_age = int(time.time() * 1000) - bar_stamp if bar_stamp is not None else None
+    bar_fresh = (bar_age is not None and 0 <= bar_age <= CLOSED_BAR_MAX_AGE_MS
+                 and int(_LAST_PERSISTENCE.get("last_flush_upserted") or 0) > 0)
+    if status == "CONNECTED":
+        if not radar_fresh:
+            status = "DEGRADED"
+            details.setdefault("error", "BROAD_RADAR_STALE_OR_MISSING")
+        elif not bar_fresh:
+            status = "RUNNING" if bar_stamp is None else "DEGRADED"
+            details.setdefault("error", "CLOSED_BAR_PERSISTENCE_STALE_OR_MISSING")
     _atomic_json_write(HEALTH_PATH, _HEALTH_STATE.decorate({
         "health_contract_version": HEALTH_CONTRACT_VERSION,
         "producer_version": "BINANCE_TECHNICAL_KLINE_PRODUCER_V1",
@@ -106,9 +120,12 @@ def write_health(status: str, **details) -> None:
         "may_send_real_orders": False,
         "broad_radar_age_ms": radar_age,
         "broad_radar_fresh": radar_fresh,
+        "closed_bar_age_ms": bar_age,
+        "closed_bar_fresh": bar_fresh,
+        "progress": _PROGRESS.last_progress,
         **_LAST_PERSISTENCE,
         **details,
-    }))
+    }, success=bool(success and status == "CONNECTED")))
 
 
 def subscription_params(symbols) -> list[str]:
@@ -145,7 +162,9 @@ def recent_cached_symbols(
                    ORDER BY symbol""",
                 (cutoff,),
             ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        if not is_sqlite_busy(exc):
+            raise
         return ()
     return tuple(str(row[0]).upper() for row in rows)
 
@@ -214,6 +233,7 @@ async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
     while not stop_event.is_set():
         try:
             tickers = await fetch_market_tickers()
+            _PROGRESS.advance("RADAR_FETCHED")
             snapshot_ms = int(time.time() * 1000)
             universe = build_universe(tickers, snapshot_ms=snapshot_ms)
             symbols = selected_symbols(universe)
@@ -226,6 +246,7 @@ async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
                 "deep_analysis_dependency": False,
             }
             _LAST_PERSISTENCE.update(radar_metrics)
+            _PROGRESS.advance("RADAR_PERSISTED")
             write_health(
                 "CONNECTED",
                 subscribed_symbol_count=len(state.symbols),
@@ -239,9 +260,13 @@ async def refresh_universe(state: UniverseState, stop_event: asyncio.Event):
             write_health(
                 "DEGRADED",
                 error=f"UNIVERSE_REFRESH_{type(exc).__name__}",
+                error_detail=str(exc)[:400],
+                fatal_error=isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc),
                 subscribed_symbol_count=len(state.symbols),
                 universe_updated_at_ms=state.updated_at_ms,
             )
+            if isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc):
+                raise
             delay = min(15.0, UNIVERSE_REFRESH_SECONDS)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=max(1.0, delay))
@@ -279,9 +304,13 @@ async def persist_pending(
             write_health(
                 "DEGRADED",
                 error=f"PERSIST_{type(exc).__name__}",
+                error_detail=str(exc)[:400],
+                fatal_error=isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc),
                 subscribed_symbol_count=len(state.symbols),
                 pending_bar_count=len(pending),
             )
+            if isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc):
+                raise
             continue
         for key in ready_keys:
             pending.pop(key, None)
@@ -305,7 +334,10 @@ async def persist_pending(
             ),
             cache_row_count=result["row_count"],
             last_persist_timings_ms=result.get("timings_ms", {}),
+            success=int(result["upserted"]) > 0,
         )
+        if int(result["upserted"]) > 0:
+            _PROGRESS.advance("CLOSED_BARS_PERSISTED")
 
 
 async def kline_stream(state: UniverseState, stop_event: asyncio.Event):
@@ -340,6 +372,7 @@ async def kline_stream(state: UniverseState, stop_event: asyncio.Event):
 
                 initial = subscription_params(state.symbols)
                 await send_change("SUBSCRIBE", initial)
+                _PROGRESS.advance("KLINE_SUBSCRIPTIONS_SENT")
                 active = set(initial)
                 backoff = 1.0
                 write_health(
@@ -350,6 +383,7 @@ async def kline_stream(state: UniverseState, stop_event: asyncio.Event):
 
                 async def receiver():
                     messages_since_yield = 0
+                    last_progress_minute = None
                     while not stop_event.is_set():
                         try:
                             async with asyncio.timeout(1):
@@ -369,6 +403,9 @@ async def kline_stream(state: UniverseState, stop_event: asyncio.Event):
                                 str(bar["symbol"]).upper(),
                                 int(bar["open_time_ms"]),
                             )] = bar
+                            if last_progress_minute != int(bar["open_time_ms"]):
+                                last_progress_minute = int(bar["open_time_ms"])
+                                _PROGRESS.advance("CLOSED_BAR_RECEIVED")
                         messages_since_yield += 1
                         if messages_since_yield >= 64:
                             messages_since_yield = 0
@@ -433,15 +470,34 @@ async def run():
     # Create/upgrade the local-only bar cache once at process startup.
     # Closed-minute flushes must stay DDL-free while other AGCA writers share
     # the canonical WAL database.
-    try:
-        await asyncio.to_thread(bootstrap_schema, DB_PATH)
-        await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
-    except Exception as exc:
-        write_health("STARTUP_FAILED", error=f"{type(exc).__name__}: {str(exc)[:400]}")
-        raise
+    bar_schema_ready = False
+    while not stop_event.is_set():
+        try:
+            if not bar_schema_ready:
+                await asyncio.to_thread(bootstrap_schema, DB_PATH)
+                bar_schema_ready = True
+                _PROGRESS.advance("BAR_SCHEMA_READY")
+            await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
+            _PROGRESS.advance("RADAR_SCHEMA_READY")
+            break
+        except Exception as exc:
+            busy = is_sqlite_busy(exc)
+            write_health("STARTING" if busy else "STARTUP_FAILED",
+                         error=f"{type(exc).__name__}: {str(exc)[:400]}",
+                         fatal_error=not busy)
+            if not busy:
+                raise
+            await asyncio.sleep(0.25)
+    if stop_event.is_set():
+        return
 
     now_ms = int(time.time() * 1000)
-    seed = recent_cached_symbols(DB_PATH, now_ms=now_ms)
+    try:
+        seed = await asyncio.to_thread(recent_cached_symbols, DB_PATH, now_ms=now_ms)
+    except sqlite3.Error as exc:
+        write_health("STARTUP_FAILED", error=str(exc)[:400], fatal_error=not is_sqlite_busy(exc))
+        raise
+    _PROGRESS.advance("LOCAL_SEED_READ")
     state = UniverseState(seed, now_ms=now_ms)
     write_health(
         "STARTING",
@@ -453,7 +509,11 @@ async def run():
             refresh_universe(state, stop_event),
             kline_stream(state, stop_event),
         )
-    finally:
+    except Exception as exc:
+        write_health("ERROR", error=f"{type(exc).__name__}: {str(exc)[:400]}",
+                     fatal_error=isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc))
+        raise
+    else:
         write_health(
             "STOPPED",
             subscribed_symbol_count=len(state.symbols),

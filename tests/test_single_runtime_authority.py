@@ -86,13 +86,15 @@ class SingleRuntimeAuthorityTests(unittest.TestCase):
         self.assertEqual(source["git_sha"], "e" * 40)
         self.assertFalse(source["git_dirty"])
 
-    def test_realtime_worker_expires_pending_before_subscription_refresh(self):
+    def test_realtime_subscription_refresh_is_read_only_and_expiry_is_isolated(self):
         text=(ROOT/"runtime/paper_realtime_worker.py").read_text(encoding="utf-8")
-        cleanup='cancel_expired_pending_entries(db, observed_at)'
-        subscribe='return subscription_symbols(db)'
-        self.assertIn(cleanup, text)
-        self.assertIn(subscribe, text)
-        self.assertLess(text.index(cleanup), text.index(subscribe))
+        load=text[text.index("    def load_symbols("):text.index("    def symbols():")]
+        self.assertIn('return subscription_symbols(db)', load)
+        self.assertNotIn('cancel_expired_pending_entries(', load)
+        self.assertNotIn('initialize_open_positions(', load)
+        maintenance=text[text.index('    def maintenance_once():'):text.index('    async def maintenance():')]
+        self.assertIn('sqlite_path(maintenance_con, "PENDING_EXPIRY"', maintenance)
+        self.assertIn('cancel_expired_pending_entries(maintenance_con, now())', maintenance)
 
     def test_pending_spot_entry_is_part_of_realtime_subscription_universe(self):
         con = sqlite3.connect(":memory:")

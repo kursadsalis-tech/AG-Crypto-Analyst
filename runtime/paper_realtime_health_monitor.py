@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
+from database.sqlite_policy import connect_local
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,7 +32,7 @@ def ensure_table(con):
 
 def main():
     # Alerts are local-only; polling must not bootstrap the mirror schema.
-    con = sqlite3.connect(Path(DB_PATH).resolve().as_uri() + "?mode=rw",
+    con = connect_local(Path(DB_PATH).resolve().as_uri() + "?mode=rw",
                           uri=True, timeout=2)
     try:
         open_count = con.execute(

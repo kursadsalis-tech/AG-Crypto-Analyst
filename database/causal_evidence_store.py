@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from database.sqlite_policy import connect_local
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -186,7 +186,7 @@ def evidence_for_closed_minute(database_path, minute_end_timestamp_ms, now=None)
         (int(minute_end_timestamp_ms) - 60_000) / 1000, timezone.utc
     )
     # Evidence projection is read-only; RuntimeConnection installs mirror DDL.
-    with closing(sqlite3.connect(database_path, timeout=2)) as con:
+    with closing(connect_local(database_path, timeout=2)) as con:
         con.execute("PRAGMA query_only=ON")
         events = load_events(con, minute_start.isoformat(), minute_end.isoformat())
     return events_for_closed_minute(

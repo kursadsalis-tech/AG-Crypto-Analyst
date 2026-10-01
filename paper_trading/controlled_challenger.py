@@ -142,6 +142,7 @@ def sync_from_hypotheses(con, validation_cohort, now):
             json.dumps(evidence, sort_keys=True),
         ))
         created += int(cursor.rowcount == 1)
+        con.commit()
     return created
 
 
@@ -249,6 +250,9 @@ def evaluate(con, validation_cohort, rows, now):
             result["challenger_net_pnl"], result["improvement_net_pnl"],
             result["status"], evidence_json,
         ))
+        # One evaluation and its summary commit together; CPU work for the
+        # next challenger starts only after releasing the writer slot.
+        con.commit()
 
     return {
         "challenger_count": len(challengers),
@@ -262,5 +266,6 @@ def evaluate(con, validation_cohort, rows, now):
 
 def run(con, validation_cohort, rows, now):
     created = sync_from_hypotheses(con, validation_cohort, now)
+    con.commit()
     result = evaluate(con, validation_cohort, rows, now)
     return {"created": created, **result}

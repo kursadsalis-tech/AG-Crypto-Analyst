@@ -132,8 +132,11 @@ class MarketBehaviorObserverTests(unittest.TestCase):
             live, "_snapshot", side_effect=snapshot
         ), patch.object(observer, "probe", new=probe), patch.object(
             observer, "build_bundle", side_effect=lambda market, _liquidations: market
-        ):
+        ), patch.object(observer, "advance_progress") as progress:
             bundles, target, alignment = asyncio.run(run())
+        phases = [call.args[1] for call in progress.call_args_list]
+        self.assertEqual(phases.count("MARKET_SAMPLE_COMPLETED"), len(stamps))
+        self.assertEqual(phases.count("REQUIRED_CHANNELS_HYDRATED"), 1)
         final_stamps = [bundle["collected_timestamp_ms"] for bundle in bundles]
         self.assertEqual(target, 120_000)
         self.assertEqual(len(bundles), 4)

@@ -461,6 +461,8 @@ def run(con, validation_cohort, now=None, *, refresh_external=True):
                   pattern["pattern_key"], pattern["candidate_type"],
                   score["trades"], score["weeks"],
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
+    # Publish prepared learning evidence before the next historical scan.
+    con.commit()
     challenger = controlled_challenger.run(
         con, validation_cohort, rows, now
     )

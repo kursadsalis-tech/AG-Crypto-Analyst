@@ -77,7 +77,7 @@ class ProducerProcessHealthTests(unittest.TestCase):
             path = Path(tmp) / "health.json"
             args = SimpleNamespace(cycle_timeout_seconds=10, health_output=str(path))
             with patch.object(observer, "_HEALTH_STATE", identity.WorkerHealthState()):
-                observer.write_health(path, {"status": "HEALTHY"})
+                observer.write_health(path, {"status": "HEALTHY"}, success=True)
                 with patch.object(observer, "run_cycle", side_effect=RuntimeError("source unavailable")), patch.object(observer.signal, "signal"), patch.object(observer.signal, "alarm"):
                     with self.assertRaises(RuntimeError):
                         observer.run_bounded_cycle(args)

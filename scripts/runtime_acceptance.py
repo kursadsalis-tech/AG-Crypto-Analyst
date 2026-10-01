@@ -55,7 +55,7 @@ SERVICES = {
          "producer_version": "PAPER_TRADE_LEARNING_PRODUCER_V1",
          "core_version": "PAPER_TRADE_LEARNING_REVIEW_V3_CONTROLLED_CHALLENGER"}),
     "agca-technical-kline-worker.service": ServiceContract(
-        "technical-kline-health.json", ("CONNECTED",), 60,
+        "technical-kline-health.json", ("CONNECTED",), 180,
         {"health_contract_version": "AGCA_TECHNICAL_KLINE_HEALTH_V1_BINANCE_WS",
          "producer_version": "BINANCE_TECHNICAL_KLINE_PRODUCER_V1"}),
     "agca-market-behavior-observer.service": ServiceContract(
@@ -122,6 +122,8 @@ def health_failures(unit, health, state, expected_sha, now):
             failures.append("HEALTH_STALE_OR_FUTURE")
     except (ValueError, TypeError):
         failures.append("HEALTH_TIMESTAMP_INVALID")
+    if health.get("fatal_error") is True:
+        failures.append("FATAL_PRODUCER_ERROR:" + str(health.get("error", "UNKNOWN"))[:400])
     if health.get("status") not in spec.statuses:
         detail = health.get("error_detail") or health.get("error") or health.get("status", "MISSING")
         failures.append(f"HEALTH_NOT_READY:{str(detail)[:400]}")
@@ -130,7 +132,7 @@ def health_failures(unit, health, state, expected_sha, now):
         if actual != expected:
             # STARTING is published before workers finish loading their contracts.
             # Missing versions stay unready; an explicitly wrong version is fatal.
-            pending = health.get("status") == "STARTING" and actual is None
+            pending = health.get("status") in {"STARTING", "RUNNING"} and actual is None
             failures.append(f"{'VERSION_PENDING' if pending else 'VERSION_MISMATCH'}:{field}")
     if health.get("execution_mode") != "PAPER_ONLY":
         failures.append("PAPER_ONLY_MISSING")
@@ -146,8 +148,11 @@ def health_failures(unit, health, state, expected_sha, now):
             failures.append("OPEN_POSITION_MANAGEMENT_NOT_READY")
     else:
         try:
-            age = (now - timestamp(health.get("last_success_at"))).total_seconds()
-            if age < 0 or age > spec.fresh_seconds:
+            succeeded = timestamp(health.get("last_success_at"))
+            age = (now - succeeded).total_seconds()
+            if (age < 0 or age > spec.fresh_seconds
+                    or succeeded < timestamp(source.get("process_started_at"))
+                    or succeeded > timestamp(health.get("at"))):
                 failures.append("PRODUCER_SUCCESS_STALE_OR_FUTURE")
         except (ValueError, TypeError):
             failures.append("PRODUCER_SUCCESS_MISSING")
@@ -173,7 +178,7 @@ def metadata_preflight(health_dir, *, spot_path=None, usdm_path=None):
     return {"status": "ACCEPTED", "phase": "metadata", "routes": routes}
 
 
-def cache_preflight(database_path, expected_sha, *, now=None):
+def cache_preflight(database_path, expected_sha, *, now=None, expected_source=None):
     # mode=ro plus query_only: never bootstrap schemas, refresh cache or write history.
     try:
         uri = Path(database_path).resolve().as_uri() + "?mode=ro"
@@ -189,32 +194,84 @@ def cache_preflight(database_path, expected_sha, *, now=None):
         raise AcceptanceError("CACHE_PREFLIGHT_FAILED:PRODUCER_SHA_MISMATCH")
     if source.get("git_dirty") is not False:
         raise AcceptanceError("CACHE_PREFLIGHT_FAILED:PRODUCER_SOURCE_NOT_CLEAN")
+    if expected_source is not None:
+        if (source.get("pid") != expected_source.get("pid")
+                or source.get("process_started_at") != expected_source.get("process_started_at")):
+            raise AcceptanceError("CACHE_PREFLIGHT_FAILED:PRODUCER_PROCESS_MISMATCH")
+        if timestamp(detail.get("generated_at")) < timestamp(expected_source.get("process_started_at")):
+            raise AcceptanceError("CACHE_PREFLIGHT_FAILED:CACHE_PREDATES_PROCESS")
     return {**detail, "cache_status": detail["status"], "status": "ACCEPTED", "phase": "cache"}
 
 
-def wait_for_cache(database_path, expected_sha, *, ready_timeout=120, poll_seconds=5,
-                   clock=time.monotonic, sleep=time.sleep, check=cache_preflight):
-    deadline = clock() + ready_timeout
-    while True:
-        try:
-            return check(database_path, expected_sha)
-        except AcceptanceError as exc:
-            if clock() >= deadline:
-                raise AcceptanceError(f"CACHE_READINESS_TIMEOUT:{exc}") from exc
-            sleep(min(poll_seconds, max(0, deadline - clock())))
+@dataclass
+class ReadinessProgress:
+    """A per-process work deadline. Heartbeats alone never buy more time."""
+
+    last_advance: float
+    sequence: int = -1
+    progress_at: datetime | None = None
+    last_success: datetime | None = None
+
+    def observe(self, unit, health, failures, now, monotonic_now):
+        if any(item.startswith(("PROCESS_", "HEALTH_PID_", "HEALTH_STALE_", "HEALTH_TIMESTAMP_"))
+               for item in failures):
+            return
+        progress = health.get("progress")
+        if isinstance(progress, dict):
+            sequence = progress.get("sequence")
+            try:
+                advanced_at = timestamp(progress.get("at"))
+                valid = (type(sequence) is int and sequence >= 0
+                         and bool(progress.get("phase"))
+                         and timestamp(health["process_source"]["process_started_at"]) <= advanced_at
+                         <= timestamp(health.get("at"))
+                         and 0 <= (now - advanced_at).total_seconds() <= SERVICES[unit].fresh_seconds)
+            except (KeyError, ValueError, TypeError):
+                valid = False
+            if not valid:
+                raise AcceptanceError(f"{unit}:INVALID_PROGRESS_CONTRACT")
+            if sequence < self.sequence or (self.progress_at and advanced_at < self.progress_at):
+                raise AcceptanceError(f"{unit}:PROGRESS_REGRESSED")
+            if sequence > self.sequence:
+                self.sequence, self.progress_at = sequence, advanced_at
+                self.last_advance = monotonic_now
+        # A completed cycle is useful progress even for an older health producer.
+        if not any(item.startswith("PRODUCER_SUCCESS_") for item in failures):
+            try:
+                succeeded = timestamp(health.get("last_success_at"))
+            except (ValueError, TypeError):
+                return
+            if self.last_success is None or succeeded > self.last_success:
+                self.last_success = succeeded
+                self.last_advance = monotonic_now
 
 
 def accept_runtime(expected_sha, health_dir, *, window_seconds=60, ready_timeout=120,
-                   poll_seconds=5, state_reader=read_service_state, health_reader=read_health,
-                   clock=time.monotonic, sleep=time.sleep, now_fn=utcnow):
-    deadline = clock() + ready_timeout
+                   max_ready_seconds=1800, poll_seconds=5,
+                   state_reader=read_service_state, health_reader=read_health,
+                   clock=time.monotonic, sleep=time.sleep, now_fn=utcnow,
+                   units=None, database_path=None, cache_check=cache_preflight):
+    """Readiness may advance only on current-process work, within an absolute cap.
+
+    Each unready service has its own no-progress deadline: another producer's
+    healthy heartbeat or work cannot hide a stuck cold start. Once every service
+    is ready, no deadline extension or health degradation can reset the soak.
+    """
+    units = tuple(SERVICES if units is None else units)
+    if not units or any(unit not in SERVICES for unit in units):
+        raise ValueError("at least one known service is required")
+    started = clock()
+    deadline = started + max_ready_seconds
+    progress = {unit: ReadinessProgress(started) for unit in units}
     baseline = {}
     stable_since = None
     sample_count = 0
     while True:
         errors = []
+        pending = []
         sample_count += 1
-        for unit, spec in SERVICES.items():
+        for unit in units:
+            spec = SERVICES[unit]
             state = state_reader(unit)
             if unit not in baseline:
                 baseline[unit] = dict(state)
@@ -228,50 +285,89 @@ def accept_runtime(expected_sha, health_dir, *, window_seconds=60, ready_timeout
             if state["active"] == "failed":
                 raise AcceptanceError(f"{unit}:SYSTEMD_FAILED")
             health = health_reader(Path(health_dir) / spec.health_file)
-            failures = health_failures(unit, health, state, expected_sha, now_fn())
+            now = now_fn()
+            failures = health_failures(unit, health, state, expected_sha, now)
             source = health.get("process_source")
             source = source if isinstance(source, dict) else {}
-            # During readiness a previous PID's health is expected briefly.
-            # An error from this exact running PID must not be hidden by retries.
-            fatal = (source.get("pid") == state["pid"] and state["pid"] > 0 and (
+            current = source.get("pid") == state["pid"] and state["pid"] > 0
+            # Old-PID health is pending, never progress. Explicit corruption,
+            # authority, source or contract failure from the current PID is fatal.
+            fatal = current and (
                 health.get("status") in {"FAILED", "STARTUP_FAILED", "ERROR"}
+                or health.get("fatal_error") is True
                 or any(item.startswith(("PROCESS_SHA", "PROCESS_SOURCE", "VERSION_MISMATCH")) for item in failures)
-            ))
+                or health.get("execution_mode") not in {None, "PAPER_ONLY"}
+                or health.get("real_order_allowed") is True
+                or health.get("may_send_real_orders") is True
+            )
             if fatal:
                 raise AcceptanceError(f"{unit}:" + ";".join(failures))
+            if current and "HEALTH_TIMESTAMP_INVALID" not in failures:
+                process_started = source.get("process_started_at")
+                if "process_started_at" in original and original["process_started_at"] != process_started:
+                    raise AcceptanceError(f"{unit}:PROCESS_IDENTITY_CHANGED")
+                original["process_started_at"] = process_started
+            progress[unit].observe(unit, health, failures, now, clock())
+            if not failures and database_path is not None and unit == "agca-behavior-learning-worker.service":
+                try:
+                    cache_check(database_path, expected_sha, now=now, expected_source=source)
+                except AcceptanceError as exc:
+                    if any(reason in str(exc) for reason in (
+                        "PRODUCER_SHA_MISMATCH", "PRODUCER_SOURCE_NOT_CLEAN",
+                        "CONTRACT_MISMATCH", "PRODUCER_VERSION_MISMATCH", "INVALID_PAYLOAD",
+                    )):
+                        raise  # Current producer claims success with invalid output.
+                    failures.append(str(exc))
+            if failures:
+                pending.append(unit)
             errors.extend(f"{unit}:{failure}" for failure in failures)
         if errors:
             if stable_since is not None:
                 raise AcceptanceError("STABILITY_WINDOW_FAILED:" + ";".join(errors))
-            if clock() >= deadline:
-                raise AcceptanceError("RUNTIME_READINESS_TIMEOUT:" + ";".join(errors))
-            sleep(min(poll_seconds, max(0, deadline - clock())))
+            now_mono = clock()
+            pending_deadline = min(deadline, *(progress[unit].last_advance + ready_timeout for unit in pending))
+            if now_mono >= pending_deadline:
+                reason = "ABSOLUTE_LIMIT" if now_mono >= deadline else "NO_PROGRESS"
+                raise AcceptanceError("RUNTIME_READINESS_TIMEOUT:" + ";".join(errors) + ":" + reason)
+            sleep(min(poll_seconds, pending_deadline - now_mono))
             continue
         if stable_since is None:
             stable_since = clock()
         elapsed = clock() - stable_since
         if elapsed >= window_seconds:
             return {"status": "ACCEPTED", "phase": "runtime", "expected_sha": expected_sha,
+                    "readiness_seconds": stable_since - started,
                     "stable_window_seconds": elapsed, "sample_count": sample_count,
                     "services": {unit: {"pid": state["pid"], "nrestarts": state["restarts"],
                                         "nrestarts_delta": 0} for unit, state in baseline.items()}}
         sleep(min(poll_seconds, window_seconds - elapsed))
 
 
+def wait_for_cache(database_path, expected_sha, *, health_dir="/var/lib/agca", **kwargs):
+    result = accept_runtime(expected_sha, health_dir, units=("agca-behavior-learning-worker.service",),
+                            database_path=database_path, window_seconds=0, **kwargs)
+    return {**result, "phase": "cache"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("metadata", "cache", "runtime"))
+    parser.add_argument("phase", choices=("metadata", "cache", "producer", "runtime"))
     parser.add_argument("--expected-sha", required=True)
     parser.add_argument("--database-path", default="/var/lib/agca/crypto_data.db")
     parser.add_argument("--health-dir", default="/var/lib/agca")
     parser.add_argument("--window-seconds", type=float, default=60)
-    parser.add_argument("--ready-timeout", type=float, default=120)
+    parser.add_argument("--ready-timeout", type=float, default=120,
+                        help="maximum seconds without authenticated producer work progress")
+    parser.add_argument("--max-ready-seconds", type=float, default=1800,
+                        help="absolute cold-start ceiling, regardless of progress")
+    parser.add_argument("--service", action="append", choices=tuple(SERVICES))
     parser.add_argument("--poll-seconds", type=float, default=5)
     parser.add_argument("--spot-cache")
     parser.add_argument("--usdm-cache")
     args = parser.parse_args(argv)
     if (len(args.expected_sha) != 40 or any(ch not in "0123456789abcdef" for ch in args.expected_sha)
-            or not 0 < args.ready_timeout <= 120 or not 0 < args.window_seconds <= 300
+            or not 0 < args.ready_timeout <= 300 or not args.ready_timeout <= args.max_ready_seconds <= 3600
+            or not 0 < args.window_seconds <= 300
             or not 0 < args.poll_seconds <= 30):
         parser.error("exact lowercase 40-character SHA and bounded positive timing arguments required")
     try:
@@ -280,12 +376,21 @@ def main(argv=None):
         if args.phase == "metadata":
             result = metadata_preflight(args.health_dir, spot_path=args.spot_cache, usdm_path=args.usdm_cache)
         elif args.phase == "cache":
-            result = wait_for_cache(args.database_path, args.expected_sha,
-                                    ready_timeout=args.ready_timeout, poll_seconds=args.poll_seconds)
-        else:
-            result = accept_runtime(args.expected_sha, args.health_dir,
-                                    window_seconds=args.window_seconds, ready_timeout=args.ready_timeout,
+            result = wait_for_cache(args.database_path, args.expected_sha, health_dir=args.health_dir,
+                                    ready_timeout=args.ready_timeout, max_ready_seconds=args.max_ready_seconds,
                                     poll_seconds=args.poll_seconds)
+        else:
+            if args.phase == "producer" and (not args.service or "agca-paper-realtime-worker.service" in args.service):
+                parser.error("producer phase requires --service for one or more producer units")
+            if args.phase == "runtime" and args.service:
+                parser.error("runtime acceptance must cover every canonical service")
+            result = accept_runtime(args.expected_sha, args.health_dir,
+                                    units=args.service if args.phase == "producer" else None,
+                                    database_path=args.database_path,
+                                    window_seconds=0 if args.phase == "producer" else args.window_seconds,
+                                    ready_timeout=args.ready_timeout, max_ready_seconds=args.max_ready_seconds,
+                                    poll_seconds=args.poll_seconds)
+            result["phase"] = args.phase
     except (AcceptanceError, OSError, subprocess.SubprocessError) as exc:
         print(json.dumps({"status": "REJECTED", "phase": args.phase, "error": str(exc)}, sort_keys=True))
         return 1

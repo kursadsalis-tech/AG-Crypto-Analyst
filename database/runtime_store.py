@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
+from database.sqlite_policy import CoordinatedConnection, CoordinatedCursor, connect_local
+
 
 LOGGER = logging.getLogger("agca.runtime_store")
 REMOTE_URL_ENV = "AGCA_REMOTE_DATABASE_URL"
@@ -104,7 +106,7 @@ def _postgres_type(sqlite_type: str) -> str:
     return "TEXT"
 
 
-class RuntimeCursor(sqlite3.Cursor):
+class RuntimeCursor(CoordinatedCursor):
     def _track(self, statement: str) -> None:
         match = _WRITE_TABLE.match(statement)
         if match:
@@ -128,7 +130,7 @@ class RuntimeCursor(sqlite3.Cursor):
         return super().executescript(sql_script)
 
 
-class RuntimeConnection(sqlite3.Connection):
+class RuntimeConnection(CoordinatedConnection):
     """A sqlite3-compatible connection that mirrors committed writes."""
 
     def __init__(self, *args, **kwargs):
@@ -138,10 +140,11 @@ class RuntimeConnection(sqlite3.Connection):
         _ensure_outbox(self)
         for table in REMOTE_RUNTIME_TABLES:
             _ensure_change_triggers(self, table)
-        pending = sqlite3.Connection.execute(
+        pending = CoordinatedConnection.execute(
             self, "SELECT DISTINCT table_name FROM remote_mirror_outbox"
         ).fetchall()
         self._remote_dirty_tables.update(row[0] for row in pending)
+        CoordinatedConnection.commit(self)
 
     def cursor(self, factory=RuntimeCursor):
         return super().cursor(factory)
@@ -181,23 +184,19 @@ class RuntimeConnection(sqlite3.Connection):
         self._remote_dirty_tables.clear()
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if exc_type is None:
-            self.commit()
-        else:
-            self.rollback()
-        return False
+        return super().__exit__(exc_type, exc_value, traceback)
 
 
 def connect(database, *args, **kwargs):
     """Return the SQLite-compatible AGCA runtime connection."""
 
     kwargs.setdefault("factory", RuntimeConnection)
-    return sqlite3.connect(database, *args, **kwargs)
+    return connect_local(database, *args, **kwargs)
 
 
 def _ensure_outbox(local: sqlite3.Connection) -> None:
     """Create local-only durable state without recursively invoking mirroring."""
-    sqlite3.Connection.executescript(local, """
+    CoordinatedConnection.executescript(local, """
         CREATE TABLE IF NOT EXISTS remote_mirror_outbox (
             table_name TEXT NOT NULL,
             pk_json TEXT NOT NULL,
@@ -220,7 +219,7 @@ def _ensure_change_triggers(local: sqlite3.Connection, table: str) -> None:
     if table not in REMOTE_RUNTIME_TABLES:
         return
     table_q = _quote(table)
-    columns = sqlite3.Connection.execute(local, f"PRAGMA table_info({table_q})").fetchall()
+    columns = CoordinatedConnection.execute(local, f"PRAGMA table_info({table_q})").fetchall()
     primary_keys = [
         column[1] for column in sorted(columns, key=lambda item: item[5]) if column[5]
     ]
@@ -239,7 +238,7 @@ def _ensure_change_triggers(local: sqlite3.Connection, table: str) -> None:
     ):
         trigger_q = _quote(f"agca_remote_mirror_{table}_{suffix}")
         values = ",".join(f'{prefix}.{_quote(name)}' for name in primary_keys)
-        sqlite3.Connection.execute(local, f"""
+        CoordinatedConnection.execute(local, f"""
             CREATE TRIGGER IF NOT EXISTS {trigger_q} {timing} ON {table_q}
             BEGIN
                 INSERT INTO remote_mirror_outbox(table_name,pk_json,operation,queued_at)
@@ -251,8 +250,8 @@ def _ensure_change_triggers(local: sqlite3.Connection, table: str) -> None:
     old_values = ",".join(f'OLD.{_quote(name)}' for name in primary_keys)
     new_values = ",".join(f'NEW.{_quote(name)}' for name in primary_keys)
     update_trigger_q = _quote(f"agca_remote_mirror_{table}_au")
-    sqlite3.Connection.execute(local, f"DROP TRIGGER IF EXISTS {update_trigger_q}")
-    sqlite3.Connection.execute(local, f"""
+    CoordinatedConnection.execute(local, f"DROP TRIGGER IF EXISTS {update_trigger_q}")
+    CoordinatedConnection.execute(local, f"""
         CREATE TRIGGER {update_trigger_q} AFTER UPDATE ON {table_q}
         BEGIN
             INSERT INTO remote_mirror_outbox(table_name,pk_json,operation,queued_at)
@@ -265,7 +264,7 @@ def _ensure_change_triggers(local: sqlite3.Connection, table: str) -> None:
                 operation=excluded.operation,queued_at=excluded.queued_at;
         END
     """)
-    sqlite3.Connection.execute(local, """
+    CoordinatedConnection.execute(local, """
         INSERT INTO remote_mirror_schema_state(table_name,schema_sha256,confirmed_at)
         VALUES(?,?,?) ON CONFLICT(table_name) DO UPDATE SET
             schema_sha256=excluded.schema_sha256,confirmed_at=excluded.confirmed_at
@@ -273,7 +272,7 @@ def _ensure_change_triggers(local: sqlite3.Connection, table: str) -> None:
 
 
 def _local_schema_confirmed(local, marker: str, signature: str) -> bool:
-    row = sqlite3.Connection.execute(
+    row = CoordinatedConnection.execute(
         local,
         "SELECT schema_sha256 FROM remote_mirror_schema_state WHERE table_name=?",
         (marker,),
@@ -352,12 +351,12 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> M
                     _write_remote_health(cursor, schema, completed)
             # Only acknowledge durable outbox work after the remote transaction commits.
             for table, keys in applied.items():
-                sqlite3.Connection.executemany(local, """
+                CoordinatedConnection.executemany(local, """
                     DELETE FROM remote_mirror_outbox
                     WHERE table_name=? AND pk_json=?
                 """, [(table, key) for key in keys])
             for table, signature in confirmed_schemas.items():
-                sqlite3.Connection.execute(local, """
+                CoordinatedConnection.execute(local, """
                     INSERT INTO remote_mirror_schema_state(
                         table_name,schema_sha256,confirmed_at
                     ) VALUES(?,?,?) ON CONFLICT(table_name) DO UPDATE SET
@@ -365,7 +364,7 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> M
                         confirmed_at=excluded.confirmed_at
                 """, (table, signature, _health_timestamp()))
             for marker, signature in infrastructure_confirmed.items():
-                sqlite3.Connection.execute(local, """
+                CoordinatedConnection.execute(local, """
                     INSERT INTO remote_mirror_schema_state(
                         table_name,schema_sha256,confirmed_at
                     ) VALUES(?,?,?) ON CONFLICT(table_name) DO UPDATE SET
@@ -385,6 +384,9 @@ def _mirror_after_local_commit(local: sqlite3.Connection, tables: set[str]) -> M
                 error_type="backlog_pending" if pending else None,
             )
         except Exception as exc:  # SQLite must remain available under every failure mode.
+            # Remote work follows an authoritative local commit. Discard only
+            # incomplete acknowledgement/telemetry writes before network retry.
+            CoordinatedConnection.rollback(local)
             if attempt < attempts:
                 time.sleep(base_delay * (2 ** (attempt - 1)))
                 continue
@@ -407,6 +409,7 @@ def _safe_write_local_health(
     try:
         _write_local_health(local, tables, status, error_type)
     except sqlite3.Error as exc:
+        CoordinatedConnection.rollback(local)
         LOGGER.warning(
             "Remote mirror health telemetry could not be stored; local commit "
             "remains authoritative (error_type=%s)",
@@ -421,7 +424,7 @@ def _health_timestamp() -> str:
 def _write_local_health(local, tables: set[str], status: str, error_type: str | None) -> None:
     """Persist mirror health without recursively triggering another mirror."""
     now = _health_timestamp()
-    sqlite3.Connection.execute(local, """
+    CoordinatedConnection.execute(local, """
         CREATE TABLE IF NOT EXISTS remote_mirror_health (
             table_name TEXT PRIMARY KEY, status TEXT NOT NULL,
             last_attempt_at TEXT NOT NULL, last_success_at TEXT,
@@ -429,7 +432,7 @@ def _write_local_health(local, tables: set[str], status: str, error_type: str | 
         )
     """)
     for table in tables:
-        sqlite3.Connection.execute(local, """
+        CoordinatedConnection.execute(local, """
             INSERT INTO remote_mirror_health(
                 table_name,status,last_attempt_at,last_success_at,error_type,consecutive_failures
             ) VALUES(?,?,?,?,?,?)
@@ -442,7 +445,7 @@ def _write_local_health(local, tables: set[str], status: str, error_type: str | 
                     ELSE remote_mirror_health.consecutive_failures+1 END
         """, (table, status, now, now if status == "healthy" else None,
               error_type, 0 if status == "healthy" else 1))
-    sqlite3.Connection.commit(local)
+    CoordinatedConnection.commit(local)
 
 
 def _create_remote_health_table(cursor, schema: str) -> None:
@@ -516,7 +519,7 @@ def _ensure_remote_table(local, remote_cursor, schema: str, table: str, columns)
     table_q = _quote(table)
     schema_q = _quote(schema)
     signature = _schema_signature(columns)
-    state = sqlite3.Connection.execute(
+    state = CoordinatedConnection.execute(
         local,
         "SELECT schema_sha256 FROM remote_mirror_schema_state WHERE table_name=?",
         (table,),
@@ -563,7 +566,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
     """Mirror one outbox batch and return drain/applied/schema acknowledgement."""
     table_q = _quote(table)
     schema_q = _quote(schema)
-    columns = sqlite3.Connection.execute(local, f"PRAGMA table_info({table_q})").fetchall()
+    columns = CoordinatedConnection.execute(local, f"PRAGMA table_info({table_q})").fetchall()
     if not columns:
         return True, [], None
     names = [column[1] for column in columns]
@@ -573,7 +576,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
     schema_signature = _ensure_remote_table(local, remote_cursor, schema, table, columns)
 
     batch_size = max(1, int(os.getenv(REMOTE_BATCH_SIZE_ENV, "100")))
-    changes = sqlite3.Connection.execute(local, """
+    changes = CoordinatedConnection.execute(local, """
         SELECT pk_json,operation FROM remote_mirror_outbox
         WHERE table_name=? ORDER BY queued_at,pk_json LIMIT ?
     """, (table, batch_size)).fetchall()
@@ -592,7 +595,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
                 f"DELETE FROM {schema_q}.{table_q} WHERE {pk_where}", tuple(key)
             )
         else:
-            local_row = sqlite3.Connection.execute(
+            local_row = CoordinatedConnection.execute(
                 local,
                 f"SELECT {','.join(_quote(name) for name in names)} "
                 f"FROM {table_q} WHERE {pk_where.replace('%s', '?')}",
@@ -623,7 +626,7 @@ def _mirror_table(local, remote_cursor, schema: str, table: str):
             upsert_rows,
         )
 
-    total_pending = sqlite3.Connection.execute(
+    total_pending = CoordinatedConnection.execute(
         local, "SELECT COUNT(*) FROM remote_mirror_outbox WHERE table_name=?", (table,)
     ).fetchone()[0]
     return total_pending <= len(applied_keys), applied_keys, schema_signature

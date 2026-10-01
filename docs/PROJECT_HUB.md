@@ -14,7 +14,7 @@ Geliştirme, bu GitHub deposunun doğrulanmış branch/SHA'sından alınan bir G
 checkout'unda yapılır. Runtime yolu yerel makinede bulunmak zorunda değildir;
 Work görevleri eski `/Users/...` checkout'larını aramamalıdır. ChatGPT proje
 aynaları ve sohbetler yalnız bağlamdır, düzenlenecek kaynak depo değildir.
-Bu hardening geliştirme checkout'u: `/Users/elifzilan/Developer/AG-Crypto-Analyst-hardening`.
+Bu hardening geliştirme checkout'u: `/Users/elifzilan/.codex/.chatgpt-projects/g-p-6a60d9a3a06081918a6d67c3fa14a0a0/AG-Crypto-Analyst`.
 Bu yol runtime veya genel gelecek-oturum varsayımı değildir.
 
 ## Belge yetki sırası

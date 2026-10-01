@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from database.sqlite_policy import is_sqlite_busy
 from database.runtime_store import connect as runtime_connect
 import statistics
 import time
@@ -636,15 +637,12 @@ def render_result(policy, assets, source_errors, snapshot_id):
 
 def runtime_connection():
     con = runtime_connect(DB_NAME, timeout=30)
-    con.execute("PRAGMA busy_timeout=30000")
+    con.execute("PRAGMA busy_timeout=250")
     return con
 
 
 def _database_locked(exc):
-    return (
-        isinstance(exc, sqlite3.OperationalError)
-        and "database is locked" in str(exc).lower()
-    )
+    return is_sqlite_busy(exc)
 
 
 def persist_snapshot_with_retry(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from database.sqlite_policy import connect_local, is_sqlite_busy
 import time
 from datetime import datetime, timezone
 
@@ -150,8 +151,8 @@ def _schema_ready(connection):
 
 def bootstrap_schema(database_path):
     """Install technical-bar table/indexes outside the closed-minute write path."""
-    connection = sqlite3.connect(database_path, timeout=30)
-    connection.execute("PRAGMA busy_timeout=30000")
+    connection = connect_local(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=250")
     try:
         ensure_table(connection)
         connection.commit()
@@ -163,16 +164,13 @@ def _writer_connection(database_path):
     # technical_minute_bars is local-only. RuntimeConnection construction would
     # repeat remote outbox/trigger schema work even though this table is never
     # mirrored, creating avoidable writer contention on the canonical DB.
-    connection = sqlite3.connect(database_path, timeout=30)
-    connection.execute("PRAGMA busy_timeout=30000")
+    connection = connect_local(database_path, timeout=30)
+    connection.execute("PRAGMA busy_timeout=250")
     return connection
 
 
 def _database_locked(exc):
-    return (
-        isinstance(exc, sqlite3.OperationalError)
-        and "database is locked" in str(exc).lower()
-    )
+    return is_sqlite_busy(exc)
 
 
 def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_counts=True):
@@ -212,7 +210,7 @@ def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_c
         acquired = time.monotonic()
         timings["writer_wait"] += (acquired - started) * 1000
         pruned = connection.execute(
-            f"DELETE FROM {TABLE} WHERE close_time_ms < ?", (cutoff,)
+            f"DELETE FROM {TABLE} WHERE rowid IN (SELECT rowid FROM {TABLE} WHERE close_time_ms < ? LIMIT 1000)", (cutoff,)
         ).rowcount
         committing = time.monotonic()
         timings["prune"] = (committing - acquired) * 1000
@@ -247,7 +245,7 @@ def persist_bars(
 ):
     """Persist prepared closed bars with bounded fresh-connection retries."""
     now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
-    probe = sqlite3.connect(database_path, timeout=5)
+    probe = connect_local(database_path, timeout=5)
     try:
         ready = _schema_ready(probe)
     finally:

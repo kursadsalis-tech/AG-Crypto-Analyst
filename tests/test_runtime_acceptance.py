@@ -1,6 +1,8 @@
 import hashlib
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -228,6 +230,131 @@ class RuntimeAcceptanceTests(unittest.TestCase):
                 with self.assertRaisesRegex(acceptance.AcceptanceError, field + "_NOT_READY"):
                     self.run_acceptance(health_reader=degraded)
 
+    def progressing(self, path, *, ready_at=35):
+        health = self.health(path)
+        if self.clock.elapsed < ready_at:
+            health.update(status="RUNNING", last_success_at=None,
+                          progress={"phase": "SCAN", "sequence": int(self.clock.elapsed // 5),
+                                    "at": self.clock.now().isoformat()})
+        return health
+
+    def test_running_progress_extends_cold_start_then_full_stability_window(self):
+        result = self.run_acceptance(health_reader=self.progressing, max_ready_seconds=60)
+        self.assertEqual(result["readiness_seconds"], 35)
+        self.assertEqual(result["stable_window_seconds"], 10)
+        self.assertEqual(self.clock.elapsed, 45)
+
+    def test_heartbeat_without_work_progress_times_out(self):
+        def heartbeat(path):
+            health = self.progressing(path, ready_at=100)
+            health["progress"] = {"phase": "SCAN", "sequence": 1, "at": NOW.isoformat()}
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "RUNTIME_READINESS_TIMEOUT:.*NO_PROGRESS"):
+            self.run_acceptance(health_reader=heartbeat, max_ready_seconds=100)
+        self.assertEqual(self.clock.elapsed, 20)
+
+    def test_one_producer_progress_never_extends_another_stuck_producer(self):
+        def one_stuck(path):
+            health = self.progressing(path, ready_at=100)
+            if Path(path).name == "trade-learning-health.json":
+                health["progress"] = {"phase": "SCAN", "sequence": 1, "at": NOW.isoformat()}
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "NO_PROGRESS"):
+            self.run_acceptance(health_reader=one_stuck)
+        self.assertEqual(self.clock.elapsed, 20)
+
+    def test_progress_cannot_extend_absolute_ceiling(self):
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "ABSOLUTE_LIMIT"):
+            self.run_acceptance(health_reader=lambda path: self.progressing(path, ready_at=100),
+                                max_ready_seconds=30)
+        self.assertEqual(self.clock.elapsed, 30)
+
+    def test_previous_pid_progress_never_extends_readiness(self):
+        def previous(path):
+            health = self.progressing(path, ready_at=100)
+            health["process_source"]["pid"] += 1000
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "NO_PROGRESS"):
+            self.run_acceptance(health_reader=previous)
+        self.assertEqual(self.clock.elapsed, 20)
+
+    def test_progress_sequence_regression_is_fatal(self):
+        def regressed(path):
+            health = self.progressing(path)
+            health["progress"]["sequence"] = 2 if self.clock.elapsed == 0 else 1
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "PROGRESS_REGRESSED"):
+            self.run_acceptance(health_reader=regressed)
+        self.assertEqual(self.clock.elapsed, 5)
+
+    def test_success_must_be_from_current_process_and_not_after_health(self):
+        unit = "agca-trade-learning-worker.service"
+        for success in (NOW - timedelta(hours=1), NOW + timedelta(seconds=1)):
+            health = self.health("trade-learning-health.json")
+            health["last_success_at"] = success.isoformat()
+            self.assertIn("PRODUCER_SUCCESS_STALE_OR_FUTURE", acceptance.health_failures(
+                unit, health, self.state(unit), SHA, NOW))
+
+    def test_current_pid_identity_replacement_is_fatal_even_without_pid_change(self):
+        def replaced(path):
+            health = self.health(path)
+            if self.clock.elapsed:
+                health["process_source"]["process_started_at"] = NOW.isoformat()
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "PROCESS_IDENTITY_CHANGED"):
+            self.run_acceptance(health_reader=replaced)
+        self.assertEqual(self.clock.elapsed, 5)
+
+    def test_real_order_authority_true_is_fatal_during_readiness(self):
+        def unsafe(path):
+            health = self.starting_health(path)
+            health["real_order_allowed"] = True
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "REAL_ORDER_AUTHORITY_NOT_FALSE"):
+            self.run_acceptance(health_reader=unsafe)
+        self.assertEqual(self.clock.elapsed, 0)
+
+    def test_explicit_fatal_database_health_fails_immediately(self):
+        def failed(path):
+            health = self.health(path)
+            health.update(status="DEGRADED", fatal_error=True, error="no such table")
+            return health
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "FATAL_PRODUCER_ERROR"):
+            self.run_acceptance(health_reader=failed)
+        self.assertEqual(self.clock.elapsed, 0)
+
+    def test_current_success_with_wrong_cache_contract_fails_immediately(self):
+        def check(*args, **kwargs):
+            raise acceptance.AcceptanceError("CACHE_PREFLIGHT_FAILED:CONTRACT_MISMATCH")
+        with self.assertRaisesRegex(acceptance.AcceptanceError, "CONTRACT_MISMATCH"):
+            self.run_acceptance(database_path="unused", cache_check=check)
+        self.assertEqual(self.clock.elapsed, 0)
+
+    def test_cache_wait_binds_health_and_snapshot_to_current_producer(self):
+        def check(database, sha, *, now, expected_source):
+            self.assertEqual(expected_source["pid"], self.state("agca-behavior-learning-worker.service")["pid"])
+            if self.clock.elapsed < 10:
+                raise acceptance.AcceptanceError("CACHE_PREFLIGHT_FAILED:PRODUCER_PROCESS_MISMATCH")
+            return {"status": "ACCEPTED"}
+        result = acceptance.wait_for_cache("unused", SHA, health_dir="/test", ready_timeout=20,
+            state_reader=self.state, health_reader=self.health, clock=self.clock.monotonic,
+            sleep=self.clock.sleep, now_fn=self.clock.now, cache_check=check)
+        self.assertEqual(result["status"], "ACCEPTED")
+        self.assertEqual(self.clock.elapsed, 10)
+        self.assertEqual(tuple(result["services"]), ("agca-behavior-learning-worker.service",))
+
+    def test_producer_wait_never_checks_or_restarts_other_units(self):
+        requested = []
+        unit = "agca-technical-kline-worker.service"
+        def read_state(name):
+            requested.append(name)
+            return self.state(name)
+        result = self.run_acceptance(units=(unit,), window_seconds=0, state_reader=read_state,
+                                     health_reader=self.progressing)
+        self.assertEqual(set(requested), {unit})
+        self.assertEqual(result["readiness_seconds"], 35)
+
+
 
 class RuntimePreflightTests(unittest.TestCase):
     def write_cache(self, database, source_sha=SHA, *, dirty=False, version=core.PATTERN_CACHE_CONTRACT_VERSION):
@@ -271,20 +398,16 @@ class RuntimePreflightTests(unittest.TestCase):
                 acceptance.cache_preflight(database, SHA, now=NOW)
             self.assertFalse(database.exists())
 
-    def test_cache_wait_is_bounded_and_accepts_new_producer_when_ready(self):
-        clock = FakeClock()
-        def eventually_ready(database, sha):
-            if clock.elapsed < 10:
-                raise acceptance.AcceptanceError("CONTRACT_MISMATCH")
-            return {"status": "ACCEPTED"}
-        result = acceptance.wait_for_cache("unused", SHA, clock=clock.monotonic,
-                                           sleep=clock.sleep, check=eventually_ready, ready_timeout=20)
-        self.assertEqual(result["status"], "ACCEPTED")
-        self.assertEqual(clock.elapsed, 10)
-        with self.assertRaisesRegex(acceptance.AcceptanceError, "CACHE_READINESS_TIMEOUT"):
-            acceptance.wait_for_cache("unused", SHA, clock=clock.monotonic, sleep=clock.sleep,
-                check=lambda *_: (_ for _ in ()).throw(acceptance.AcceptanceError("MISSING")), ready_timeout=10)
-        self.assertEqual(clock.elapsed, 20)
+    def test_cache_requires_current_process_not_just_same_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "cache.db"
+            self.write_cache(database)
+            source = {"pid": 999, "process_started_at": (NOW - timedelta(minutes=1)).isoformat()}
+            with self.assertRaisesRegex(acceptance.AcceptanceError, "PRODUCER_PROCESS_MISMATCH"):
+                acceptance.cache_preflight(database, SHA, now=NOW, expected_source=source)
+            source["pid"] = 101
+            self.assertEqual(acceptance.cache_preflight(database, SHA, now=NOW,
+                                                        expected_source=source)["status"], "ACCEPTED")
 
     def test_metadata_preflight_requires_both_routes_and_never_fetches(self):
         from types import SimpleNamespace
@@ -310,7 +433,86 @@ class RuntimePreflightTests(unittest.TestCase):
         self.assertLess(behavior, cache)
         self.assertLess(cache, realtime)
         self.assertLess(realtime, accepted)
-        self.assertIn("--window-seconds 60 --ready-timeout 120 --poll-seconds 5", source)
+        self.assertIn("--window-seconds 60 --ready-timeout 120 --max-ready-seconds 1800 --poll-seconds 5", source)
+
+
+class StagedInstallerTests(unittest.TestCase):
+    """Execute only the staged block against isolated fake commands, never systemd."""
+
+    units = ("agca-behavior-learning-worker.service", "agca-technical-kline-worker.service",
+             "agca-market-behavior-observer.service", "agca-trade-learning-worker.service",
+             "agca-paper-realtime-worker.service")
+
+    def run_stages(self, fail_unit=""):
+        source = Path("deploy/install_gce_free_worker.sh").read_text()
+        block = source.split("# Begin staged producer restart.", 1)[1].split("# End staged producer restart.", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".venv/bin").mkdir(parents=True)
+            driver = root / "driver.py"
+            driver.write_text("""import json, os, sys
+from pathlib import Path
+state_file = Path('calls.json')
+state = json.loads(state_file.read_text()) if state_file.exists() else {'events': [], 'restarted': [], 'ready': []}
+args = sys.argv[1:]
+state['events'].append(args)
+failed = False
+if args[0] == 'systemctl':
+    assert args[1] in {'restart', 'enable', 'start'} and len(args) in {3, 4}, args
+    if args[1] == 'start':
+        assert all(unit in state['ready'] for unit in state['restarted']), state
+    if args[1] == 'restart':
+        assert all(unit in state['ready'] for unit in state['restarted']), state
+        state['restarted'].append(args[2])
+else:
+    assert args[:2] == ['-m', 'scripts.runtime_acceptance'], args
+    assert args[args.index('--expected-sha') + 1] == 'a' * 40, args
+    phase = args[2]
+    units = (['agca-behavior-learning-worker.service'] if phase == 'cache' else
+             [args[i + 1] for i, arg in enumerate(args) if arg == '--service'])
+    assert all(unit in state['restarted'] for unit in units), state
+    failed = bool(os.getenv('FAIL_UNIT') in units)
+    if not failed:
+        state['ready'].extend(units)
+state_file.write_text(json.dumps(state))
+sys.exit(17 if failed else 0)
+""")
+            fake_python = root / ".venv/bin/python"
+            fake_python.write_text('#!/bin/sh\nexec "$REAL_PYTHON" "$DRIVER" "$@"\n')
+            fake_python.chmod(0o755)
+            # Only this function can receive sudo; it writes the isolated log.
+            prefix = ('set -euo pipefail\n'
+                      'sudo() { "$REAL_PYTHON" "$DRIVER" "$@"; }\n'
+                      'EXPECTED_SHA=' + SHA + '\nDB=unused\nDATA_DIR=unused\nactive_timers=(agca-risk-refresh.timer)\n')
+            import os
+            env = {**os.environ, "REAL_PYTHON": sys.executable, "DRIVER": str(driver), "FAIL_UNIT": fail_unit}
+            result = subprocess.run(["bash", "-s"], input=prefix + block, cwd=root, env=env,
+                                    capture_output=True, text=True, timeout=10)
+            calls = json.loads((root / "calls.json").read_text())
+            return result, calls
+
+    def test_every_restart_waits_for_exact_current_producer_and_realtime_is_last(self):
+        result, calls = self.run_stages()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls["restarted"], list(self.units))
+        commands = calls["events"]
+        realtime_index = commands.index(["systemctl", "restart", self.units[-1]])
+        all_producers = [args for args in commands[:realtime_index] if args.count("--service") == 4]
+        self.assertEqual(len(all_producers), 1)
+        self.assertEqual(commands[realtime_index - 2][2], "metadata")
+
+    def test_failed_producer_never_starts_next_writer_or_realtime(self):
+        for index, unit in enumerate(self.units[:-1]):
+            with self.subTest(unit=unit):
+                result, calls = self.run_stages(unit)
+                self.assertEqual(result.returncode, 17, result.stderr)
+                self.assertEqual(calls["restarted"], list(self.units[:index + 1]))
+
+    def test_timers_are_quiesced_before_schema_and_resumed_after_producers(self):
+        source = Path("deploy/install_gce_free_worker.sh").read_text()
+        self.assertLess(source.index('sudo systemctl stop "$timer"'), source.index('bootstrap_schema(os.environ'))
+        self.assertLess(source.index('sudo systemctl enable --now "$timer"'),
+                        source.index('sudo systemctl restart agca-paper-realtime-worker.service'))
 
 
 if __name__ == "__main__":

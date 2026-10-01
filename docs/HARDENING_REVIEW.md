@@ -1,3 +1,7 @@
+> The source/verification record below describes the previous candidate.
+> The current #104 stability-freeze architecture and acceptance boundary are in
+> [STABILITY_FREEZE.md](STABILITY_FREEZE.md) and [LAST_SESSION_HANDOFF.md](LAST_SESSION_HANDOFF.md).
+
 # Hardening review — source candidate and canary follow-up
 
 Branch `codex/agca-comprehensive-hardening` supersedes PR #103 and retains its

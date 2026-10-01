@@ -30,13 +30,13 @@ class TradeLearningWorkerTests(unittest.TestCase):
     def test_learning_connection_is_plain_local_sqlite(self):
         fake = mock.MagicMock(spec=sqlite3.Connection)
         with mock.patch.object(
-            worker.sqlite3, "connect", return_value=fake
+            worker, "connect_local", return_value=fake
         ) as connect_mock:
             result = worker.local_connection()
 
         self.assertIs(result, fake)
-        connect_mock.assert_called_once_with(worker.DB_NAME, timeout=5)
-        fake.execute.assert_called_once_with("PRAGMA busy_timeout=5000")
+        connect_mock.assert_called_once_with(worker.DB_NAME, timeout=0.25)
+        fake.execute.assert_called_once_with("PRAGMA busy_timeout=250")
 
     def test_input_key_ignores_runtime_churn_but_tracks_final_costs_and_observations(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(

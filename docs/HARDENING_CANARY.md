@@ -1,241 +1,162 @@
-# Hardening candidate — operator re-canary
+# Stability freeze — separately authorized PAPER re-canary
 
-Source repo: `kursadsalis-tech/AG-Crypto-Analyst`. Candidate branch:
-`codex/agca-comprehensive-hardening`, includes all of PR #103 at
-`b30f18e48e1b389620d56b51fefba4262d678da2`; main base
-`56f85d11a757732bfbf34307ebf39aa3b23fb814`. Do not merge #103.
-Use the exact 40-character reviewed head from PR #104/delivery, never a
-moving branch tip. This document specifies the procedure; this development task
-has performed no VM access, deployment, restart or operational canary.
+PR #104 / `codex/agca-comprehensive-hardening` remains **open and unmerged**.
+PR #103 remains superseded and unmerged. Pin the exact reviewed 40-character
+head from PR #104/delivery; never use a moving branch tip. This source task
+permits no VM/GCP access, deployment, systemd operation, production database
+operation, operational canary or real order. The procedure below is for a
+subsequent, explicitly authorized operator run.
 
-## Canary-discovered fix checkpoint
+## Why acceptance was reset
 
-The user reports the original `53246f15ea635c864a76ee578cc23933da3119dd` canary reached metadata/cache
-acceptance and stable PID 1834044 with NRestarts=0, but acceptance raced STARTING.
-WLD 1772 and ZEC 1781 were managed/HOLD; ENA 1788 lacked a manager row because
-its exact frozen stop was only 0.3498299513% from the actual SHORT fill. These
-are reported observations, not fresh VM checks in this follow-up.
+The user-reported canary at `2573de648edf229f09fbab2b68ccef2fdbe2828a` failed:
 
-Source fixes are in `7db4d10145ccacd036f90e8ea75408b000d3c49a`; use the final reviewed PR #104/delivery
-head (including documentation) only after its full regression/PAPER CI passes.
-Do not merge PR #104 as part of this follow-up. No VM operations are authorized
-for this source-fix task. When a later re-canary is authorized, additionally verify:
+- Behavior first-cache production exceeded the installer's 120-second deadline,
+  then produced an accepted cache at the exact SHA. Time elapsed alone did not
+  distinguish slow progress from failure.
+- Remaining manual restarts contended for the same SQLite writer. A busy manager
+  UPDATE escaped through `process_state -> decision_loop -> asyncio.gather` and
+  killed the canonical worker. Systemd restarted it after 31 seconds;
+  `NRestarts=1` invalidated acceptance.
+- Behavior/trade/technical health was RUNNING, stale or missing success during
+  cold start. A later realtime restart reached ENTRY_PATH and
+  OPEN_POSITION_MANAGEMENT READY/PAPER_ONLY/ZEC HOLD. That recovery does not
+  erase the lifecycle death.
 
-- Current-PID STARTING can await missing contracts/readiness within ready_timeout;
-  it cannot count toward the stability window or hide wrong source/contracts/errors.
-- If ENA 1788 is still OPEN, manager initialization preserves stop
-  `0.2651342857142857`, with the original plan/thesis untouched, and the route
-  leaves uninitialized management. If already closed, preserve that history;
-  do not recreate exposure or manufacture a replacement test position.
-- Existing WLD/ZEC management, PAPER_ONLY and real_order_allowed=false remain
-  intact; stop-side/finite/positive/5% maximum safeguards still apply.
+These are supplied observations, not independently refreshed live evidence.
+Previous green software CI and short HOLD windows are not a stability verdict.
+The prior STARTING missing-field and exact frozen technical stop fixes remain
+required, as do actual new OPEN >=100 USDT and frozen execution rules.
 
-## Preconditions and capture
+## Preconditions and evidence
 
-Operator target: `agca-runtime`, GCP `project-6a717580-e37d-48f6-832`, zone
-`us-east1-b`; user `kursadsalis`; checkout
+Operator target remains `agca-runtime`, project
+`project-6a717580-e37d-48f6-832`, zone `us-east1-b`; checkout
 `/home/kursadsalis/AG-Crypto-Analyst-cloud`; authoritative history
-`/var/lib/agca/crypto_data.db`. Do not start a second lifecycle or restore an old
-DB over current history. PAPER_ONLY / real_order_allowed=0 throughout.
+`/var/lib/agca/crypto_data.db`. Keep PAPER_ONLY and real_order_allowed=false.
 
-1. Confirm current checkout is clean and record old exact checkout SHA, process
-   SHA/PID, all five worker units and their drop-ins, NRestarts, health files,
-   metadata cache provenance, and OPEN/PENDING IDs. Keep the record outside the
-   Git checkout, private to the operator. Old checkout SHA alone is insufficient
-   if a running worker imported another version: record both identities.
-2. Preserve existing user/service overrides. Back up the five unit files and
-   their drop-ins before the installer changes them. Record which timers are
-   active/enabled. Use SQLite's online backup API for an optional consistent
-   checkpoint; never copy a busy SQLite main file without its WAL protocol.
-   The backup is forensic evidence, not rollback data: no history deletion.
-3. Fetch the candidate branch; check its head equals the delivered exact SHA and
-   that the SHA descends from the stated #103 parent. CI must pass that head.
-   Refuse dirty checkout, source mismatch or a current authority other than the
-   single realtime PAPER worker. No new capital or reset of learning history.
+1. Confirm final-head full regression, PAPER integration and CI; capture clean
+   source SHA, process SHA/PID/start time, NRestarts, service files/drop-ins,
+   timer enablement, health, cache provenance, OPEN/PENDING IDs and unmanaged
+   count. Evidence goes outside the checkout and must not contain credentials.
+2. Preserve service overrides and SQLite history. A forensic backup, if needed,
+   uses SQLite's online backup API. Never copy only a busy main database file,
+   replace live history with an old backup, remove WAL files, or reset learning.
+3. Check exact-head ancestry from #103
+   `b30f18e48e1b389620d56b51fefba4262d678da2`, one canonical trade authority,
+   and no outstanding schema/integrity/authority error. An absent natural test
+   opportunity remains unobserved; do not create or close positions for a test.
+4. Capture rollback source and units. A successful code checkout alone does not
+   prove an older worker can protect current obligations.
 
-## Install the exact reviewed head
+## Readiness and installation contract
 
-Set `REVIEWED_SHA` to the exact delivered 40-character head, and `ROLLBACK_SHA`
-to the recorded current checkout SHA. The final delivery supplies the concrete
-SHA; placeholders must not be executed.
+Use the reviewed installer's exact-SHA mode (`AGCA_DEPLOY_REEXEC=1` with
+`AGCA_EXPECTED_DEPLOY_SHA` equal to the reviewed head). Its ordinary main-update
+mode is not a selector for this unmerged PR. Operator authorization is required
+before any invocation; no installer was executed during source development.
 
-```bash
-cd /home/kursadsalis/AG-Crypto-Analyst-cloud
-git diff --quiet
-git diff --cached --quiet
-git fetch origin codex/agca-comprehensive-hardening
-test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
-git merge-base --is-ancestor b30f18e48e1b389620d56b51fefba4262d678da2 "$REVIEWED_SHA"
-git switch --detach "$REVIEWED_SHA"
-AGCA_DEPLOY_REEXEC=1 AGCA_EXPECTED_DEPLOY_SHA="$REVIEWED_SHA" \
-  bash deploy/install_gce_free_worker.sh
-```
+The installer serializes canonical producer startup: behavior/cache, technical,
+observer, then trade. Each producer must prove current systemd PID, process-bound
+exact SHA, clean source, matching contract and a fresh current-process success
+before the next writer starts. Behavior additionally needs its matching cache.
+Metadata preflight and all required producer gates precede realtime startup.
+Supporting timers start after the gates, rather than adding a cold-start writer
+storm.
 
-Do not omit `AGCA_DEPLOY_REEXEC=1`: the ordinary installer intentionally updates
-main and is not an unmerged-PR checkout selector. The exact-SHA assertion prevents
-accidental deployment of another head.
+Readiness uses `--ready-timeout 120` as a **no-useful-progress** budget and
+`--max-ready-seconds 1800` as a hard total startup ceiling. Current-PID
+STARTING/RUNNING may wait for contracts/success while actual `progress.sequence`
+advances. A timestamp-only heartbeat is not work progress. Wrong populated
+SHA/dirty/version, fatal health, PID replacement or restart-count change fail
+immediately. No-progress and hard ceiling failures stop the sequence; they do
+not trigger blind repeated restarts. The bounds must be reviewed against measured
+phase durations, not raised to hide a stuck phase.
 
-The installer performs metadata preflight before worker restarts, starts the
-behavior producer and waits at most 120 seconds for valid V2 data from the exact
-clean source, then replaces the other processes. It requires compatible health
-contracts, exact process SHA, clean process source, matching MainPID, fresh health,
-60 continuous seconds of stable PID and NRestarts delta zero. All five workers
-are checked. A failing preflight/acceptance is a failed canary, not permission to
-repeat restarts. Units permit at most four starts per 300 seconds, separated by
-30 seconds. Operator must investigate the recorded reason or roll back.
+The runtime stability window starts only after all five required services meet
+their full contract. It requires stable PIDs, NRestarts delta zero, fresh producer
+success, cache/metadata readiness and explicit PAPER_ONLY/false authority. If a
+producer loses readiness during that window, acceptance fails. STARTING missing
+fields may wait but never count toward stability.
 
-Read-only repeatable acceptance command (after installation, not a deploy):
+## Controlled faults before the soak
 
-```bash
-.venv/bin/python -m scripts.runtime_acceptance runtime \
-  --expected-sha "$REVIEWED_SHA" --database-path /var/lib/agca/crypto_data.db \
-  --health-dir /var/lib/agca --ready-timeout 120 --window-seconds 60 --poll-seconds 5
-```
+Run faults only with separate authorization, an operator present, healthy
+quotes, verified frozen/adopted rules for every existing OPEN, and a cleanup
+plan. Run one fault at a time. Stop on unmanaged OPEN, fatal DB health, stale
+protective quotes, unexpected restart/PID change or authority violation. Restore
+normal readiness after each case; then start a **new** 24-hour baseline.
 
-## Bounded observations: 20 minutes, no forced trades
+### Metadata/helper outage
 
-Record health every ten seconds and SQLite deltas for positions, entry rejection
-reasons and position events. Do not scan all historical blobs in a hot loop.
+Temporarily make one metadata/helper input unavailable through a canary-owned
+runtime override. Do not delete or edit canonical cache/history. Verify that
+entries on the affected route degrade while existing OPEN protection continues
+from hash-valid frozen/adopted execution rules. Test each route only when natural
+obligations exist; a missing route case remains unobserved. Existing exact frozen
+stops, immediate stop/liquidation and reduce-only behavior must stay intact.
 
-- `ENTRY_PATH` READY with fresh V2 cache, correct producer/core versions and
-  exact process SHA. Empty valid patterns are permitted; a zero-selection cycle
-  still requires explicit reason/direction telemetry.
-- `OPEN_POSITION_MANAGEMENT` READY, or IDLE only with no OPEN obligations.
-  Current quotes/liquidity must be fresh for each managed route. A valid frozen
-  rules hash is required for new fills. Legacy adoption must say
-  `LEGACY_EXECUTION_RULES_ADOPTED`, never claim original fill-time provenance.
-- New OPEN actual notional >=100 USDT. No sub-100 partial OPEN or cash debit.
-  Replan and partial-fill cancellation reasons are durable. Reduce-only dust is
-  exempt. Cash, current marked total/alt/single exposure and stop-risk stay within
-  current policy; no duplicate symbol or second authority.
-- On a newly observed dynamic symbol with 360 contiguous valid closed local
-  Binance minute bars and sufficient measured six-hour liquidity, incremental
-  risk appears on the next bounded support ticks, within the 180-second evidence
-  window. Missing history is reported as real missing evidence; never fill it
-  with invented candles or a 169-candle hot-path request. No suitable new symbol
-  in the bounded window means this live criterion remains unobserved.
-- Verify both LONG and SHORT stage/rejection telemetry, negative-edge veto and
-  unchanged immediate stop/liquidation behavior. Three independent five-second
-  opposing-flow confirmations remain necessary for flow-thesis invalidation.
-  Never force a market move, opportunity or trade to meet acceptance counts.
+A fault requiring a deliberate worker restart happens **before** the soak. Record
+that deliberate operation separately, remove only the canary-owned override,
+restore readiness and establish a fresh baseline. Never erase user drop-ins with
+`systemctl revert` or count a planned restart as continuous operation.
 
-## Controlled route-failure phase
+### SQLite contention (no data mutation)
 
-Perform only while the operator is present, quote/liquidity paths are healthy
-and required OPEN positions have verified frozen/adopted rules. First use a
-USD-M OPEN with SPOT disabled; then a SPOT OPEN with USD-M disabled. If those
-natural positions do not exist during the bounded canary, leave that live case
-unverified rather than manufacturing exposure. Offline integration covers both.
+First run the focused synthetic contention tests on a disposable database. For
+an authorized runtime test, use a separate local SQLite connection to the same
+DB, acquire `BEGIN IMMEDIATE`, hold it for a bounded interval (initially <=1
+second), and always `ROLLBACK`/close in a `finally` block. The injected connection
+executes **no INSERT, UPDATE, DELETE, DDL, checkpoint, VACUUM or journal change**.
+The acquisition itself has a short timeout; failure to acquire aborts that trial.
+Use an outer process timeout so a broken harness cannot retain the lock.
 
-For one route at a time, create a temporary runtime-only systemd drop-in for
-`agca-paper-realtime-worker.service` that points that route's metadata path to a
-nonexistent private canary file. For SPOT the environment key is
-`AGCA_SPOT_EXCHANGE_METADATA_CACHE`; for USD-M it is
-`AGCA_EXCHANGE_METADATA_CACHE`. Keep the other route's path unchanged. Do not
-edit/delete canonical caches, Supabase data or SQLite history. Record the new
-PID, restart the sole realtime worker once, and observe for 60 seconds:
+Capture per-symbol/per-path SQLITE_BUSY degradation, manager invocation priority,
+continued websocket freshness, stable realtime PID/NRestarts, rollback and the
+next fresh tick's recovery. Compare event/fill/exit IDs and accounting deltas for
+duplicates. A test window with no affected tick is inconclusive, not a pass.
+Do not enlarge the lock duration merely to force an event; the offline integration
+proves the exact manager UPDATE fault deterministically. No order or position
+mutation is initiated by the fault harness; normal PAPER authority stays singular.
 
-- Worker remains alive; PID stable and NRestarts delta=0 after the deliberate
-  restart; health source equals REVIEWED_SHA and remains clean.
-- Only the disabled route is unavailable for new entries; the opposite route
-  remains eligible. ENTRY_PATH reports its degraded route explicitly.
-- OPEN management remains READY using frozen rules, including on the disabled
-  route itself when an OPEN exists there. Fresh ticks continue; natural stop/
-  liquidation/reduce-only exits require no metadata/helper access. A hold-only
-  live window proves management liveness, not an observed protective execution.
+## Minimum 24-hour PAPER soak
 
-Remove exactly the temporary canary drop-in, daemon-reload and restart the
-realtime worker once. Run full runtime acceptance before the next route test.
-Always install a shell EXIT/INT/TERM cleanup trap or equivalent operator rollback
-before adding the drop-in. Never use `systemctl revert` to erase unrelated user
-configuration. A failed manager state, stale OPEN quotes, restarts, mismatched
-source, sub-100 OPEN or enabled real authority ends the canary immediately.
+After restored readiness and all controlled faults, record the Istanbul and UTC
+start time, exact SHA, per-service PID/NRestarts and counters. Observe for at least
+24 continuous hours with bounded, read-only snapshots. Avoid repeated full-history
+scans. A restart, deployment, source change or protective lifecycle loss resets
+the candidate's acceptance and requires investigation.
 
-### Exact temporary fault commands
+All of these are required:
 
-Use `ROUTE=SPOT` then, after restoring full acceptance, `ROUTE=USD_M_PERPETUAL`.
-Before each command, verify every current OPEN has hash-valid frozen/adopted
-rules and that an OPEN exists on the opposite route. Absence means the live
-criterion remains unverified; do not manufacture a position. Run in the same
-shell with REVIEWED_SHA pinned above.
+- Realtime NRestarts delta **0**, unchanged PID; DB-lock lifecycle deaths **0**.
+- Unmanaged OPEN **0** for the complete window, with fresh protective quotes and
+  per-path health. DEGRADED contention must recover on a fresh tick; persistent
+  inability to manage is an acceptance failure even if the process stays alive.
+- Exact SHA, clean process source, process-bound PID/contracts and fresh producer
+  successes. No silent READY based on an old process/cache or heartbeat alone.
+- PAPER_ONLY / real_order_allowed=false continuously; real orders **0**.
+- Every natural new OPEN has actual executed notional **>=100 USDT**, including
+  partial fills. Below-floor fills cancel before cash mutation. Reduce-only dust
+  is exempt. Cash/exposure/risk limits and frozen rules stay enforced.
+- No duplicate fill, cash debit, event or exit under contention/recovery; no
+  second lifecycle authority. Preserve LONG/SHORT recovery, negative-edge veto,
+  three-confirmation thesis invalidation and immediate stop/liquidation.
+- Controlled metadata/helper outage and SQLite contention outcomes are attached.
+  Missing natural scenarios remain explicitly unverified, never fabricated.
 
-```bash
-(
-set -euo pipefail
-cd /home/kursadsalis/AG-Crypto-Analyst-cloud
-test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
-case "$ROUTE" in
-  SPOT) CACHE_KEY=AGCA_SPOT_EXCHANGE_METADATA_CACHE ;;
-  USD_M_PERPETUAL) CACHE_KEY=AGCA_EXCHANGE_METADATA_CACHE ;;
-  *) exit 2 ;;
-esac
-DROPIN=/run/systemd/system/agca-paper-realtime-worker.service.d/90-agca-hardening-route-canary.conf
-test ! -e "$DROPIN"
-cleanup() {
-  sudo rm -f "$DROPIN"
-  sudo systemctl daemon-reload
-  sudo systemctl restart agca-paper-realtime-worker.service
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-sudo mkdir -p /run/systemd/system/agca-paper-realtime-worker.service.d
-printf '[Service]\nEnvironment=%s=/var/lib/agca/nonexistent-hardening-canary-%s.json\n' "$CACHE_KEY" "$ROUTE" | sudo tee "$DROPIN" >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl restart agca-paper-realtime-worker.service
-export ROUTE REVIEWED_SHA
-.venv/bin/python - <<'PY'
-import json, os, subprocess, time
-from datetime import datetime, timezone
-from pathlib import Path
-unit='agca-paper-realtime-worker.service'
-def state():
-    out=subprocess.check_output(['systemctl','show',unit,'-p','MainPID','-p','NRestarts'],text=True)
-    return dict(line.split('=',1) for line in out.splitlines())
-baseline=state()
-assert int(baseline['MainPID']) > 0
-ready_deadline=time.monotonic()+30
-stable_at=None
-while True:
-    current=state()
-    assert current == baseline, 'PID/restart changed unexpectedly'
-    health=json.loads(Path('/var/lib/agca/paper-realtime-health.json').read_text())
-    source=health.get('process_source',{})
-    age=(datetime.now(timezone.utc)-datetime.fromisoformat(health['at'])).total_seconds()
-    ready=(source.get('git_sha') == os.environ['REVIEWED_SHA'] and source.get('git_dirty') is False
-           and source.get('pid') == int(baseline['MainPID']) and 0 <= age <= 15
-           and health.get('execution_mode') == 'PAPER_ONLY' and health.get('real_order_allowed') is False
-           and health.get('ENTRY_PATH',{}).get('unavailable_routes') == [os.environ['ROUTE']]
-           and health.get('OPEN_POSITION_MANAGEMENT',{}).get('status') == 'READY')
-    if not ready:
-        assert stable_at is None and time.monotonic() < ready_deadline, 'Route-isolation health failed'
-    elif stable_at is None:
-        stable_at=time.monotonic()
-    elif time.monotonic()-stable_at >= 60:
-        print(json.dumps({'route':os.environ['ROUTE'],'result':'ISOLATED_60_SECONDS','identity':current}))
-        break
-    time.sleep(5)
-PY
-)
-.venv/bin/python -m scripts.runtime_acceptance runtime --expected-sha "$REVIEWED_SHA"
-```
+## Rollback and merge gate
 
-## Rollback and verdict
+On failure, retain health/log evidence, remove only canary-owned overrides and
+restore the recorded source/unit/timer configuration. Do not restore old DB
+history or delete sidecars. Start producers sequentially with current-process
+readiness before the sole realtime consumer. Verify the rollback can protect
+existing obligations; otherwise keep the proven protective authority and block
+new entries rather than claiming safety from a checkout alone.
 
-1. Remove only canary-owned runtime drop-ins; restore the previously captured
-   unit files/overrides and timer enablement. Do not delete new history/events.
-2. Verify both fresh metadata routes before starting legacy code, which may lack
-   frozen-rule fallback. Switch checkout to recorded ROLLBACK_SHA, daemon-reload,
-   restart behavior/technical/observer/trade support and then the sole realtime
-   worker. Regenerate the old producer's cache with its own worker; never edit
-   cache version fields by hand. Do not run the old self-updating installer.
-3. Confirm previous intended process source, clean checkout, stable PID/no restart
-   increase, fresh per-OPEN quotes, valid active manager and PAPER_ONLY. If the
-   previous code cannot manage current obligations, stop new entries and keep
-   the proven protective manager; do not declare rollback safe from Git alone.
-
-Record exact head, start/end times in Istanbul plus UTC, per-service evidence,
-route fault outcomes, actual fills/cancels, unresolved criteria and rollback
-result. Software CI passing means code is reviewable; operational merge approval
-requires these acceptance results. Economic performance requires subsequent
-natural forward trades across market regimes and net-after-cost analysis.
+Record exact head, start/end times, full 24-hour evidence, restart/PID deltas,
+unmanaged counts, contention recovery, fault outcomes and any unobserved criteria.
+**Starting** a soak is not acceptance. #104 stays open/unmerged until the complete
+24-hour soak and re-canary criteria pass and a separate merge authorization is
+given. #103 remains superseded. Software tests establish a reviewable source
+candidate; they do not establish runtime reliability or profitability.

@@ -14,6 +14,7 @@ import os
 import sqlite3
 import time
 import requests
+from database.sqlite_policy import CoordinatedConnection
 from database.runtime_store import connect as runtime_connect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -102,7 +103,7 @@ def immediate_paper_entry_time(decision_time):
 def connect():
     con = runtime_connect(DB_NAME, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=30000")
+    con.execute("PRAGMA busy_timeout=250")
     return con
 
 
@@ -1739,18 +1740,18 @@ def _confirm_remote_report_delivery(con, report_date):
         # mirror has acknowledged the report row. Bypass RuntimeConnection's
         # mirroring hook so this local acknowledgement cannot recursively
         # create another remote delivery attempt.
-        sqlite3.Connection.execute(con, """
+        CoordinatedConnection.execute(con, """
             UPDATE paper_agent_daily_reports SET delivery_complete=1
             WHERE report_date=?
         """, (report_date,))
-        sqlite3.Connection.commit(con)
+        CoordinatedConnection.commit(con)
         return True
     # The local delivery flag must never claim success when the remote write failed.
-    sqlite3.Connection.execute(con, """
+    CoordinatedConnection.execute(con, """
         UPDATE paper_agent_daily_reports SET remote_mirror_status='PENDING',
             remote_mirrored_at=NULL WHERE report_date=?
     """, (report_date,))
-    sqlite3.Connection.commit(con)
+    CoordinatedConnection.commit(con)
     return False
 
 
@@ -1947,7 +1948,7 @@ if __name__ == "__main__":
     main()
 
 
-def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, market_snapshots=None):
+def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, market_snapshots=None, commit=True):
     """Fill pending PAPER entries only from the authoritative live state callback."""
     rows = con.execute("""
         SELECT position_id,symbol,planned_entry_time,notional,direction,leverage,
@@ -2029,9 +2030,9 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, mark
                     con, plan, now=now
                 )
             except sqlite3.Error:
-                # Local cache contention/unavailability is not permission to use
-                # a stale plan. Keep the intent pending and retry on a later tick.
-                continue
+                # The lifecycle boundary must roll back and classify SQLite
+                # failures; corruption/schema errors are not missing evidence.
+                raise
 
             if replan_reason is not None:
                 if replan_reason in {
@@ -2048,7 +2049,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, mark
                     replanned = technical_trade_plan.rebuild_for_pending(
                         con, plan, now=now, market_type=market_type
                     )
-                except (ValueError, sqlite3.Error):
+                except ValueError:
                     # Fail closed without destroying a bounded pending intent:
                     # fresh canonical local evidence may become available before
                     # the normal pending-entry expiry.
@@ -2212,7 +2213,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, mark
             entry_price=entry_price, direction=direction, leverage=float(leverage),
             maintenance_margin_rate=maintenance_rate,
         ) if market_type == "USD_M_PERPETUAL" else None
-        con.execute("""UPDATE paper_agent_positions SET
+        updated = con.execute("""UPDATE paper_agent_positions SET
             status='OPEN',entry_time=?,entry_price=?,quantity=?,notional=?,entry_fee=?,
             market_type=?,entry_spread_cost=?,entry_slippage_cost=?,partial_fill=?,
             liquidation_price=?,margin_allocated=?
@@ -2221,6 +2222,10 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, mark
             market_type, fill.spread_cost, fill.slippage_cost, int(fill.partial),
             liquidation_threshold, margin, position_id,
         ))
+        if updated.rowcount != 1:
+            # Another guarded lifecycle transaction already consumed the intent.
+            # Never debit cash or record a second fill from our earlier read.
+            continue
         con.execute("""UPDATE paper_agent_portfolio
             SET cash=cash-?,total_fees=total_fees+? WHERE portfolio_id=1""",
             (margin + fee, fee))
@@ -2228,6 +2233,7 @@ def fill_pending_from_live_state(con, now, live, exchange_metadata=None, *, mark
                          ExecutionDecision("FILLED", "LIVE_EXECUTABLE_FILL", fill=fill),
                          frozen_rules=frozen_rules)
         filled += 1
-    con.commit()
+    if commit:
+        con.commit()
     return filled, cancelled
 

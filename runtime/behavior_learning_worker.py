@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from database.sqlite_policy import connect_local, is_sqlite_busy
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from runtime.process_identity import WorkerHealthState
+from runtime.worker_progress import WorkProgress
 
 from database.behavior_event_outcome_store import (
     ensure_outcome_table,
@@ -50,13 +52,13 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
-def write_health(payload):
+def write_health(payload, *, success=None):
     payload = _HEALTH_STATE.decorate({
         **payload,
         "core_version": core.VERSION,
         "producer_version": core.PATTERN_CACHE_PRODUCER_VERSION,
         "cache_contract_version": core.PATTERN_CACHE_CONTRACT_VERSION,
-    })
+    }, success=success)
     HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -78,16 +80,32 @@ def write_health(payload):
 
 
 def _database_locked(exc):
-    return (
-        isinstance(exc, sqlite3.OperationalError)
-        and "database is locked" in str(exc).lower()
-    )
+    return is_sqlite_busy(exc)
+
+
+def refresh_status():
+    last = _HEALTH_STATE.last_success_at
+    if last and 0 <= (utcnow() - datetime.fromisoformat(last)).total_seconds() <= 360:
+        return "HEALTHY"
+    return "RUNNING"
+
+
+def report_progress(progress):
+    write_health({"health_contract_version": HEALTH_CONTRACT_VERSION,
+                  "status": refresh_status(), "phase": progress["phase"],
+                  "progress": progress, "at": utcnow().isoformat(),
+                  "execution_mode": "PAPER_ONLY", "may_send_real_orders": False}, success=False)
+
+
+_PROGRESS_ENABLED = False
+_PROGRESS = WorkProgress(lambda progress: report_progress(progress) if _PROGRESS_ENABLED else None)
 
 
 def local_connection():
     """Open a local-only connection without remote-mirror trigger setup."""
-    con = sqlite3.connect(DB_PATH, timeout=5)
-    con.execute("PRAGMA busy_timeout=5000")
+    con = connect_local(DB_PATH, timeout=0.25)
+    con.execute("PRAGMA busy_timeout=250")
+    _PROGRESS.attach(con)
     return con
 
 
@@ -101,15 +119,19 @@ def run_cycle_once():
         ensure_outcome_table(con)
         core.ensure_tables(con)
         con.commit()
+        _PROGRESS.advance("SCHEMA_READY")
 
         queued_outcomes = settle_queued_outcomes(
             con, limit=OUTCOME_QUEUE_LIMIT
         )
+        _PROGRESS.advance("OUTCOME_QUEUE_SETTLED")
         result = core.refresh_pattern_cache(
             con,
             now=generated_at,
             missed_limit=MISSED_SETTLEMENT_LIMIT,
+            progress=_PROGRESS.step,
         )
+        _PROGRESS.advance("PATTERN_CACHE_COMMITTED")
         awaiting = con.execute(
             """SELECT COUNT(*) FROM paper_behavior_missed_opportunities
                WHERE review_status='AWAITING_OUTCOME'"""
@@ -145,17 +167,17 @@ def run_cycle(attempts=6):
     raise RuntimeError("unreachable behavior-learning retry state")
 
 
-def main():
+def _main():
     if os.getenv("AGCA_EXECUTION_MODE", "PAPER_ONLY") != "PAPER_ONLY":
         raise SystemExit("Safety gate: behavior learning accepts PAPER_ONLY exclusively")
 
     while True:
         write_health({
             "health_contract_version": HEALTH_CONTRACT_VERSION,
-            "status": "RUNNING", "phase": "LEARNING_CYCLE",
+            "status": refresh_status(), "phase": "LEARNING_CYCLE",
             "at": utcnow().isoformat(), "execution_mode": "PAPER_ONLY",
             "may_send_real_orders": False, "database_path": DB_PATH,
-        })
+        }, success=False)
         try:
             result = run_cycle()
             write_health({
@@ -177,10 +199,21 @@ def main():
                 "may_send_real_orders": False,
                 "database_path": DB_PATH,
                 "error_type": type(exc).__name__,
+                "fatal_error": isinstance(exc, sqlite3.DatabaseError) and not is_sqlite_busy(exc),
+                "sqlite_busy": is_sqlite_busy(exc),
                 "error": str(exc)[:500],
             })
             delay = RETRY_SECONDS
         time.sleep(delay)
+
+
+def main():
+    global _PROGRESS_ENABLED
+    _PROGRESS_ENABLED = True
+    try:
+        return _main()
+    finally:
+        _PROGRESS_ENABLED = False
 
 
 if __name__ == "__main__":

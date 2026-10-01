@@ -311,6 +311,7 @@ def review_available_closed_contexts(con, now=None):
             json.dumps(assessment, sort_keys=True), digest,
         ))
         inserted += 1
+        con.commit()
     con.commit()
     totals = dict(con.execute("""
         SELECT outcome_class,COUNT(*) FROM external_trader_rationale_reviews

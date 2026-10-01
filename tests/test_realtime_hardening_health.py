@@ -33,9 +33,9 @@ class RealtimeHardeningHealthTests(unittest.TestCase):
         con.commit()
         with worker.isolate_entry_failure(con) as result:
             con.execute("INSERT INTO entry_attempt VALUES(1)")
-            raise sqlite3.OperationalError("entry risk cache missing")
+            raise ValueError("entry risk cache missing")
         self.assertEqual(con.execute("SELECT COUNT(*) FROM entry_attempt").fetchone()[0],0)
-        self.assertEqual(result['error'],'OperationalError')
+        self.assertEqual(result['error'],'ValueError')
         self.assertIn('entry risk cache missing',result['error_detail'])
         # Connection and control flow are usable by the following manager stage.
         con.execute("INSERT INTO entry_attempt VALUES(2)")

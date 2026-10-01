@@ -61,6 +61,7 @@ class RuntimeStoreTests(unittest.TestCase):
                                 con, {"agent_run_state"}
                             )
         self.assertTrue(result.succeeded_for("agent_run_state"))
+        self.assertFalse(con.in_transaction, "failed acknowledgement must not retain writer ownership")
         self.assertIsNone(result.error_type)
         con.close()
 

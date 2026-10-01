@@ -49,10 +49,10 @@ class WorkerHealthState:
         self.last_error_at = None
         self.last_error = None
 
-    def decorate(self, payload):
+    def decorate(self, payload, *, success=None):
         payload = dict(payload)
         stamp = payload.setdefault("at", datetime.now(timezone.utc).isoformat())
-        if payload.get("status") in {"HEALTHY", "CONNECTED"}:
+        if success is True or (success is None and payload.get("status") in {"HEALTHY", "CONNECTED"}):
             self.last_success_at = stamp
         elif payload.get("status") in {"DEGRADED", "ERROR", "STARTUP_FAILED"}:
             self.last_error_at = stamp
