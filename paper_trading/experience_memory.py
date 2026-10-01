@@ -53,8 +53,8 @@ def ensure_tables(con):
             net_pnl REAL NOT NULL,
             net_return_pct REAL NOT NULL,
             review_json TEXT NOT NULL,
-            economics_final INTEGER NOT NULL DEFAULT 0,
-            funding_pending INTEGER NOT NULL DEFAULT 0,
+            economics_final INTEGER,
+            funding_pending INTEGER,
             causal_claim INTEGER NOT NULL DEFAULT 0,
             skill_proven INTEGER NOT NULL DEFAULT 0,
             policy_mutation_allowed INTEGER NOT NULL DEFAULT 0
@@ -71,46 +71,30 @@ def ensure_tables(con):
         );
     """)
 
-    # Keep funding re-reviews queryable without reparsing every historical
-    # review_json on each learning cycle. Existing rows are backfilled once.
+    # Funding re-reviews must not parse every historical review_json on worker
+    # startup. Legacy rows are classified incrementally in tiny primary-key
+    # batches by review_closed_positions().
     review_columns = {row[1] for row in con.execute(
         "PRAGMA table_info(paper_agent_experience_reviews)"
     )}
-    needs_backfill = False
     if "economics_final" not in review_columns:
         con.execute("""ALTER TABLE paper_agent_experience_reviews
-            ADD COLUMN economics_final INTEGER NOT NULL DEFAULT 0""")
-        needs_backfill = True
+            ADD COLUMN economics_final INTEGER""")
     if "funding_pending" not in review_columns:
         con.execute("""ALTER TABLE paper_agent_experience_reviews
-            ADD COLUMN funding_pending INTEGER NOT NULL DEFAULT 0""")
-        needs_backfill = True
-    if needs_backfill:
-        con.execute("""
-            UPDATE paper_agent_experience_reviews
-            SET economics_final=CASE
-                    WHEN json_valid(review_json)
-                    THEN COALESCE(
-                        json_extract(
-                            review_json,
-                            '$.evidence_assessment.economics_final'
-                        ), 0
-                    )
-                    ELSE 0
-                END,
-                funding_pending=CASE
-                    WHEN json_valid(review_json)
-                     AND json_extract(
-                         review_json,
-                         '$.evidence_assessment.limitations'
-                     ) LIKE '%FUNDING_PENDING%'
-                    THEN 1 ELSE 0
-                END
-        """)
-    con.execute("""
+            ADD COLUMN funding_pending INTEGER""")
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS paper_agent_experience_review_migration (
+            singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
+            last_position_id INTEGER NOT NULL DEFAULT 0,
+            complete INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO paper_agent_experience_review_migration(
+            singleton_id,last_position_id,complete
+        ) VALUES(1,0,0);
         CREATE INDEX IF NOT EXISTS idx_paper_experience_review_recheck
         ON paper_agent_experience_reviews(position_id)
-        WHERE funding_pending=1 AND economics_final=0
+        WHERE funding_pending=1 AND economics_final=0;
     """)
 
 
@@ -210,9 +194,64 @@ def capture_decision_thesis(con, *, position_id, row, agent_version,
     return digest
 
 
+def _migrate_review_flags_batch(con, limit=16):
+    """Classify a bounded slice of legacy reviews without a startup scan."""
+    state = con.execute("""
+        SELECT last_position_id,complete
+        FROM paper_agent_experience_review_migration
+        WHERE singleton_id=1
+    """).fetchone()
+    if not state or int(state[1]):
+        return 0
+    last_position_id = int(state[0])
+    rows = con.execute("""
+        SELECT position_id,review_json
+        FROM paper_agent_experience_reviews
+        WHERE position_id>?
+        ORDER BY position_id
+        LIMIT ?
+    """, (last_position_id, int(limit))).fetchall()
+    if not rows:
+        con.execute("""
+            UPDATE paper_agent_experience_review_migration
+            SET complete=1 WHERE singleton_id=1
+        """)
+        con.commit()
+        return 0
+    updates = []
+    for position_id, raw in rows:
+        try:
+            payload = json.loads(raw or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        evidence = payload.get("evidence_assessment") or {}
+        limitations = evidence.get("limitations") or []
+        updates.append((
+            int(bool(evidence.get("economics_final"))),
+            int("FUNDING_PENDING" in limitations),
+            int(position_id),
+        ))
+    con.executemany("""
+        UPDATE paper_agent_experience_reviews
+        SET economics_final=?,funding_pending=?
+        WHERE position_id=?
+    """, updates)
+    con.execute("""
+        UPDATE paper_agent_experience_review_migration
+        SET last_position_id=?,complete=?
+        WHERE singleton_id=1
+    """, (
+        int(rows[-1][0]),
+        int(len(rows) < int(limit)),
+    ))
+    con.commit()
+    return len(rows)
+
+
 def review_closed_positions(con, now=None):
     """Review every closed forward experience; evidence quality controls authority."""
     now = now or datetime.now(timezone.utc)
+    _migrate_review_flags_batch(con)
     position_columns = {r[1] for r in con.execute("PRAGMA table_info(paper_agent_positions)")}
     manager_exists = bool(con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_position_management'"
