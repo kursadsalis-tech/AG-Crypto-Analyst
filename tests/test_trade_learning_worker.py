@@ -138,6 +138,7 @@ class TradeLearningWorkerTests(unittest.TestCase):
         self.assertIn("external_trader_learning.ensure_tables(con)", block)
         self.assertIn("strategy_allocator.ensure_tables(con)", block)
         self.assertIn("refresh_external=refresh_external,\n            ensure=False", block)
+        self.assertIn("progress=_PROGRESS.advance", block)
         self.assertIn("con, stamp, ensure=False", block)
 
     def test_cycle_does_not_hide_non_lock_error(self):
