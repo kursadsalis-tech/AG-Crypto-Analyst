@@ -66,6 +66,33 @@ def ensure_tables(con):
         );
     """)
 
+    # Learning reads only the clean forward CLOSED cohort.  Keep this index
+    # deliberately partial so legacy/ineligible rows never bloat the hot
+    # learning path, and preserve chronological order without a temp B-tree.
+    if con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='paper_agent_positions'"
+    ).fetchone():
+        con.execute("""
+            CREATE INDEX IF NOT EXISTS idx_paper_positions_learning_closed
+            ON paper_agent_positions(validation_cohort,exit_time,position_id)
+            WHERE evidence_eligible=1
+              AND status='CLOSED'
+              AND net_pnl IS NOT NULL
+        """)
+
+    # Each evidence gate asks for a specific event type for one position.
+    # The legacy position,event_id index forces extra event-row reads before
+    # event_type can be rejected; keep that lookup fully keyed.
+    if con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='paper_position_events'"
+    ).fetchone():
+        con.execute("""
+            CREATE INDEX IF NOT EXISTS idx_paper_position_events_learning
+            ON paper_position_events(position_id,event_type)
+        """)
+
 
 def _execution_evidence_clause():
     # This gate is deliberately for validated performance/promotion metrics,
