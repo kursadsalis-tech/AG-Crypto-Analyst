@@ -1,7 +1,11 @@
 import math
+import os
 import sqlite3
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 from analysis import realtime_technical_context as rtc
 from analysis import technical_trade_plan as plan
@@ -97,6 +101,34 @@ class AdaptiveTechnicalTradePlanTests(unittest.TestCase):
                 plan.build_for_candidate(self.con, candidate(), now=NOW, market_type="USD_M_PERPETUAL")
         self.assertEqual(reader.call_count, 1)
         self.assertEqual(reader.call_args.kwargs["limit"], plan.MIN_ONE_MINUTE_BARS)
+
+    def test_plan_reads_dedicated_technical_cache_when_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            technical_path = Path(tmp) / "technical.db"
+            with sqlite3.connect(technical_path) as technical:
+                store.ensure_table(technical)
+                store.upsert_bars(technical, minute_bars())
+                technical.commit()
+
+            self.con.execute("DELETE FROM technical_minute_bars")
+            self.con.commit()
+
+            with patch.dict(
+                os.environ,
+                {"AGCA_TECHNICAL_DATABASE_PATH": str(technical_path)},
+            ):
+                result = plan.build_for_candidate(
+                    self.con,
+                    candidate(),
+                    now=NOW,
+                    market_type="USD_M_PERPETUAL",
+                )
+
+        self.assertEqual(result["symbol"], "BTCUSDT")
+        self.assertEqual(
+            result["data_cutoff_ms"],
+            int((NOW - timedelta(minutes=1)).timestamp() * 1000) + 59_999,
+        )
 
     def test_plan_is_network_free_adaptive_and_structural(self):
         result = plan.build_for_candidate(
