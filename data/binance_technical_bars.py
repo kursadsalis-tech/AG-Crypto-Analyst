@@ -173,7 +173,7 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
     published archive never changes trading authority; that symbol simply
     remains without an authoritative technical plan.
     """
-    from database.runtime_store import connect
+    from database.sqlite_policy import connect_local
     from database.technical_bar_store import (
         ensure_table, persist_bars, symbols_needing_bootstrap,
     )
@@ -183,7 +183,7 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
     technical_path = os.getenv(
         "AGCA_TECHNICAL_DATABASE_PATH", database_path
     )
-    with connect(technical_path, timeout=30) as con:
+    with connect_local(technical_path, timeout=30) as con:
         con.execute("PRAGMA busy_timeout=30000")
         ensure_table(con)
         needed = symbols_needing_bootstrap(
