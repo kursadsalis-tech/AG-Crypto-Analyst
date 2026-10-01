@@ -171,6 +171,7 @@ def run_cycle_once(*, initialize=True, refresh_external=True):
             stamp,
             refresh_external=refresh_external,
             ensure=False,
+            progress=_PROGRESS.advance,
         )
         _PROGRESS.advance("TRADE_LEARNING_COMMITTED")
         allocations = strategy_allocator.rebalance(
