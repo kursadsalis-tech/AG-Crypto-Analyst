@@ -212,6 +212,65 @@ class TechnicalBarCacheTests(unittest.TestCase):
             self.assertFalse(result["historical_counts_computed"])
             self.assertIn("max_write_transaction", result["timings_ms"])
 
+    def test_live_flush_never_runs_retention_delete(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            statements = []
+            original = connect_local
+
+            def traced_connect(*args, **kwargs):
+                con = original(*args, **kwargs)
+                con.set_trace_callback(statements.append)
+                return con
+
+            with mock.patch(
+                "database.technical_bar_store.connect_local",
+                side_effect=traced_connect,
+            ):
+                result = store.persist_bars(
+                    path, [bar()], now_ms=NOW, include_counts=False
+                )
+
+            self.assertEqual(result["upserted"], 1)
+            self.assertEqual(result["pruned"], 0)
+            self.assertFalse(any(
+                statement.lstrip().upper().startswith("DELETE FROM TECHNICAL_MINUTE_BARS")
+                for statement in statements
+            ))
+
+    def test_retention_prune_uses_tiny_committed_batches(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "technical.db"
+            store.bootstrap_schema(path)
+            expired = [
+                bar(symbol=f"OLD{i}USDT", opened=NOW - 4 * 86_400_000 - i * 60_000)
+                for i in range(9)
+            ]
+            with sqlite3.connect(path) as con:
+                store.upsert_bars(con, expired)
+                con.commit()
+
+            with mock.patch.object(store.time, "sleep") as sleeper:
+                result = store.prune_expired(
+                    path, now_ms=NOW, retention_days=3,
+                    limit=9, batch_size=4,
+                )
+
+            self.assertEqual(result["pruned"], 9)
+            self.assertEqual(result["batches"], 3)
+            self.assertEqual(result["batch_size"], 4)
+            self.assertEqual(sleeper.call_count, 2)
+            with sqlite3.connect(path) as con:
+                self.assertEqual(
+                    con.execute(
+                        f"SELECT COUNT(*) FROM {store.TABLE}"
+                    ).fetchone()[0],
+                    0,
+                )
+
     def test_partial_flush_retry_is_idempotent(self):
         from unittest import mock
         with tempfile.TemporaryDirectory() as tmp:
