@@ -138,6 +138,29 @@ class TradeLearningTests(unittest.TestCase):
         self.assertEqual(review["status"], "NO_TECHNICAL_SHADOW_EVIDENCE")
         self.assertEqual(review["overall"]["trades"], 0)
 
+    def test_run_reports_subphase_progress_without_changing_authority(self):
+        phases = []
+        result = trade_learning.run(
+            self.con,
+            "CLEAN",
+            refresh_external=False,
+            progress=phases.append,
+        )
+        self.assertEqual(result["status"], "COLLECTING_EVIDENCE")
+        self.assertEqual(
+            phases,
+            [
+                "LEARNING_LOAD_CLOSED_START",
+                "LEARNING_ROWS_LOADED",
+                "LEARNING_TECHNICAL_SHADOW_START",
+                "LEARNING_TECHNICAL_SHADOW_DONE",
+                "LEARNING_REVIEW_COMMITTED",
+                "LEARNING_CHALLENGER_START",
+                "LEARNING_CHALLENGER_DONE",
+            ],
+        )
+        self.assertFalse(result["promotion_allowed"])
+
     def test_zero_clean_closed_is_collecting(self):
         result = trade_learning.run(self.con, "CLEAN")
         self.assertEqual(result["status"], "COLLECTING_EVIDENCE")
