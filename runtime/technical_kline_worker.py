@@ -28,7 +28,7 @@ from database.sqlite_policy import is_sqlite_busy
 from data.binance_live_evidence import MARKET_RAW_BASE, fetch_market_tickers
 from data.binance_market_universe import build_universe
 from data.binance_technical_bars import normalize_closed_1m_kline
-from database.technical_bar_store import bootstrap_schema, persist_bars
+from database.technical_bar_store import bootstrap_schema, persist_bars, prune_expired
 from database import broad_market_store
 
 
@@ -49,6 +49,9 @@ OPEN_TIMEOUT_SECONDS = float(os.getenv(
 FLUSH_GRACE_MS = 1_500
 SUBSCRIPTION_REFRESH_SECONDS = 1.0
 SUBSCRIPTION_CHUNK = 100
+RETENTION_PRUNE_SECONDS = max(
+    60.0, float(os.getenv("AGCA_TECHNICAL_RETENTION_PRUNE_SECONDS", "300"))
+)
 UNIVERSE_RETENTION_SECONDS = float(os.getenv(
     "AGCA_TECHNICAL_UNIVERSE_RETENTION_SECONDS", "3600"
 ))
@@ -340,6 +343,51 @@ async def persist_pending(
             _PROGRESS.advance("CLOSED_BARS_PERSISTED")
 
 
+async def retention_prune_loop(
+    state: UniverseState, stop_event: asyncio.Event,
+):
+    """Keep retention maintenance out of the closed-minute persistence path."""
+    try:
+        await asyncio.wait_for(
+            stop_event.wait(), timeout=RETENTION_PRUNE_SECONDS
+        )
+        return
+    except asyncio.TimeoutError:
+        pass
+
+    while not stop_event.is_set():
+        started = time.monotonic()
+        try:
+            result = await asyncio.to_thread(prune_expired, DB_PATH)
+            write_health(
+                "CONNECTED",
+                subscribed_symbol_count=len(state.symbols),
+                last_retention_pruned=int(result["pruned"]),
+                retention_prune_batches=int(result["batches"]),
+                retention_prune_duration_ms=round(
+                    (time.monotonic() - started) * 1000.0, 3
+                ),
+                retention_prune_timings_ms=result.get("timings_ms", {}),
+            )
+        except Exception as exc:
+            busy = isinstance(exc, sqlite3.Error) and is_sqlite_busy(exc)
+            write_health(
+                "DEGRADED",
+                error=f"RETENTION_PRUNE_{type(exc).__name__}",
+                error_detail=str(exc)[:400],
+                fatal_error=isinstance(exc, sqlite3.Error) and not busy,
+                subscribed_symbol_count=len(state.symbols),
+            )
+            if isinstance(exc, sqlite3.Error) and not busy:
+                raise
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=RETENTION_PRUNE_SECONDS
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 async def kline_stream(state: UniverseState, stop_event: asyncio.Event):
     context = ssl.create_default_context(cafile=certifi.where())
     pending: dict[tuple[str, int], dict] = {}
@@ -508,6 +556,7 @@ async def run():
         await asyncio.gather(
             refresh_universe(state, stop_event),
             kline_stream(state, stop_event),
+            retention_prune_loop(state, stop_event),
         )
     except Exception as exc:
         write_health("ERROR", error=f"{type(exc).__name__}: {str(exc)[:400]}",
