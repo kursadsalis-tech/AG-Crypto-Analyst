@@ -21,7 +21,16 @@ from runtime.process_identity import WorkerHealthState
 from runtime.worker_progress import WorkProgress
 
 from paper_trading.crypto_profit_agent import DB_NAME, FORWARD_COHORT, ensure_tables
-from paper_trading import experience_memory, position_management, strategy_allocator, trade_learning
+from paper_trading import (
+    continuous_improvement,
+    controlled_challenger,
+    experience_memory,
+    external_trader_learning,
+    external_trader_rationale,
+    position_management,
+    strategy_allocator,
+    trade_learning,
+)
 
 
 HEALTH_PATH = Path(os.getenv(
@@ -145,15 +154,28 @@ def run_cycle_once(*, initialize=True, refresh_external=True):
             ensure_tables(con)
             position_management.ensure_tables(con)
             experience_memory.ensure_tables(con)
+            trade_learning.ensure_tables(con)
+            controlled_challenger.ensure_tables(con)
+            external_trader_learning.ensure_tables(con)
+            external_trader_rationale.ensure_tables(con)
+            continuous_improvement.ensure_tables(con)
+            strategy_allocator.ensure_tables(con)
             con.commit()
 
         _PROGRESS.advance("INPUTS_READY")
         reviews = experience_memory.review_closed_positions(con, stamp)
         _PROGRESS.advance("EXPERIENCE_REVIEWED")
-        learning = trade_learning.run(con, FORWARD_COHORT, stamp,
-                                      refresh_external=refresh_external)
+        learning = trade_learning.run(
+            con,
+            FORWARD_COHORT,
+            stamp,
+            refresh_external=refresh_external,
+            ensure=False,
+        )
         _PROGRESS.advance("TRADE_LEARNING_COMMITTED")
-        allocations = strategy_allocator.rebalance(con, stamp)
+        allocations = strategy_allocator.rebalance(
+            con, stamp, ensure=False
+        )
         con.commit()
     finally:
         con.close()
