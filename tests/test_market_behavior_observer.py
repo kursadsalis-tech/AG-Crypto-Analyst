@@ -27,6 +27,51 @@ class MarketBehaviorObserverTests(unittest.TestCase):
             with open(lock, "w") as handle:
                 observer.fcntl.flock(handle, observer.fcntl.LOCK_EX | observer.fcntl.LOCK_NB)
 
+    def test_continuous_stale_broad_radar_is_recoverable_without_process_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            health_path = Path(tmp) / "health.json"
+            args = SimpleNamespace(
+                cycle_timeout_seconds=240,
+                health_output=str(health_path),
+                continuous=True,
+            )
+            with patch.object(
+                observer, "run_cycle",
+                side_effect=ValueError("broad radar missing, future or stale"),
+            ), patch.object(
+                observer.signal, "signal", return_value="previous"
+            ), patch.object(observer.signal, "alarm"):
+                self.assertIsNone(observer.run_bounded_cycle(args))
+            health = json.loads(health_path.read_text())
+            self.assertEqual(health["status"], "DEGRADED")
+            self.assertFalse(health["fatal_error"])
+            self.assertIn("broad radar missing, future or stale", health["error"])
+
+    def test_one_shot_stale_broad_radar_remains_fatal(self):
+        args = SimpleNamespace(
+            cycle_timeout_seconds=240,
+            health_output=None,
+            continuous=False,
+        )
+        with patch.object(
+            observer, "run_cycle",
+            side_effect=ValueError("broad radar missing, future or stale"),
+        ), patch.object(
+            observer.signal, "signal", return_value="previous"
+        ), patch.object(observer.signal, "alarm"):
+            with self.assertRaisesRegex(ValueError, "broad radar missing"):
+                observer.run_bounded_cycle(args)
+
+    def test_continuous_recoverable_cycle_uses_bounded_backoff(self):
+        argv = ["observer", "--output", "/unused", "--continuous"]
+        with patch.object(observer.sys, "argv", argv), patch.object(
+            observer, "run_bounded_cycle",
+            side_effect=[None, RuntimeError("stop")],
+        ), patch.object(observer.time, "sleep") as sleeper:
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                observer.main()
+        sleeper.assert_called_once_with(observer.TRANSIENT_RETRY_SECONDS)
+
     def test_failed_cycle_cancels_deadline_and_restores_signal_handler(self):
         args = type("Args", (), {"cycle_timeout_seconds": 240})()
         with patch.object(observer.signal, "signal", return_value="previous") as handler, patch.object(observer.signal, "alarm") as alarm, patch.object(observer, "run_cycle", side_effect=RuntimeError("failed")):
