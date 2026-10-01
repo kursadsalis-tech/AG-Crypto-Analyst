@@ -138,6 +138,68 @@ class TradeLearningTests(unittest.TestCase):
         self.assertEqual(review["status"], "NO_TECHNICAL_SHADOW_EVIDENCE")
         self.assertEqual(review["overall"]["trades"], 0)
 
+    def test_learning_query_plan_uses_dedicated_evidence_indexes(self):
+        con = sqlite3.connect(":memory:")
+        try:
+            con.executescript("""
+                CREATE TABLE forecast_engine_predictions(
+                    forecast_id INTEGER PRIMARY KEY, regime TEXT
+                );
+                CREATE TABLE paper_agent_positions(
+                    position_id INTEGER PRIMARY KEY,
+                    forecast_id INTEGER,
+                    symbol TEXT,
+                    horizon_hours INTEGER,
+                    direction TEXT,
+                    exit_time TEXT,
+                    notional REAL,
+                    net_pnl REAL,
+                    status TEXT,
+                    evidence_eligible INTEGER,
+                    validation_cohort TEXT
+                );
+                CREATE TABLE paper_position_events(
+                    event_id INTEGER PRIMARY KEY,
+                    position_id INTEGER,
+                    event_type TEXT,
+                    fill_price REAL,
+                    fill_quantity REAL,
+                    evidence_json TEXT
+                );
+            """)
+            trade_learning.ensure_tables(con)
+            plan = [
+                row[3] for row in con.execute("""
+                    EXPLAIN QUERY PLAN
+                    SELECT p.position_id
+                    FROM paper_agent_positions p
+                    LEFT JOIN forecast_engine_predictions f
+                      ON f.forecast_id=p.forecast_id
+                    WHERE p.status='CLOSED'
+                      AND p.evidence_eligible=1
+                      AND p.validation_cohort=?
+                      AND p.net_pnl IS NOT NULL
+                      AND EXISTS (
+                        SELECT 1 FROM paper_position_events ee
+                        WHERE ee.position_id=p.position_id
+                          AND ee.event_type='ENTRY_FILLED'
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM paper_position_events xe
+                        WHERE xe.position_id=p.position_id
+                          AND xe.event_type='POSITION_CLOSED'
+                      )
+                    ORDER BY p.exit_time,p.position_id
+                """, ("CLEAN",)).fetchall()
+            ]
+        finally:
+            con.close()
+
+        joined = "\n".join(plan)
+        self.assertIn("idx_paper_positions_learning_closed", joined)
+        self.assertIn("idx_paper_position_events_learning", joined)
+        self.assertNotIn("USE TEMP B-TREE FOR ORDER BY", joined)
+
     def test_run_reports_subphase_progress_without_changing_authority(self):
         phases = []
         result = trade_learning.run(
