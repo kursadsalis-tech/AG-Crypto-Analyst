@@ -9,13 +9,14 @@ from database import technical_bar_store as store
 from database.sqlite_policy import connect_local
 
 
-class TechnicalWriterFairnessTests(unittest.TestCase):
-    def test_competing_writer_gets_handoff_within_background_budget(self):
+class TechnicalWriterIsolationTests(unittest.TestCase):
+    def test_slow_technical_writer_cannot_block_canonical_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = str(Path(tmp) / "fairness.db")
-            store.bootstrap_schema(db)
+            technical_db = str(Path(tmp) / "technical.db")
+            canonical_db = str(Path(tmp) / "canonical.db")
+            store.bootstrap_schema(technical_db)
 
-            con = connect_local(db, timeout=0.25)
+            con = connect_local(canonical_db, timeout=0.25)
             con.execute(
                 "CREATE TABLE fairness_probe("
                 "id INTEGER PRIMARY KEY, value INTEGER)"
@@ -47,7 +48,7 @@ class TechnicalWriterFairnessTests(unittest.TestCase):
             writer_entered = threading.Event()
             technical_error = []
 
-            def slow_per_batch(connection, prepared):
+            def slow_batch(connection, prepared):
                 writer_entered.set()
                 time.sleep(0.12 * len(prepared))
                 return original(connection, prepared)
@@ -55,10 +56,10 @@ class TechnicalWriterFairnessTests(unittest.TestCase):
             def run_technical():
                 try:
                     with mock.patch.object(
-                        store, "_upsert_prepared", slow_per_batch
+                        store, "_upsert_prepared", slow_batch
                     ):
                         store.persist_bars(
-                            db,
+                            technical_db,
                             bars,
                             now_ms=now + 600_000,
                             include_counts=False,
@@ -68,26 +69,22 @@ class TechnicalWriterFairnessTests(unittest.TestCase):
 
             thread = threading.Thread(target=run_technical)
             thread.start()
-
             self.assertTrue(writer_entered.wait(timeout=2))
 
-            contender_error = None
-            try:
-                con = connect_local(db, timeout=0.25)
-                con.execute("BEGIN IMMEDIATE")
-                con.execute(
-                    "UPDATE fairness_probe SET value=value+1 WHERE id=1"
-                )
-                con.commit()
-                con.close()
-            except Exception as exc:
-                contender_error = exc
+            started = time.monotonic()
+            con = connect_local(canonical_db, timeout=0.25)
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(
+                "UPDATE fairness_probe SET value=value+1 WHERE id=1"
+            )
+            con.commit()
+            con.close()
+            canonical_ms = (time.monotonic() - started) * 1000.0
 
             thread.join(timeout=5)
-
             self.assertFalse(thread.is_alive())
             self.assertEqual(technical_error, [])
-            self.assertIsNone(contender_error)
+            self.assertLess(canonical_ms, 250.0)
 
 
 if __name__ == "__main__":
