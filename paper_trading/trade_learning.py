@@ -406,12 +406,20 @@ def discover_patterns(groups):
 
 
 def run(
-    con, validation_cohort, now=None, *, refresh_external=True, ensure=True
+    con, validation_cohort, now=None, *, refresh_external=True, ensure=True,
+    progress=None,
 ):
     now = now or datetime.now(timezone.utc)
+
+    def advance(phase):
+        if progress is not None:
+            progress(phase)
+
     if ensure:
         ensure_tables(con)
+    advance("LEARNING_LOAD_CLOSED_START")
     rows = load_closed(con, validation_cohort)
+    advance("LEARNING_ROWS_LOADED")
     groups = grouped_metrics(rows)
     patterns = discover_patterns(groups)
     weeks = len({week_key(row["exit_time"]) for row in rows})
@@ -432,7 +440,7 @@ def run(
             "single_trade_attribution_allowed": False,
             "concentration_must_be_reported": True,
         },
-        "technical_shadow": technical_shadow_review(con, validation_cohort),
+        "technical_shadow": None,
         "policy": {
             "legacy_trades_included": False,
             "single_trade_update": False,
@@ -444,6 +452,11 @@ def run(
             "minimum_pattern_weeks": MIN_PATTERN_WEEKS,
         },
     }
+    advance("LEARNING_TECHNICAL_SHADOW_START")
+    evidence["technical_shadow"] = technical_shadow_review(
+        con, validation_cohort
+    )
+    advance("LEARNING_TECHNICAL_SHADOW_DONE")
     con.execute("""
         INSERT OR IGNORE INTO paper_agent_trade_learning_reviews(
             created_at,learning_version,validation_cohort,closed_count,
@@ -466,20 +479,29 @@ def run(
                   json.dumps(pattern, ensure_ascii=False, sort_keys=True)))
     # Publish prepared learning evidence before the next historical scan.
     con.commit()
+    advance("LEARNING_REVIEW_COMMITTED")
+    advance("LEARNING_CHALLENGER_START")
     challenger = controlled_challenger.run(
         con, validation_cohort, rows, now, ensure=ensure
     )
     con.commit()
+    advance("LEARNING_CHALLENGER_DONE")
     if refresh_external:
+        advance("LEARNING_EXTERNAL_REVIEW_START")
         external_research = external_trader_learning.run_review(
             con, now, ensure=ensure
         )
+        advance("LEARNING_EXTERNAL_REVIEW_DONE")
+        advance("LEARNING_RATIONALE_REVIEW_START")
         external_research["rationale_review"] = (
             external_trader_rationale.review_available_closed_contexts(
                 con, now, ensure=ensure
             )
         )
+        advance("LEARNING_RATIONALE_REVIEW_DONE")
+        advance("LEARNING_CONTINUOUS_IMPROVEMENT_START")
         improvement = continuous_improvement.run(con, now, ensure=ensure)
+        advance("LEARNING_CONTINUOUS_IMPROVEMENT_DONE")
     else:
         # A new own-trade outcome does not change quarantined external inputs.
         external_research = {"status": "UNCHANGED_INPUTS"}
