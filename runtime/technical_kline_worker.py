@@ -33,6 +33,7 @@ from database import broad_market_store
 
 
 DB_PATH = os.getenv("AGCA_DATABASE_PATH", "/var/lib/agca/crypto_data.db")
+TECHNICAL_DB_PATH = os.getenv("AGCA_TECHNICAL_DATABASE_PATH", DB_PATH)
 HEALTH_PATH = Path(os.getenv(
     "AGCA_TECHNICAL_KLINE_HEALTH",
     "/var/lib/agca/technical-kline-health.json",
@@ -298,7 +299,7 @@ async def persist_pending(
         try:
             result = await asyncio.to_thread(
                 persist_bars,
-                DB_PATH,
+                TECHNICAL_DB_PATH,
                 ready,
                 now_ms=now_ms,
                 include_counts=False,
@@ -358,7 +359,7 @@ async def retention_prune_loop(
     while not stop_event.is_set():
         started = time.monotonic()
         try:
-            result = await asyncio.to_thread(prune_expired, DB_PATH)
+            result = await asyncio.to_thread(prune_expired, TECHNICAL_DB_PATH)
             write_health(
                 "CONNECTED",
                 subscribed_symbol_count=len(state.symbols),
@@ -522,7 +523,7 @@ async def run():
     while not stop_event.is_set():
         try:
             if not bar_schema_ready:
-                await asyncio.to_thread(bootstrap_schema, DB_PATH)
+                await asyncio.to_thread(bootstrap_schema, TECHNICAL_DB_PATH)
                 bar_schema_ready = True
                 _PROGRESS.advance("BAR_SCHEMA_READY")
             await asyncio.to_thread(broad_market_store.bootstrap_schema, DB_PATH)
@@ -541,7 +542,7 @@ async def run():
 
     now_ms = int(time.time() * 1000)
     try:
-        seed = await asyncio.to_thread(recent_cached_symbols, DB_PATH, now_ms=now_ms)
+        seed = await asyncio.to_thread(recent_cached_symbols, TECHNICAL_DB_PATH, now_ms=now_ms)
     except sqlite3.Error as exc:
         write_health("STARTUP_FAILED", error=str(exc)[:400], fatal_error=not is_sqlite_busy(exc))
         raise
