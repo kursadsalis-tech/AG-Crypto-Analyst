@@ -60,7 +60,7 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
             / "runtime/technical_kline_worker.py"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "await asyncio.to_thread(bootstrap_schema, DB_PATH)",
+            "await asyncio.to_thread(bootstrap_schema, TECHNICAL_DB_PATH)",
             source,
         )
         self.assertIn("last_persist_duration_ms", source)
@@ -71,12 +71,33 @@ class TechnicalKlineWorkerTests(unittest.TestCase):
             / "runtime/technical_kline_worker.py"
         ).read_text(encoding="utf-8")
         self.assertIn("async def retention_prune_loop(", source)
-        self.assertIn("await asyncio.to_thread(prune_expired, DB_PATH)", source)
+        self.assertIn("await asyncio.to_thread(prune_expired, TECHNICAL_DB_PATH)", source)
         persist_block = source[
             source.index("async def persist_pending("):
             source.index("async def retention_prune_loop(")
         ]
         self.assertNotIn("prune_expired", persist_block)
+
+    def test_services_share_one_dedicated_technical_database(self):
+        root = Path(__file__).resolve().parents[1]
+        expected = (
+            "Environment=AGCA_TECHNICAL_DATABASE_PATH="
+            "/var/lib/agca/technical_data.db"
+        )
+        technical = (
+            root / "deploy/agca-technical-kline-worker.service"
+        ).read_text(encoding="utf-8")
+        realtime = (
+            root / "deploy/agca-paper-realtime-worker.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn(expected, technical)
+        self.assertIn(expected, realtime)
+        self.assertIn(
+            'TECHNICAL_DB_PATH = os.getenv("AGCA_TECHNICAL_DATABASE_PATH", DB_PATH)',
+            (
+                root / "runtime/technical_kline_worker.py"
+            ).read_text(encoding="utf-8"),
+        )
 
     def test_universe_state_rejects_empty_live_refresh(self):
         state = worker.UniverseState(
