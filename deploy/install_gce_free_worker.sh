@@ -188,7 +188,7 @@ sudo systemctl enable agca-behavior-learning-worker.service
 sudo systemctl restart agca-behavior-learning-worker.service
 .venv/bin/python -m scripts.runtime_acceptance cache \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
-  --ready-timeout 120 --max-ready-seconds 1800
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
 
 # Exact closed 1m technical bars have one independent websocket owner.
 sudo systemctl enable agca-technical-kline-worker.service
@@ -196,7 +196,7 @@ sudo systemctl restart agca-technical-kline-worker.service
 .venv/bin/python -m scripts.runtime_acceptance producer \
   --service agca-technical-kline-worker.service \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
-  --ready-timeout 120 --max-ready-seconds 1800
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
 
 # Keep the observer process alive across minute publications.
 sudo systemctl enable agca-market-behavior-observer.service
@@ -204,7 +204,7 @@ sudo systemctl restart agca-market-behavior-observer.service
 .venv/bin/python -m scripts.runtime_acceptance producer \
   --service agca-market-behavior-observer.service \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
-  --ready-timeout 120 --max-ready-seconds 1800
+  --window-seconds 30 --ready-timeout 120 --max-ready-seconds 1800
 
 # Post-trade learning remains a background specialist without order authority.
 sudo systemctl enable agca-trade-learning-worker.service
@@ -212,7 +212,7 @@ sudo systemctl restart agca-trade-learning-worker.service
 .venv/bin/python -m scripts.runtime_acceptance producer \
   --service agca-trade-learning-worker.service \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
-  --ready-timeout 120 --max-ready-seconds 1800
+  --window-seconds 15 --ready-timeout 120 --max-ready-seconds 1800
 
 # Resume scheduled support work only after every producer passed readiness.
 # Start each oneshot synchronously before enabling its timer, avoiding the
@@ -228,7 +228,7 @@ done
   --service agca-behavior-learning-worker.service --service agca-technical-kline-worker.service \
   --service agca-market-behavior-observer.service --service agca-trade-learning-worker.service \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR" \
-  --ready-timeout 120 --max-ready-seconds 1800
+  --window-seconds 30 --ready-timeout 120 --max-ready-seconds 1800
 .venv/bin/python -m scripts.runtime_acceptance metadata \
   --expected-sha "$EXPECTED_SHA" --database-path "$DB" --health-dir "$DATA_DIR"
 
