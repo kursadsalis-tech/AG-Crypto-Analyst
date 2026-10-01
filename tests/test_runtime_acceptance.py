@@ -279,6 +279,26 @@ class RuntimeAcceptanceTests(unittest.TestCase):
             self.run_acceptance(health_reader=previous)
         self.assertEqual(self.clock.elapsed, 20)
 
+    def test_stale_authenticated_progress_is_pending_not_invalid(self):
+        def stale(path):
+            health = self.progressing(path, ready_at=100)
+            health["progress"] = {
+                "phase": "SCAN",
+                "sequence": 7,
+                "at": (NOW - timedelta(minutes=10)).isoformat(),
+            }
+            return health
+
+        with self.assertRaisesRegex(
+            acceptance.AcceptanceError,
+            "RUNTIME_READINESS_TIMEOUT:.*NO_PROGRESS",
+        ):
+            self.run_acceptance(
+                health_reader=stale,
+                max_ready_seconds=100,
+            )
+        self.assertEqual(self.clock.elapsed, 20)
+
     def test_progress_sequence_regression_is_fatal(self):
         def regressed(path):
             health = self.progressing(path)
