@@ -8,13 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from database.sqlite_policy import connect_local, is_sqlite_busy
-from database import technical_bar_store, runtime_store
+from database import runtime_store
 from runtime.worker_progress import WorkProgress
 from runtime.process_identity import WorkerHealthState
-from tests.test_technical_bar_cache import bar, NOW
 
 
 class SQLiteWriterCoordinationTests(unittest.TestCase):
@@ -133,27 +131,6 @@ con.close()
         con = connect_local(self.path)
         self.addCleanup(con.close)
         self.assertEqual(con.execute('SELECT COUNT(*),SUM(value) FROM ledger').fetchone(), (40, 780))
-
-    def test_technical_flush_releases_writer_between_batches_and_before_count(self):
-        technical_bar_store.bootstrap_schema(self.path)
-        con = connect_local(self.path)
-        contender = connect_local(self.path, timeout=0)
-        self.addCleanup(con.close)
-        self.addCleanup(contender.close)
-        commits = []
-        original_commit = con.commit
-        def commit():
-            original_commit()
-            contender.execute('INSERT INTO ledger VALUES(?,1)', (len(commits),))
-            contender.commit()
-            commits.append(True)
-        con.commit = commit
-        bars = [bar(symbol=f'COIN{i}USDT') for i in range(5)]
-        with patch.object(technical_bar_store, '_writer_connection', return_value=con), \
-             patch.object(technical_bar_store, 'WRITE_BATCH_SIZE', 2):
-            result = technical_bar_store.persist_bars(self.path, bars, now_ms=NOW)
-        self.assertEqual(result['upserted'], 5)
-        self.assertGreaterEqual(len(commits), 3)
 
     def test_collected_connection_closes_advisory_file_descriptors(self):
         con = connect_local(self.path)

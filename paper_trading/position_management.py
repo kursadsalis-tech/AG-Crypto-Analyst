@@ -713,6 +713,18 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
             "market_price": float(live.last_price),
         },
     }
+    exit_side = "SELL" if direction == "LONG" else "BUY"
+    market = MarketSnapshot(
+        reference_price=live.last_price,
+        available_quote_volume=(live.ask_quote_volume if exit_side == "BUY" else live.bid_quote_volume),
+        observed_at=iso(observed_at), best_bid=live.best_bid, best_ask=live.best_ask,
+        quote_timestamp_ms=live.quote_timestamp_ms,
+        liquidity_timestamp_ms=live.liquidity_timestamp_ms,
+        market_type=market_type, source=live.quote_source,
+    )
+    # Stale or invalid supplied evidence cannot authorize even fallback quote
+    # acquisition. Validate before network and before any write lock is taken.
+    _, supplied_quote_error = validate_quote(market, exit_side)
     # A cross-venue executable quote is external work. Acquire it before the
     # first SQLite write (including legacy adoption/risk-decision audit events),
     # so a helper delay cannot retain the shared writer lock.
@@ -721,7 +733,7 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
     retry_throttled = (last_exit_attempt_at is not None and
         (market_at - parse(last_exit_attempt_at)).total_seconds() < retry_seconds)
     if (decision.action not in {"HOLD", "UPDATE_STOP"} and not retry_throttled
-            and rules is not None and market_type == "USD_M_PERPETUAL"
+            and not supplied_quote_error and rules is not None and market_type == "USD_M_PERPETUAL"
             and (live.quote_source or "").startswith("OKX_")):
         from paper_trading.execution_market_data import fetch_executable_quote
         try:
@@ -773,15 +785,6 @@ def process_market_state(con, live, observed_at, rules, funding_loader=None):
                     (iso(market_at), position_id))
         con.commit()
         return {"status": "EXIT_RETRY_THROTTLED", "reason": decision.reason}
-    exit_side = "SELL" if direction == "LONG" else "BUY"
-    market = MarketSnapshot(
-        reference_price=live.last_price,
-        available_quote_volume=(live.ask_quote_volume if exit_side == "BUY" else live.bid_quote_volume),
-        observed_at=iso(observed_at), best_bid=live.best_bid, best_ask=live.best_ask,
-        quote_timestamp_ms=live.quote_timestamp_ms,
-        liquidity_timestamp_ms=live.liquidity_timestamp_ms,
-        market_type=market_type, source=live.quote_source,
-    )
     evidence["execution_rules_source"] = rules_source
     reference, quote_reason = validate_quote(market, exit_side)
     evidence.update(quote_evidence(market, exit_side))

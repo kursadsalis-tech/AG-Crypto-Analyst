@@ -20,7 +20,7 @@ class RealtimeHealthMonitorTests(unittest.TestCase):
                 con.execute("CREATE TABLE paper_agent_positions(status TEXT)")
                 con.execute("INSERT INTO paper_agent_positions VALUES('OPEN')")
             statements = []
-            original_connect = sqlite3.connect
+            original_connect = monitor.connect_local
 
             def traced_connect(*args, **kwargs):
                 con = original_connect(*args, **kwargs)
@@ -29,7 +29,7 @@ class RealtimeHealthMonitorTests(unittest.TestCase):
 
             with patch.object(monitor, "DB_PATH", str(db)), \
                  patch.object(monitor, "STATE_PATH", state), \
-                 patch.object(monitor.sqlite3, "connect", side_effect=traced_connect), \
+                 patch.object(monitor, "connect_local", side_effect=traced_connect), \
                  patch.object(monitor, "paper_realtime_health") as health, \
                  contextlib.redirect_stdout(io.StringIO()):
                 health.return_value = {"state": "CURRENT", "status": "CONNECTED"}

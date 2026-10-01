@@ -1,6 +1,7 @@
 import csv
 import io
 import sqlite3
+from database.sqlite_policy import connect_local
 import tempfile
 import threading
 import time
@@ -140,20 +141,16 @@ class TechnicalBarCacheTests(unittest.TestCase):
             path = Path(tmp) / "technical.db"
             store.bootstrap_schema(path)
             statements = []
-            original = sqlite3.connect
-
-            class TracedConnection(sqlite3.Connection):
-                pass
+            original = connect_local
 
             def traced_connect(*args, **kwargs):
-                kwargs["factory"] = TracedConnection
                 con = original(*args, **kwargs)
                 con.set_trace_callback(statements.append)
                 return con
 
             from unittest import mock
             with mock.patch(
-                "database.technical_bar_store.sqlite3.connect",
+                "database.technical_bar_store.connect_local",
                 side_effect=traced_connect,
             ):
                 store.persist_bars(path, [bar()], now_ms=NOW)
@@ -168,7 +165,7 @@ class TechnicalBarCacheTests(unittest.TestCase):
             / "database/technical_bar_store.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn("from database.runtime_store import connect", source)
-        self.assertIn("sqlite3.connect(database_path", source)
+        self.assertIn("connect_local(database_path", source)
 
     def test_retention_index_exists_and_writer_commits_before_count(self):
         with tempfile.TemporaryDirectory() as tmp:
