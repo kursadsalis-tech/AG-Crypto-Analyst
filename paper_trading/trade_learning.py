@@ -405,9 +405,12 @@ def discover_patterns(groups):
     )
 
 
-def run(con, validation_cohort, now=None, *, refresh_external=True):
+def run(
+    con, validation_cohort, now=None, *, refresh_external=True, ensure=True
+):
     now = now or datetime.now(timezone.utc)
-    ensure_tables(con)
+    if ensure:
+        ensure_tables(con)
     rows = load_closed(con, validation_cohort)
     groups = grouped_metrics(rows)
     patterns = discover_patterns(groups)
@@ -464,15 +467,19 @@ def run(con, validation_cohort, now=None, *, refresh_external=True):
     # Publish prepared learning evidence before the next historical scan.
     con.commit()
     challenger = controlled_challenger.run(
-        con, validation_cohort, rows, now
+        con, validation_cohort, rows, now, ensure=ensure
     )
     con.commit()
     if refresh_external:
-        external_research = external_trader_learning.run_review(con, now)
-        external_research["rationale_review"] = (
-            external_trader_rationale.review_available_closed_contexts(con, now)
+        external_research = external_trader_learning.run_review(
+            con, now, ensure=ensure
         )
-        improvement = continuous_improvement.run(con, now)
+        external_research["rationale_review"] = (
+            external_trader_rationale.review_available_closed_contexts(
+                con, now, ensure=ensure
+            )
+        )
+        improvement = continuous_improvement.run(con, now, ensure=ensure)
     else:
         # A new own-trade outcome does not change quarantined external inputs.
         external_research = {"status": "UNCHANGED_INPUTS"}
