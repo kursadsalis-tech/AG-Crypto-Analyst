@@ -122,6 +122,10 @@ def write_health(status: str, *, success=False, **details) -> None:
         "market_data_provider": "BINANCE",
         "transport": "USD_M_WEBSOCKET_KLINE_1M",
         "may_send_real_orders": False,
+        "technical_database_path": TECHNICAL_DB_PATH,
+        "technical_database_isolated": (
+            os.path.abspath(TECHNICAL_DB_PATH) != os.path.abspath(DB_PATH)
+        ),
         "broad_radar_age_ms": radar_age,
         "broad_radar_fresh": radar_fresh,
         "closed_bar_age_ms": bar_age,
