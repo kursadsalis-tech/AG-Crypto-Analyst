@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import math
+import os
 import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -179,7 +180,10 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
 
     now = now or datetime.now(timezone.utc)
     now_ms = int(now.timestamp() * 1000)
-    with connect(database_path, timeout=30) as con:
+    technical_path = os.getenv(
+        "AGCA_TECHNICAL_DATABASE_PATH", database_path
+    )
+    with connect(technical_path, timeout=30) as con:
         con.execute("PRAGMA busy_timeout=30000")
         ensure_table(con)
         needed = symbols_needing_bootstrap(
@@ -215,7 +219,7 @@ def bootstrap_missing(database_path, symbols, *, now=None, max_workers=4):
         for symbol in sorted(fetched):
             prepared.extend(fetched[symbol])
         persisted = persist_bars(
-            database_path, prepared, now_ms=now_ms, retention_days=3
+            technical_path, prepared, now_ms=now_ms, retention_days=3
         )
         inserted = int(persisted["upserted"])
     return {
