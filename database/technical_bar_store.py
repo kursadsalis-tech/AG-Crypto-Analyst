@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 TABLE = "technical_minute_bars"
 DEFAULT_RETENTION_DAYS = 3
 WRITE_BATCH_SIZE = 16
+PRUNE_BATCH_SIZE = 4
+PRUNE_LIMIT = 512
+PRUNE_YIELD_SECONDS = 0.05
 MARKET_TYPE = "USD_M_PERPETUAL"
 PROVIDER = "BINANCE"
 
@@ -174,13 +177,12 @@ def _database_locked(exc):
 
 
 def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_counts=True):
-    cutoff = int(now_ms) - int(retention_days) * 86_400_000
     prepared = [_validated(bar) for bar in bars]
     connection = _writer_connection(database_path)
     try:
         if not _schema_ready(connection):
             raise RuntimeError("technical bar schema unavailable")
-        timings = {"writer_wait": 0.0, "upsert": 0.0, "prune": 0.0,
+        timings = {"writer_wait": 0.0, "upsert": 0.0,
                    "commit": 0.0, "count": 0.0, "max_write_transaction": 0.0}
         inserted = 0
         # Each closed symbol/minute bar is independently immutable evidence.
@@ -203,23 +205,8 @@ def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_c
                 timings["max_write_transaction"], (finished - acquired) * 1000
             )
             if offset + WRITE_BATCH_SIZE < len(prepared):
-                # Give waiting realtime writers an opportunity between batches.
+                # Give waiting realtime/background writers an opportunity.
                 time.sleep(0.01)
-        started = time.monotonic()
-        connection.execute("BEGIN IMMEDIATE")
-        acquired = time.monotonic()
-        timings["writer_wait"] += (acquired - started) * 1000
-        pruned = connection.execute(
-            f"DELETE FROM {TABLE} WHERE rowid IN (SELECT rowid FROM {TABLE} WHERE close_time_ms < ? LIMIT 1000)", (cutoff,)
-        ).rowcount
-        committing = time.monotonic()
-        timings["prune"] = (committing - acquired) * 1000
-        connection.commit()
-        finished = time.monotonic()
-        timings["commit"] += (finished - committing) * 1000
-        timings["max_write_transaction"] = max(
-            timings["max_write_transaction"], (finished - acquired) * 1000
-        )
         started = time.monotonic()
         count = (connection.execute(
             f"SELECT COUNT(*) FROM {TABLE}"
@@ -230,12 +217,76 @@ def _persist_bars_once(database_path, bars, *, now_ms, retention_days, include_c
         connection.close()
     return {
         "upserted": inserted,
-        "pruned": pruned,
+        "pruned": 0,
         "row_count": int(count) if count is not None else None,
         "historical_counts_computed": bool(include_counts),
         "timings_ms": {key: round(value, 3) for key, value in timings.items()},
         "retention_days": int(retention_days),
         "remote_mirror_enabled_for_table": False,
+    }
+
+
+def prune_expired(
+    database_path, *, now_ms=None, retention_days=DEFAULT_RETENTION_DAYS,
+    limit=PRUNE_LIMIT, batch_size=PRUNE_BATCH_SIZE,
+):
+    """Prune retention outside the closed-minute hot path.
+
+    Row ids are discovered without writer admission. Deletes are committed in
+    tiny transactions with an explicit yield between batches so a large cache
+    cannot monopolize the process-wide SQLite writer slot.
+    """
+    now_ms = int(now_ms or datetime.now(timezone.utc).timestamp() * 1000)
+    cutoff = now_ms - int(retention_days) * 86_400_000
+    limit = max(1, int(limit))
+    batch_size = max(1, int(batch_size))
+    connection = _writer_connection(database_path)
+    try:
+        rowids = [
+            int(row[0]) for row in connection.execute(
+                f"""SELECT rowid FROM {TABLE}
+                    WHERE close_time_ms < ?
+                    ORDER BY close_time_ms
+                    LIMIT ?""",
+                (cutoff, limit),
+            ).fetchall()
+        ]
+        pruned = 0
+        timings = {"writer_wait": 0.0, "delete": 0.0, "commit": 0.0,
+                   "max_write_transaction": 0.0}
+        batches = 0
+        for offset in range(0, len(rowids), batch_size):
+            ids = rowids[offset:offset + batch_size]
+            started = time.monotonic()
+            connection.execute("BEGIN IMMEDIATE")
+            acquired = time.monotonic()
+            timings["writer_wait"] += (acquired - started) * 1000
+            placeholders = ",".join("?" for _ in ids)
+            deleting = time.monotonic()
+            pruned += connection.execute(
+                f"DELETE FROM {TABLE} WHERE rowid IN ({placeholders})",
+                tuple(ids),
+            ).rowcount
+            committing = time.monotonic()
+            timings["delete"] += (committing - deleting) * 1000
+            connection.commit()
+            finished = time.monotonic()
+            timings["commit"] += (finished - committing) * 1000
+            timings["max_write_transaction"] = max(
+                timings["max_write_transaction"], (finished - acquired) * 1000
+            )
+            batches += 1
+            if offset + batch_size < len(rowids):
+                time.sleep(PRUNE_YIELD_SECONDS)
+    finally:
+        connection.close()
+    return {
+        "pruned": pruned,
+        "batches": batches,
+        "limit": limit,
+        "batch_size": batch_size,
+        "retention_days": int(retention_days),
+        "timings_ms": {key: round(value, 3) for key, value in timings.items()},
     }
 
 
