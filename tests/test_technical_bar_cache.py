@@ -206,7 +206,7 @@ class TechnicalBarCacheTests(unittest.TestCase):
             bars = [bar(symbol=f"COIN{i}USDT") for i in range(35)]
             with mock.patch.object(store.time, "sleep", side_effect=other_writer):
                 result = store.persist_bars(path, bars, now_ms=NOW, include_counts=False)
-            self.assertEqual(observations, [16, 32])
+            self.assertEqual(\n                observations,\n                list(range(store.WRITE_BATCH_SIZE, len(bars), store.WRITE_BATCH_SIZE)),\n            )
             self.assertEqual(result["upserted"], 35)
             self.assertIsNone(result["row_count"])
             self.assertFalse(result["historical_counts_computed"])
