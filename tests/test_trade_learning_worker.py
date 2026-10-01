@@ -50,6 +50,8 @@ class TradeLearningWorkerTests(unittest.TestCase):
                 CREATE TABLE external_trader_trade_observations(observation_id INTEGER PRIMARY KEY);
                 CREATE TABLE heartbeat(at TEXT);
             """)
+            con.commit()
+            worker.ensure_input_revision_schema()
             before = worker.learning_input_key()
             con.execute("INSERT INTO heartbeat VALUES('next')")
             con.commit()
@@ -62,6 +64,14 @@ class TradeLearningWorkerTests(unittest.TestCase):
             con.commit()
             self.assertNotEqual(worker.learning_input_key(), corrected)
             con.close()
+
+    def test_input_key_does_not_rescan_closed_position_payloads(self):
+        source = Path(worker.__file__).read_text(encoding="utf-8")
+        start = source.index("def learning_input_key(")
+        end = source.index("\n\ndef run_cycle_once(", start)
+        block = source[start:end]
+        self.assertNotIn("FROM paper_agent_positions", block)
+        self.assertIn("trade_learning_input_revision", block)
 
     def test_unchanged_inputs_do_not_repeat_full_learning(self):
         with (mock.patch.object(worker, "learning_input_key", return_value={"external": "same", "positions": "same"}),
