@@ -43,6 +43,15 @@ HEALTH_CONTRACT_VERSION = "AGCA_MARKET_BEHAVIOR_HEALTH_V2_BINANCE_CANONICAL"
 _HEALTH_STATE = WorkerHealthState()
 _PROGRESS = WorkProgress(lambda progress: None)
 _LAST_COMPLETION_HEALTHY = False
+TRANSIENT_RETRY_SECONDS = 2.0
+_TRANSIENT_DEPENDENCY_MESSAGES = {
+    "broad radar missing, future or stale",
+}
+
+
+def is_transient_dependency_error(exc):
+    """Only known upstream-readiness gaps are recoverable in continuous mode."""
+    return isinstance(exc, ValueError) and str(exc) in _TRANSIENT_DEPENDENCY_MESSAGES
 
 
 def advance_progress(args, phase):
@@ -377,14 +386,19 @@ def run_bounded_cycle(args):
     try:
         return run_cycle(args)
     except (Exception, SystemExit) as exc:
+        transient_dependency = (
+            bool(getattr(args, "continuous", False))
+            and is_transient_dependency_error(exc)
+        )
+        recoverable = is_sqlite_busy(exc) or transient_dependency
         if getattr(args, "health_output", None):
             write_health(args.health_output, {
-                "status": "DEGRADED" if is_sqlite_busy(exc) else "ERROR",
+                "status": "DEGRADED" if recoverable else "ERROR",
                 "error": f"{type(exc).__name__}: {str(exc)[:400]}",
-                "fatal_error": isinstance(exc, sqlite3.Error) and not is_sqlite_busy(exc),
+                "fatal_error": not recoverable,
             })
-        if is_sqlite_busy(exc):
-            return None  # Continuous mode gathers the next fresh closed minute.
+        if recoverable:
+            return None
         raise
     finally:
         signal.alarm(0)
@@ -426,9 +440,11 @@ def main():
         if args.health_output:
             write_health(args.health_output, {"status": "STARTING"})
         while True:
-            run_bounded_cycle(args)
+            result = run_bounded_cycle(args)
             if not args.continuous:
                 return
+            if result is None:
+                time.sleep(TRANSIENT_RETRY_SECONDS)
 
 
 if __name__ == "__main__":
